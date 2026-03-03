@@ -1,0 +1,346 @@
+[1mdiff --git a/bot.py b/bot.py[m
+[1mindex 1f1f033..7427ea4 100644[m
+[1m--- a/bot.py[m
+[1m+++ b/bot.py[m
+[36m@@ -1453,7 +1453,7 @@[m [mclass EatventureBot:[m
+         )[m
+         return refined_pos, refined[m
+ [m
+[31m-    def _detect_red_icons_in_view(self, screenshot, max_y=None, min_distance=80, threshold_override=None, min_matches_override=None, relaxed_color=False):[m
+[32m+[m[32m    def _detect_red_icons_in_view(self, screenshot, max_y=None, min_distance=80, threshold_override=None, min_matches=None, relaxed_color=False):[m
+         if not self.available_red_icon_templates:[m
+             return [][m
+ [m
+[36m@@ -1496,13 +1496,22 @@[m [mclass EatventureBot:[m
+ [m
+         self._update_red_template_priority(template_hits)[m
+ [m
+[31m-        min_matches = config.RED_ICON_MIN_MATCHES if min_matches_override is None else min_matches_override[m
+[32m+[m[32m        # Logic Fix: Define min_matches requirement[m
+[32m+[m[32m        min_matches_req = min_matches if min_matches is not None else config.RED_ICON_MIN_MATCHES[m
+[32m+[m
+         red_icons = [][m
+         for (x, y), matches in detections.items():[m
+[31m-            if len(matches) >= min_matches:[m
+[32m+[m[32m            if len(matches) >= min_matches_req:[m
+                 max_conf = max(conf for _, conf, _ in matches)[m
+                 max_pixel_count = max(px for _, _, px in matches)[m
+[31m-                red_icons.append((max_conf, x, y, max_pixel_count))[m
+[32m+[m[41m                [m
+[32m+[m[32m                # STAGE 2: STRICT VERIFICATION[m
+[32m+[m[32m                # Use original unmasked screenshot region for verification[m
+[32m+[m[32m                if self._verify_target_identity(screenshot, x, y, target_type="red"):[m
+[32m+[m[32m                    red_icons.append((max_conf, x, y, max_pixel_count))[m
+[32m+[m[32m                else:[m
+[32m+[m[32m                    logger.debug(f"[Verification] Rejected red candidate at ({x}, {y}) - Likely NPC art.")[m
+[32m+[m[41m                    [m
+         return red_icons[m
+ [m
+     def _is_red_icon_present_at(self, x, y, screenshot=None, threshold_override=None):[m
+[36m@@ -1620,6 +1629,125 @@[m [mclass EatventureBot:[m
+ [m
+         return red_icons[m
+ [m
+[32m+[m[32m    def _verify_target_identity(self, screenshot, x, y, target_type="red"):[m
+[32m+[m[32m        # ... existing logic ...[m
+[32m+[m[32m        padding = getattr(config, "VERIFY_PADDING", 30)[m
+[32m+[m[32m        x1, y1 = max(0, x - padding), max(0, y - padding)[m
+[32m+[m[32m        x2, y2 = min(screenshot.shape[1], x + padding), min(screenshot.shape[0], y + padding)[m
+[32m+[m[41m        [m
+[32m+[m[32m        roi = screenshot[y1:y2, x1:x2][m
+[32m+[m[32m        if roi.size == 0: return False[m
+[32m+[m
+[32m+[m[32m        # Define which templates to check against based on type[m
+[32m+[m[32m        templates_to_check = [][m
+[32m+[m[32m        if target_type == "red":[m
+[32m+[m[32m            templates_to_check = self.red_icon_templates[m
+[32m+[m[32m        elif target_type == "brown":[m
+[32m+[m[32m            templates_to_check = ["box1", "box2", "box3", "box4", "box5"][m
+[32m+[m
+[32m+[m[32m        threshold = getattr(config, "VERIFY_THRESHOLD", 0.95)[m
+[32m+[m
+[32m+[m[32m        for name in templates_to_check:[m
+[32m+[m[32m            template_data = self.templates.get(name)[m
+[32m+[m[32m            if not template_data: continue[m
+[32m+[m[41m            [m
+[32m+[m[32m            template, mask = template_data[m
+[32m+[m[32m            found, confidence, _, _ = self.image_matcher.find_template([m
+[32m+[m[32m                roi, template, mask=mask, threshold=threshold, template_name=f"{name}-verify"[m
+[32m+[m[32m            )[m
+[32m+[m[32m            if found:[m
+[32m+[m[32m                logger.debug(f"[Verification] Confirmed {target_type} identity as '{name}' ({confidence:.2%})")[m
+[32m+[m[32m                return True[m
+[32m+[m
+[32m+[m[32m        return False[m
+[32m+[m
+[32m+[m[32m    def _find_upgrade_stations(self, screenshot):[m
+[32m+[m[32m        """[m
+[32m+[m[32m        Enforce Strict Template Matching for Upgrade Stations.[m
+[32m+[m[32m        Geometric filters only select candidates; Template Matching approves clicks.[m
+[32m+[m[32m        """[m
+[32m+[m[32m        # 1. BLUE COLOR GATE (Initial Candidate Discovery)[m
+[32m+[m[32m        hsv = cv2.cvtColor(screenshot, cv2.COLOR_BGR2HSV)[m
+[32m+[m[32m        mask = cv2.inRange(hsv, np.array(config.BLUE_HSV_LOWER), np.array(config.BLUE_HSV_UPPER))[m
+[32m+[m[41m        [m
+[32m+[m[32m        # Morphological clean to connect fragmented pieces[m
+[32m+[m[32m        kernel = np.ones((5, 5), np.uint8)[m
+[32m+[m[32m        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)[m
+[32m+[m[41m        [m
+[32m+[m[32m        # 2. GEOMETRIC CANDIDATE SELECTION[m
+[32m+[m[32m        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[m
+[32m+[m[41m        [m
+[32m+[m[32m        candidates = [][m
+[32m+[m[32m        for cnt in contours:[m
+[32m+[m[32m            x, y, w, h = cv2.boundingRect(cnt)[m
+[32m+[m[32m            # Use geometry only to SELECT candidates, never to APPROVE clicks.[m
+[32m+[m[32m            if w < 25 or h < 25: continue[m
+[32m+[m[32m            candidates.append((x + w // 2, y + h // 2))[m
+[32m+[m[41m            [m
+[32m+[m[32m        verified_stations = [][m
+[32m+[m[41m        [m
+[32m+[m[32m        # 3. MANDATORY VERIFICATION STEP (The Gatekeeper)[m
+[32m+[m[32m        template_name = "upgradeStation"[m
+[32m+[m[32m        template_data = self.templates.get(template_name)[m
+[32m+[m[32m        if not template_data:[m
+[32m+[m[32m            logger.warning(f"Template '{template_name}' not found for mandatory verification.")[m
+[32m+[m[32m            return [][m
+[32m+[m[41m            [m
+[32m+[m[32m        template, template_mask = template_data[m
+[32m+[m[32m        # Use specific threshold for upgrade stations[m
+[32m+[m[32m        threshold = getattr(config, "UPGRADE_STATION_THRESHOLD", 0.92)[m
+[32m+[m[32m        padding = getattr(config, "VERIFY_PADDING", 35)[m
+[32m+[m[41m        [m
+[32m+[m[32m        for cx, cy in candidates:[m
+[32m+[m[32m            # Crop the region from the screenshot for mandatory verification[m
+[32m+[m[32m            x1, y1 = max(0, cx - padding), max(0, cy - padding)[m
+[32m+[m[32m            x2, y2 = min(screenshot.shape[1], cx + padding), min(screenshot.shape[0], cy + padding)[m
+[32m+[m[32m            roi = screenshot[y1:y2, x1:x2][m
+[32m+[m[41m            [m
+[32m+[m[32m            if roi.size == 0: continue[m
+[32m+[m[41m            [m
+[32m+[m[32m            # THE GATEKEEPER: Mandatory Template Match[m
+[32m+[m[32m            found, confidence, _, _ = self.image_matcher.find_template([m
+[32m+[m[32m                roi, template, mask=template_mask, threshold=threshold, template_name=f"{template_name}-strict"[m
+[32m+[m[32m            )[m
+[32m+[m[41m            [m
+[32m+[m[32m            if found:[m
+[32m+[m[32m                logger.info(f"[STRICT] Verified upgradeStation at ({cx}, {cy}) - Score: {confidence:.2%}")[m
+[32m+[m[32m                verified_stations.append((confidence, cx, cy))[m
+[32m+[m[32m            else:[m
+[32m+[m[32m                # Requirement: Log rejected noise[m
+[32m+[m[32m                logger.debug(f"Rejected Blue Noise at ({cx}, {cy}) - Score: {confidence:.2%} < {threshold}")[m
+[32m+[m[41m                [m
+[32m+[m[32m        return verified_stations[m
+[32m+[m
+[32m+[m[32m    def _find_boxes(self, screenshot):[m
+[32m+[m[32m        """[m
+[32m+[m[32m        Strict Visual Verification for Boxes.[m
+[32m+[m[32m        Uses Brown Color contours to find candidates, then MANDATORY template matching.[m
+[32m+[m[32m        """[m
+[32m+[m[32m        hsv = cv2.cvtColor(screenshot, cv2.COLOR_BGR2HSV)[m
+[32m+[m[32m        mask = cv2.inRange(hsv, np.array(config.BROWN_HSV_LOWER), np.array(config.BROWN_HSV_UPPER))[m
+[32m+[m[41m        [m
+[32m+[m[32m        kernel = np.ones((5, 5), np.uint8)[m
+[32m+[m[32m        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)[m
+[32m+[m[41m        [m
+[32m+[m[32m        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[m
+[32m+[m[41m        [m
+[32m+[m[32m        candidates = [][m
+[32m+[m[32m        for cnt in contours:[m
+[32m+[m[32m            x, y, w, h = cv2.boundingRect(cnt)[m
+[32m+[m[32m            if w < 15 or h < 15: continue[m
+[32m+[m[32m            candidates.append((x + w // 2, y + h // 2))[m
+[32m+[m[41m            [m
+[32m+[m[32m        verified_boxes = [][m
+[32m+[m[32m        for cx, cy in candidates:[m
+[32m+[m[32m            if self._verify_target_identity(screenshot, cx, cy, target_type="brown"):[m
+[32m+[m[32m                verified_boxes.append((1.0, cx, cy))[m
+[32m+[m[32m            else:[m
+[32m+[m[32m                logger.debug(f"[Verification] Rejected Brown Noise at ({cx}, {cy}) - Signature did not match any box templates.")[m
+[32m+[m[41m                [m
+[32m+[m[32m        return verified_boxes[m
+[32m+[m
+     def check_priority_targets(self):[m
+         """STEP A: Priority Scan. Checks for Red Icons and Level Transitions."""[m
+         self.check_critical_interrupts()[m
+[36m@@ -1690,76 +1818,30 @@[m [mclass EatventureBot:[m
+         clicked_upgrade_station = False[m
+         clicked_box = False[m
+ [m
+[31m-        upgrade_template = self.templates.get("upgradeStation")[m
+[31m-        if upgrade_template is not None:[m
+[31m-            template, mask = upgrade_template[m
+[31m-            upgrade_threshold = ([m
+[31m-                self.vision_optimizer.upgrade_station_threshold[m
+[31m-                if self.vision_optimizer.enabled[m
+[31m-                else config.UPGRADE_STATION_THRESHOLD[m
+[31m-            )[m
+[31m-            found, confidence, x, y = self.image_matcher.find_template([m
+[31m-                screenshot,[m
+[31m-                template,[m
+[31m-                mask=mask,[m
+[31m-                threshold=upgrade_threshold,[m
+[31m-                template_name="upgradeStation-no-red-fallback",[m
+[31m-                check_color=config.UPGRADE_STATION_COLOR_CHECK,[m
+[31m-            )[m
+[31m-            if found:[m
+[31m-                if self.mouse_controller.is_in_forbidden_zone(x, y):[m
+[31m-                    logger.debug("Fallback scan: upgrade station in forbidden zone, skipping")[m
+[31m-                else:[m
+[31m-                    logger.info([m
+[31m-                        "Fallback scan: clicking upgrade station at (%s, %s) [%.2f%%]",[m
+[31m-                        x,[m
+[31m-                        y,[m
+[31m-                        confidence * 100,[m
+[31m-                    )[m
+[31m-                    if self.mouse_controller.click(x, y, relative=True):[m
+[31m-                        clicked_targets += 1[m
+[31m-                        clicked_upgrade_station = True[m
+[31m-                        self.upgrade_found_in_cycle = True[m
+[31m-                        self.vision_optimizer.update_upgrade_station_confidence(confidence)[m
+[31m-[m
+[31m-        for box_name in ("box1", "box2", "box3", "box4", "box5"):[m
+[31m-            box_template = self.templates.get(box_name)[m
+[31m-            if box_template is None:[m
+[31m-                continue[m
+[31m-[m
+[31m-            template, mask = box_template[m
+[31m-            box_threshold = ([m
+[31m-                self.vision_optimizer.box_threshold[m
+[31m-                if self.vision_optimizer.enabled[m
+[31m-                else config.BOX_THRESHOLD[m
+[31m-            )[m
+[31m-            found, confidence, x, y = self.image_matcher.find_template([m
+[31m-                screenshot,[m
+[31m-                template,[m
+[31m-                mask=mask,[m
+[31m-                threshold=box_threshold,[m
+[31m-                template_name=f"{box_name}-no-red-fallback",[m
+[31m-            )[m
+[31m-[m
+[31m-            if not found:[m
+[31m-                self.vision_optimizer.update_box_miss()[m
+[32m+[m[32m        # 1. VERIFIED STATION SCAN[m
+[32m+[m[32m        stations = self._find_upgrade_stations(screenshot)[m
+[32m+[m[32m        for _, x, y in stations:[m
+[32m+[m[32m            if self.mouse_controller.is_in_forbidden_zone(x, y):[m
+[32m+[m[32m                logger.debug("Fallback scan: upgrade station in forbidden zone, skipping")[m
+                 continue[m
+[32m+[m[41m                [m
+[32m+[m[32m            logger.info("Fallback scan: clicking verified upgrade station at (%s, %s)", x, y)[m
+[32m+[m[32m            if self.mouse_controller.click(x, y, relative=True):[m
+[32m+[m[32m                clicked_targets += 1[m
+[32m+[m[32m                clicked_upgrade_station = True[m
+[32m+[m[32m                self.upgrade_found_in_cycle = True[m
+ [m
+[32m+[m[32m        # 2. VERIFIED BOX SCAN[m
+[32m+[m[32m        boxes = self._find_boxes(screenshot)[m
+[32m+[m[32m        for _, x, y in boxes:[m
+             if self.mouse_controller.is_in_forbidden_zone(x, y):[m
+[31m-                logger.debug("Fallback scan: %s in forbidden zone, skipping", box_name)[m
+[32m+[m[32m                logger.debug("Fallback scan: box in forbidden zone, skipping")[m
+                 continue[m
+[31m-[m
+[31m-            logger.info([m
+[31m-                "Fallback scan: clicking %s at (%s, %s) [%.2f%%]",[m
+[31m-                box_name,[m
+[31m-                x,[m
+[31m-                y,[m
+[31m-                confidence * 100,[m
+[31m-            )[m
+[32m+[m[41m                [m
+[32m+[m[32m            logger.info("Fallback scan: clicking verified box at (%s, %s)", x, y)[m
+             if self.mouse_controller.click(x, y, relative=True):[m
+                 clicked_targets += 1[m
+                 clicked_box = True[m
+[31m-                self.vision_optimizer.update_box_confidence(confidence)[m
+ [m
+         if clicked_targets > 0:[m
+             self._no_red_scroll_cycle_pending = True[m
+[1mdiff --git a/config.py b/config.py[m
+[1mindex 1ad1ae3..5db4d2e 100644[m
+[1m--- a/config.py[m
+[1m+++ b/config.py[m
+[36m@@ -52,6 +52,18 @@[m [mRED_HSV_UPPER1 = (15, 255, 255)[m
+ RED_HSV_LOWER2 = (165, 100, 100)[m
+ RED_HSV_UPPER2 = (180, 255, 255)[m
+ [m
+[32m+[m[32m# Blue/Cyan Color HSV bounds (Upgrade Stations)[m
+[32m+[m[32mBLUE_HSV_LOWER = (80, 100, 100)[m
+[32m+[m[32mBLUE_HSV_UPPER = (130, 255, 255)[m
+[32m+[m
+[32m+[m[32m# Brown Color HSV bounds (Boxes)[m
+[32m+[m[32mBROWN_HSV_LOWER = (10, 50, 20)[m
+[32m+[m[32mBROWN_HSV_UPPER = (30, 255, 150)[m
+[32m+[m
+[32m+[m[32m# Strict Verification Thresholds[m
+[32m+[m[32mVERIFY_THRESHOLD = 0.95[m
+[32m+[m[32mVERIFY_PADDING = 30[m
+[32m+[m
+ # Color verification for Red Icons[m
+ RED_ICON_COLOR_CHECK = True[m
+ RED_ICON_COLOR_MIN_RATIO = 1.15[m
+[1mdiff --git a/image_matcher.py b/image_matcher.py[m
+[1mindex cd2fe5d..5e8a78b 100644[m
+[1m--- a/image_matcher.py[m
+[1m+++ b/image_matcher.py[m
+[36m@@ -34,38 +34,38 @@[m [mclass ImageMatcher:[m
+         return (r / dominant_ratio) >= min_ratio[m
+ [m
+     def count_red_pixels(self, image, x, y, size=24, show_mask=False):[m
+[32m+[m[32m        # Implementation moved to generic method[m
+[32m+[m[32m        return self.count_pixels_by_hsv([m
+[32m+[m[32m            image, x, y,[m[41m [m
+[32m+[m[32m            [((config.RED_HSV_LOWER1), (config.RED_HSV_UPPER1)),[m
+[32m+[m[32m             ((config.RED_HSV_LOWER2), (config.RED_HSV_UPPER2))],[m
+[32m+[m[32m            size=size, show_mask=show_mask, window_name="Red Mask"[m
+[32m+[m[32m        )[m
+[32m+[m
+[32m+[m[32m    def count_pixels_by_hsv(self, image, x, y, hsv_ranges, size=30, show_mask=False, window_name="Mask"):[m
+         """[m
+[31m-        Counts red pixels in a ROI using HSV masking and dilation.[m
+[31m-        Requirement: Morphological Dilation & Pixel Density Trigger.[m
+[32m+[m[32m        Generic pixel density counter using provided HSV ranges and morphological dilation.[m
+         """[m
+         half = max(1, size // 2)[m
+[31m-        x1 = max(0, x - half)[m
+[31m-        y1 = max(0, y - half)[m
+[31m-        x2 = min(image.shape[1], x + half)[m
+[31m-        y2 = min(image.shape[0], y + half)[m
+[32m+[m[32m        x1, y1 = max(0, x - half), max(0, y - half)[m
+[32m+[m[32m        x2, y2 = min(image.shape[1], x + half), min(image.shape[0], y + half)[m
+ [m
+         roi = image[y1:y2, x1:x2][m
+[31m-        if roi.size == 0:[m
+[31m-            return 0[m
+[32m+[m[32m        if roi.size == 0: return 0[m
+ [m
+         hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)[m
+[32m+[m[32m        mask = None[m
+[32m+[m[41m        [m
+[32m+[m[32m        for (lower, upper) in hsv_ranges:[m
+[32m+[m[32m            m = cv2.inRange(hsv, np.array(lower), np.array(upper))[m
+[32m+[m[32m            mask = cv2.bitwise_or(mask, m) if mask is not None else m[m
+ [m
+[31m-        # Apply HSV mask for red (handles both ends of hue scale)[m
+[31m-        mask1 = cv2.inRange(hsv, np.array(config.RED_HSV_LOWER1), np.array(config.RED_HSV_UPPER1))[m
+[31m-        mask2 = cv2.inRange(hsv, np.array(config.RED_HSV_LOWER2), np.array(config.RED_HSV_UPPER2))[m
+[31m-        mask = cv2.bitwise_or(mask1, mask2)[m
+[31m-[m
+[31m-        # Requirement: Apply Morphological Dilation to connect/inflate red pixels[m
+[31m-        kernel_size = getattr(config, "RED_ICON_DILATE_KERNEL", 3)[m
+[31m-        kernel = np.ones((kernel_size, kernel_size), np.uint8)[m
+[32m+[m[32m        kernel = np.ones((config.RED_ICON_DILATE_KERNEL, config.RED_ICON_DILATE_KERNEL), np.uint8)[m
+         dilated = cv2.dilate(mask, kernel, iterations=1)[m
+[31m-[m
+[31m-        # Requirement: Count total red pixels (pixel density)[m
+         count = cv2.countNonZero(dilated)[m
+ [m
+[31m-        if show_mask:[m
+[31m-            debug_roi = cv2.resize(dilated, (200, 200), interpolation=cv2.INTER_NEAREST)[m
+[31m-            cv2.imshow("Red Icon Mask (Debug)", debug_roi)[m
+[32m+[m[32m        if show_mask and getattr(config, "DEBUG_VISION", False):[m
+[32m+[m[32m            cv2.imshow(window_name, cv2.resize(dilated, (200, 200), interpolation=cv2.INTER_NEAREST))[m
+             cv2.waitKey(1)[m
+ [m
+         return count[m
