@@ -1,7 +1,9 @@
 import logging
 import queue
+import threading
 from pathlib import Path
 import sys
+from enum import Enum, auto
 from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 from typing import Any
 
@@ -19,8 +21,16 @@ from bot import EatventureBot
 from interaction.mouse import precise_sleep
 
 bot_instance: EatventureBot | None = None
-should_exit: bool = False
 log_listener: QueueListener | None = None
+exit_requested = threading.Event()
+bot_command_queue: queue.SimpleQueue["BotCommand"] = queue.SimpleQueue()
+
+
+class BotCommand(Enum):
+    LOG_CURSOR_POSITION = auto()
+    TOGGLE_RUNNING = auto()
+    WIPE_MEMORY = auto()
+    EXIT_PROGRAM = auto()
 
 
 def _get_key_character(key: Any) -> str | None:
@@ -71,9 +81,35 @@ def _wipe_bot_memory(logger: logging.Logger) -> None:
 
 
 def _request_program_exit(logger: logging.Logger) -> None:
-    global should_exit
     logger.info("[P pressed] Exiting program")
-    should_exit = True
+    exit_requested.set()
+
+
+def _enqueue_bot_command(command: BotCommand) -> None:
+    if command in {BotCommand.TOGGLE_RUNNING, BotCommand.EXIT_PROGRAM} and bot_instance is not None:
+        bot_instance.request_stop()
+    bot_command_queue.put(command)
+
+
+def _process_bot_command(command: BotCommand, logger: logging.Logger) -> None:
+    command_handlers = {
+        BotCommand.LOG_CURSOR_POSITION: _log_window_relative_cursor_position,
+        BotCommand.TOGGLE_RUNNING: _toggle_bot_running,
+        BotCommand.WIPE_MEMORY: _wipe_bot_memory,
+        BotCommand.EXIT_PROGRAM: _request_program_exit,
+    }
+    handler = command_handlers.get(command)
+    if handler is not None:
+        handler(logger)
+
+
+def _drain_bot_commands(logger: logging.Logger) -> None:
+    while True:
+        try:
+            command = bot_command_queue.get_nowait()
+        except queue.Empty:
+            return
+        _process_bot_command(command, logger)
 
 
 def on_press(key: Any) -> None:
@@ -82,16 +118,15 @@ def on_press(key: Any) -> None:
         if character is None:
             return
 
-        logger = logging.getLogger(__name__)
-        key_handlers = {
-            "x": _log_window_relative_cursor_position,
-            "z": _toggle_bot_running,
-            "c": _wipe_bot_memory,
-            "p": _request_program_exit,
+        key_commands = {
+            "x": BotCommand.LOG_CURSOR_POSITION,
+            "z": BotCommand.TOGGLE_RUNNING,
+            "c": BotCommand.WIPE_MEMORY,
+            "p": BotCommand.EXIT_PROGRAM,
         }
-        handler = key_handlers.get(character)
-        if handler is not None:
-            handler(logger)
+        command = key_commands.get(character)
+        if command is not None:
+            _enqueue_bot_command(command)
     except Exception as exc:
         logging.getLogger(__name__).error("Keyboard listener error: %s", exc)
 
@@ -148,9 +183,12 @@ def _print_startup_banner() -> None:
 
 
 def _run_bot_event_loop() -> None:
-    while not should_exit:
+    logger = logging.getLogger(__name__)
+    while not exit_requested.is_set():
+        _drain_bot_commands(logger)
         if bot_instance is not None and bot_instance.running:
             bot_instance.step()
+        _drain_bot_commands(logger)
         precise_sleep(0.1)
 
 
@@ -158,25 +196,25 @@ def _cleanup_runtime(listener: Any | None) -> None:
     global log_listener
     if bot_instance is not None and bot_instance.running:
         bot_instance.stop()
-    if bot_instance is not None:
-        bot_instance.telegram.close()
     if listener is not None:
         listener.stop()
         listener.join(timeout=1.0)
+    if bot_instance is not None:
+        bot_instance.telegram.close()
     if log_listener is not None:
         log_listener.stop()
         log_listener = None
 
 
 def main() -> int:
-    global bot_instance, should_exit
+    global bot_instance
     listener = None
 
     _print_startup_banner()
 
     try:
         setup_logging()
-        should_exit = False
+        exit_requested.clear()
 
         if keyboard is None:
             logging.getLogger(__name__).error("Keyboard listener unavailable: %s", KEYBOARD_IMPORT_ERROR)

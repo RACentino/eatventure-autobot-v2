@@ -481,11 +481,16 @@ class ImageMatcher:
 
     @classmethod
     def _normalize_hsv_ranges(cls: type["ImageMatcher"], hsv_ranges: Any) -> list[HsvRange]:
-        return [
-            normalized_range
-            for hsv_range in hsv_ranges
-            if (normalized_range := cls._normalize_hsv_range(hsv_range)) is not None
-        ]
+        if not hsv_ranges:
+            return []
+        try:
+            return [
+                normalized_range
+                for hsv_range in hsv_ranges
+                if (normalized_range := cls._normalize_hsv_range(hsv_range)) is not None
+            ]
+        except TypeError:
+            return []
 
     @staticmethod
     def _apply_hsv_range_mask(hsv_region: np.ndarray, lower: np.ndarray, upper: np.ndarray) -> np.ndarray:

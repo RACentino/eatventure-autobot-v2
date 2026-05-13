@@ -401,7 +401,8 @@ class MouseController:
 
     @staticmethod
     def _interruptible_delay(duration: Any, interrupt_check: Callable[[], bool] | None = None) -> bool:
-        deadline = time.perf_counter() + max(0.0, float(duration))
+        wait_time = MouseController._coerce_non_negative_float(duration, 0.0)
+        deadline = time.perf_counter() + wait_time
         while True:
             if interrupt_check and interrupt_check():
                 return False

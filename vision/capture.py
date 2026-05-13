@@ -2,6 +2,7 @@ import ctypes
 import logging
 import threading
 import time
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
@@ -186,18 +187,31 @@ class WindowCapture:
         old_bitmap: Any,
     ) -> None:
         if save_dc is not None and old_bitmap is not None:
-            try:
-                save_dc.SelectObject(old_bitmap)
-            except pywintypes.error as exc:
-                logger.debug("Could not restore capture DC bitmap: %s", exc)
+            WindowCapture._release_capture_resource(
+                "restore selected bitmap",
+                lambda: save_dc.SelectObject(old_bitmap),
+            )
         if save_bitmap is not None:
-            win32gui.DeleteObject(save_bitmap.GetHandle())
+            WindowCapture._release_capture_resource(
+                "delete bitmap",
+                lambda: win32gui.DeleteObject(save_bitmap.GetHandle()),
+            )
         if save_dc is not None:
-            save_dc.DeleteDC()
+            WindowCapture._release_capture_resource("delete compatible dc", save_dc.DeleteDC)
         if mfc_dc is not None:
-            mfc_dc.DeleteDC()
+            WindowCapture._release_capture_resource("delete source dc", mfc_dc.DeleteDC)
         if hwnd_dc is not None and hwnd:
-            win32gui.ReleaseDC(hwnd, hwnd_dc)
+            WindowCapture._release_capture_resource(
+                "release window dc",
+                lambda: win32gui.ReleaseDC(hwnd, hwnd_dc),
+            )
+
+    @staticmethod
+    def _release_capture_resource(action_name: str, release_action: Callable[[], Any]) -> None:
+        try:
+            release_action()
+        except Exception as exc:
+            logger.debug("Could not release capture resource during %s: %s", action_name, exc)
 
     def capture(self, max_y: Any = None) -> np.ndarray:
         with self._lock:

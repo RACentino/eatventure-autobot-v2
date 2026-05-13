@@ -1,4 +1,5 @@
 import logging
+import queue
 import threading
 from collections import deque
 from datetime import datetime
@@ -50,6 +51,7 @@ class EatventureBot(
         logger.info("Initializing Eatventure Bot")
         self._stop_requested = threading.Event()
         self._step_active = threading.Event()
+        self._pending_learned_behaviors: queue.SimpleQueue[dict[str, float]] = queue.SimpleQueue()
 
         self._initialize_runtime_services()
         self._initialize_learning_services()
@@ -75,6 +77,7 @@ class EatventureBot(
 
     def _initialize_learning_services(self) -> None:
         self.tuner = AdaptiveTuner()
+        self._runtime_behavior_snapshot = self._runtime_behavior_from_tuner()
         self.vision_persistence = VisionPersistence(config.AI_VISION_STATE_FILE, config.AI_VISION_SAVE_INTERVAL)
         self.vision_optimizer = VisionOptimizer(self.vision_persistence)
         self.vision_optimizer.apply_persisted_state(self.vision_persistence.load())
@@ -83,6 +86,7 @@ class EatventureBot(
             config.AI_LEARNING_SAVE_INTERVAL,
         )
         self.historical_learner = HistoricalLearner(self, self.learning_persistence)
+        self._apply_pending_learned_behavior_updates()
 
     def _initialize_state_handlers_and_templates(self) -> None:
         self.register_states()
@@ -155,6 +159,36 @@ class EatventureBot(
     def _apply_tuning(self) -> None:
         self.mouse_controller.click_delay = float(self.tuner.click_delay)
         self.mouse_controller.move_delay = float(self.tuner.move_delay)
+        self._runtime_behavior_snapshot = self._runtime_behavior_from_tuner()
+
+    def _runtime_behavior_from_tuner(self) -> dict[str, float]:
+        return {
+            "click_delay": float(self.tuner.click_delay),
+            "move_delay": float(self.tuner.move_delay),
+            "search_interval": float(self.tuner.search_interval),
+        }
+
+    def _next_pending_learned_behavior(self) -> dict[str, float] | None:
+        latest_behavior = None
+        while True:
+            try:
+                latest_behavior = self._pending_learned_behaviors.get_nowait()
+            except queue.Empty:
+                return latest_behavior
+
+    def _discard_pending_learned_behavior_updates(self) -> None:
+        while True:
+            try:
+                self._pending_learned_behaviors.get_nowait()
+            except queue.Empty:
+                return
+
+    def _apply_pending_learned_behavior_updates(self) -> None:
+        learned_behavior = self._next_pending_learned_behavior()
+        if learned_behavior is None:
+            return
+        self.tuner.apply_runtime_behavior(learned_behavior)
+        self._apply_tuning()
 
 
     def _click_idle(self) -> bool:
@@ -180,29 +214,24 @@ class EatventureBot(
 
 
     def get_runtime_behavior_snapshot(self) -> dict[str, float]:
-        return {
-            "click_delay": float(self.tuner.click_delay),
-            "move_delay": float(self.tuner.move_delay),
-            "search_interval": float(self.tuner.search_interval),
-        }
+        return dict(self._runtime_behavior_snapshot)
 
     def apply_learned_behavior(self, learned: dict[str, Any]) -> None:
         if hasattr(self, "historical_learner"):
             learned = self.historical_learner._sanitize_behavior(learned)
         if not learned:
             return
-        self.tuner.click_delay = float(learned.get("click_delay", self.tuner.click_delay))
-        self.tuner.move_delay = float(learned.get("move_delay", self.tuner.move_delay))
-        self.tuner.search_interval = float(learned.get("search_interval", self.tuner.search_interval))
-        self._apply_tuning()
+        self._pending_learned_behaviors.put(dict(learned))
 
     def wipe_memory(self) -> None:
+        self._discard_pending_learned_behavior_updates()
         self.tuner.reset()
         self.vision_optimizer.reset()
         self.historical_learner.reset()
         self.successful_red_icon_positions = deque(maxlen=self._successful_red_icon_history_limit)
         self.current_level_start_time = datetime.now() if self.running else None
         self._apply_tuning()
+        self._discard_pending_learned_behavior_updates()
 
 
 
@@ -240,6 +269,9 @@ class EatventureBot(
 
 
 
+
+    def request_stop(self) -> None:
+        self._stop_requested.set()
 
     def start(self) -> bool:
         if self.running:
@@ -290,6 +322,7 @@ class EatventureBot(
                 logger.error("Window '%s' is not available", config.WINDOW_TITLE)
                 self.stop()
                 return False
+            self._apply_pending_learned_behavior_updates()
             self._apply_tuning()
             updated = bool(self.state_machine.update())
             if not updated:

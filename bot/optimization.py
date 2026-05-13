@@ -5,6 +5,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Iterable
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -13,15 +14,60 @@ from core import config
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class AdaptiveTunerState:
+    click_success_rate: float
+    search_success_rate: float
+    click_delay: float
+    move_delay: float
+    search_interval: float
+
+
 class AdaptiveTuner:
     def __init__(self) -> None:
         self.enabled = bool(config.ADAPTIVE_TUNER_ENABLED)
         self.alpha = float(config.ADAPTIVE_TUNER_ALPHA)
-        self.click_success_rate = 1.0
-        self.search_success_rate = 1.0
-        self.click_delay = float(config.CLICK_DELAY)
-        self.move_delay = float(config.MOUSE_MOVE_DELAY)
-        self.search_interval = float(config.UPGRADE_SEARCH_INTERVAL)
+        self._state = self._default_state()
+
+    @staticmethod
+    def _default_state() -> AdaptiveTunerState:
+        return AdaptiveTunerState(
+            click_success_rate=1.0,
+            search_success_rate=1.0,
+            click_delay=float(config.CLICK_DELAY),
+            move_delay=float(config.MOUSE_MOVE_DELAY),
+            search_interval=float(config.UPGRADE_SEARCH_INTERVAL),
+        )
+
+    @staticmethod
+    def _coerce_finite_float(value: Any, default: float) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return float(default)
+        if not math.isfinite(number):
+            return float(default)
+        return number
+
+    @property
+    def click_success_rate(self) -> float:
+        return self._state.click_success_rate
+
+    @property
+    def search_success_rate(self) -> float:
+        return self._state.search_success_rate
+
+    @property
+    def click_delay(self) -> float:
+        return self._state.click_delay
+
+    @property
+    def move_delay(self) -> float:
+        return self._state.move_delay
+
+    @property
+    def search_interval(self) -> float:
+        return self._state.search_interval
 
     def _ema(self, current: float, new_value: float) -> float:
         return (1.0 - self.alpha) * current + self.alpha * new_value
@@ -29,47 +75,68 @@ class AdaptiveTuner:
     def record_click_result(self, success: bool) -> None:
         if not self.enabled:
             return
-        self.click_success_rate = self._ema(self.click_success_rate, 1.0 if success else 0.0)
-        if self.click_success_rate < config.ADAPTIVE_TUNER_CLICK_LOW_THRESHOLD:
-            self.click_delay = min(
-                self.click_delay + config.ADAPTIVE_TUNER_CLICK_DELAY_STEP,
+        state = self._state
+        click_success_rate = self._ema(state.click_success_rate, 1.0 if success else 0.0)
+        click_delay = state.click_delay
+        move_delay = state.move_delay
+        if click_success_rate < config.ADAPTIVE_TUNER_CLICK_LOW_THRESHOLD:
+            click_delay = min(
+                state.click_delay + config.ADAPTIVE_TUNER_CLICK_DELAY_STEP,
                 config.ADAPTIVE_TUNER_MAX_CLICK_DELAY,
             )
-            self.move_delay = min(
-                self.move_delay + config.ADAPTIVE_TUNER_MOVE_DELAY_STEP,
+            move_delay = min(
+                state.move_delay + config.ADAPTIVE_TUNER_MOVE_DELAY_STEP,
                 config.ADAPTIVE_TUNER_MAX_MOVE_DELAY,
             )
-        elif self.click_success_rate > config.ADAPTIVE_TUNER_CLICK_HIGH_THRESHOLD:
-            self.click_delay = max(
-                self.click_delay - config.ADAPTIVE_TUNER_CLICK_DECREMENT,
+        elif click_success_rate > config.ADAPTIVE_TUNER_CLICK_HIGH_THRESHOLD:
+            click_delay = max(
+                state.click_delay - config.ADAPTIVE_TUNER_CLICK_DECREMENT,
                 config.ADAPTIVE_TUNER_MIN_CLICK_DELAY,
             )
-            self.move_delay = max(
-                self.move_delay - config.ADAPTIVE_TUNER_MOVE_DECREMENT,
+            move_delay = max(
+                state.move_delay - config.ADAPTIVE_TUNER_MOVE_DECREMENT,
                 config.ADAPTIVE_TUNER_MIN_MOVE_DELAY,
             )
+        self._state = replace(
+            state,
+            click_success_rate=click_success_rate,
+            click_delay=click_delay,
+            move_delay=move_delay,
+        )
 
     def record_search_result(self, success: bool) -> None:
         if not self.enabled:
             return
-        self.search_success_rate = self._ema(self.search_success_rate, 1.0 if success else 0.0)
-        if self.search_success_rate < config.ADAPTIVE_TUNER_SEARCH_LOW_THRESHOLD:
-            self.search_interval = min(
-                self.search_interval + config.ADAPTIVE_TUNER_SEARCH_INTERVAL_STEP,
+        state = self._state
+        search_success_rate = self._ema(state.search_success_rate, 1.0 if success else 0.0)
+        search_interval = state.search_interval
+        if search_success_rate < config.ADAPTIVE_TUNER_SEARCH_LOW_THRESHOLD:
+            search_interval = min(
+                state.search_interval + config.ADAPTIVE_TUNER_SEARCH_INTERVAL_STEP,
                 config.ADAPTIVE_TUNER_MAX_SEARCH_INTERVAL,
             )
-        elif self.search_success_rate > config.ADAPTIVE_TUNER_SEARCH_HIGH_THRESHOLD:
-            self.search_interval = max(
-                self.search_interval - config.ADAPTIVE_TUNER_SEARCH_DECREMENT,
+        elif search_success_rate > config.ADAPTIVE_TUNER_SEARCH_HIGH_THRESHOLD:
+            search_interval = max(
+                state.search_interval - config.ADAPTIVE_TUNER_SEARCH_DECREMENT,
                 config.ADAPTIVE_TUNER_MIN_SEARCH_INTERVAL,
             )
+        self._state = replace(
+            state,
+            search_success_rate=search_success_rate,
+            search_interval=search_interval,
+        )
 
     def reset(self) -> None:
-        self.click_success_rate = 1.0
-        self.search_success_rate = 1.0
-        self.click_delay = float(config.CLICK_DELAY)
-        self.move_delay = float(config.MOUSE_MOVE_DELAY)
-        self.search_interval = float(config.UPGRADE_SEARCH_INTERVAL)
+        self._state = self._default_state()
+
+    def apply_runtime_behavior(self, behavior: dict[str, Any]) -> None:
+        state = self._state
+        self._state = replace(
+            state,
+            click_delay=self._coerce_finite_float(behavior.get("click_delay"), state.click_delay),
+            move_delay=self._coerce_finite_float(behavior.get("move_delay"), state.move_delay),
+            search_interval=self._coerce_finite_float(behavior.get("search_interval"), state.search_interval),
+        )
 
 
 class VisionPersistence:
@@ -475,7 +542,8 @@ class HistoricalLearner:
         self._stop.set()
         if self._thread is not None and self._thread.is_alive():
             self._thread.join(timeout=config.AI_LEARNING_THREAD_JOIN_TIMEOUT)
-        self._persist(force=True)
+        if self.enabled:
+            self._persist(force=True)
 
     def record_completion(self, seconds_spent: float, source: str) -> None:
         if not self.enabled or seconds_spent <= 0:
@@ -514,21 +582,32 @@ class HistoricalLearner:
         with self._lock:
             records = list(self._records)
             total = int(self._total_completions)
+            last_pair_processed = int(self._last_pair_processed)
+            last_batch_processed = int(self._last_batch_processed)
+            last_apply_time = float(self._last_apply_time)
 
-        if (time.monotonic() - self._last_apply_time) < self.apply_cooldown:
+        if (time.monotonic() - last_apply_time) < self.apply_cooldown:
             return
 
         changed = False
-        if total >= self.pair_window and (total // self.pair_window) > self._last_pair_processed:
+        next_pair_processed = last_pair_processed
+        next_batch_processed = last_batch_processed
+        if total >= self.pair_window and (total // self.pair_window) > last_pair_processed:
             changed = self._apply_profile(records[-self.pair_window :]) or changed
-            self._last_pair_processed = total // self.pair_window
+            next_pair_processed = total // self.pair_window
 
-        if total >= self.batch_window and (total // self.batch_window) > self._last_batch_processed:
+        if total >= self.batch_window and (total // self.batch_window) > last_batch_processed:
             changed = self._apply_profile(records[-self.batch_window :]) or changed
-            self._last_batch_processed = total // self.batch_window
+            next_batch_processed = total // self.batch_window
 
+        applied_at = time.monotonic() if changed else last_apply_time
+        with self._lock:
+            self._last_pair_processed = max(self._last_pair_processed, next_pair_processed)
+            self._last_batch_processed = max(self._last_batch_processed, next_batch_processed)
+            if changed:
+                self._last_apply_time = applied_at
         if changed:
-            self._last_apply_time = time.monotonic()
+            logger.debug("Historical learner queued tuned behavior")
         self._persist()
 
     def _normalized_record(self, record: Any) -> dict[str, Any] | None:
@@ -580,7 +659,8 @@ class HistoricalLearner:
         ranked = sorted(valid, key=lambda item: item["time_spent"])
         profile = self._average_behavior_profile(ranked[: self.top_k])
         tuned = self._build_tuned_behavior(profile)
-        self._tuned_behavior = tuned
+        with self._lock:
+            self._tuned_behavior = dict(tuned)
         self.bot.apply_learned_behavior(tuned)
         return True
 
