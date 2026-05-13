@@ -1,35 +1,25 @@
-"""Base class for all tactical bot handlers."""
-
-from abc import ABC, abstractmethod
-from typing import Optional, TYPE_CHECKING
+from collections.abc import Callable
 
 from bot.state_machine import State
-from core.logger import setup_logger
+from bot.types import StateResult
 
-if TYPE_CHECKING:
-    from bot.orchestrator import EatventureBot
 
-logger = setup_logger("bot.handlers.base")
+class StateRegistrationMixin:
+    def _state_handler_pairs(self) -> tuple[tuple[State, Callable[[State], StateResult]], ...]:
+        return (
+            (State.FIND_RED_ICONS, self.handle_find_red_icons),
+            (State.CLICK_RED_ICON, self.handle_click_red_icon),
+            (State.CHECK_UNLOCK, self.handle_check_unlock),
+            (State.SEARCH_UPGRADE_STATION, self.handle_search_upgrade_station),
+            (State.HOLD_UPGRADE_STATION, self.handle_hold_upgrade_station),
+            (State.OPEN_BOXES, self.handle_open_boxes),
+            (State.UPGRADE_STATS, self.handle_upgrade_stats),
+            (State.SCROLL, self.handle_scroll),
+            (State.CHECK_NEW_LEVEL, self.handle_check_new_level),
+            (State.TRANSITION_LEVEL, self.handle_transition_level),
+            (State.WAIT_FOR_UNLOCK, self.handle_wait_for_unlock),
+        )
 
-class BaseHandler(ABC):
-    """
-    Abstract Tactical Handler.
-    Each discrete state in the FSM is encapsulated within a subclass of BaseHandler.
-    """
-    def __init__(self, bot: 'EatventureBot'):
-        self.bot = bot
-        self.mouse = bot.mouse
-        self.capture = bot.capture
-        self.matcher = bot.matcher
-
-    @abstractmethod
-    def handle(self, current_state: State) -> State:
-        """Executes the specific handler logic for this state."""
-        pass
-
-    def check_interrupts(self) -> None:
-        """
-        Delegates to the orchestrator to check for global interrupts.
-        Ensures handlers can be safely halted by high-priority state changes.
-        """
-        self.bot.check_interrupts()
+    def register_states(self) -> None:
+        for state, handler in self._state_handler_pairs():
+            self.state_machine.register_handler(state, handler)

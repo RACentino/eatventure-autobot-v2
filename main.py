@@ -1,74 +1,213 @@
-"""Main entry point for the Eatventure bot."""
-
 import logging
+import queue
+from pathlib import Path
 import sys
-import time
-from pynput import keyboard
+from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
+from typing import Any
 
+try:
+    from pynput import keyboard
+except Exception as exc:
+    keyboard = None
+    KEYBOARD_IMPORT_ERROR = exc
+else:
+    KEYBOARD_IMPORT_ERROR = None
+
+from core import config
+from core.platform import require_windows_backend, win32api, win32gui
 from bot import EatventureBot
-from core.logger import setup_logger
+from interaction.mouse import precise_sleep
 
-logger = setup_logger("main")
+bot_instance: EatventureBot | None = None
+should_exit: bool = False
+log_listener: QueueListener | None = None
 
-bot_instance = None
-should_exit = False
 
-def on_press(key):
-    global bot_instance, should_exit
+def _get_key_character(key: Any) -> str | None:
+    character = getattr(key, "char", None)
+    if character is None:
+        return None
+    return str(character).lower()
+
+
+def _log_window_relative_cursor_position(logger: logging.Logger) -> None:
+    if bot_instance is None or not bot_instance.window_capture.is_window_active():
+        logger.info("[X pressed] Bot window is not available")
+        return
     try:
-        if key == keyboard.Key.esc:
-            logger.critical("Emergency stop triggered via ESC key!")
-            if bot_instance:
-                bot_instance.stop()
-            should_exit = True
-            return False # Stop listener
-            
-        if hasattr(key, 'char') and key.char:
-            if key.char == 'z':
-                if bot_instance:
-                    if not bot_instance.running:
-                        bot_instance.start()
-                    else:
-                        bot_instance.stop()
-            elif key.char == 'p':
-                logger.info("Exiting program via P key...")
-                should_exit = True
-    except Exception as e:
-        logger.error(f"Error in keyboard listener: {e}")
+        require_windows_backend("Cursor position logging")
+    except RuntimeError as exc:
+        logger.info("[X pressed] %s", exc)
+        return
 
-def main():
-    global bot_instance, should_exit
-    
-    logger.info("=" * 60)
-    logger.info("Eatventure Bot (Refactored Architecture)")
-    logger.info("=" * 60)
-    
-    listener = keyboard.Listener(on_press=on_press)
-    listener.start()
-    
+    hwnd = bot_instance.window_capture.get_hwnd()
+    screen_x, screen_y = win32api.GetCursorPos()
+    window_x, window_y = win32gui.ClientToScreen(hwnd, (0, 0))
+    logger.info("[X pressed] Window position: (%s, %s)", screen_x - window_x, screen_y - window_y)
+
+
+def _toggle_bot_running(logger: logging.Logger) -> None:
+    if bot_instance is None:
+        return
+    if bot_instance.running:
+        bot_instance.stop()
+        bot_instance.telegram.notify_bot_stopped()
+        logger.info("[Z pressed] Bot STOPPED")
+        return
+
+    started = bot_instance.start()
+    if started:
+        bot_instance.telegram.notify_bot_started()
+        logger.info("[Z pressed] Bot STARTED")
+        return
+    logger.warning("[Z pressed] Bot START failed")
+
+
+def _wipe_bot_memory(logger: logging.Logger) -> None:
+    if bot_instance is None:
+        return
+    bot_instance.wipe_memory()
+    logger.info("[C pressed] AI memory wiped")
+
+
+def _request_program_exit(logger: logging.Logger) -> None:
+    global should_exit
+    logger.info("[P pressed] Exiting program")
+    should_exit = True
+
+
+def on_press(key: Any) -> None:
     try:
-        bot = EatventureBot()
-        bot_instance = bot
-        
-        logger.info("Bot initialized and ready.")
-        logger.info("Press Z to START/STOP the bot.")
-        logger.info("Press P to EXIT the program.")
-        
-        while not should_exit:
-            if bot.running:
-                bot.step()
-            time.sleep(0.015) # Aligned with 60FPS frame timing
-        
-        logger.info("Program exiting...")
-        
-    except KeyboardInterrupt:
-        logger.info("Bot stopped by user (Ctrl+C).")
-    except Exception as e:
-        logger.error(f"Fatal error: {e}", exc_info=True)
-    finally:
+        character = _get_key_character(key)
+        if character is None:
+            return
+
+        logger = logging.getLogger(__name__)
+        key_handlers = {
+            "x": _log_window_relative_cursor_position,
+            "z": _toggle_bot_running,
+            "c": _wipe_bot_memory,
+            "p": _request_program_exit,
+        }
+        handler = key_handlers.get(character)
+        if handler is not None:
+            handler(logger)
+    except Exception as exc:
+        logging.getLogger(__name__).error("Keyboard listener error: %s", exc)
+
+
+def setup_logging() -> None:
+    global log_listener
+    logs_dir = Path(config.LOGS_DIR)
+    logs_dir.mkdir(parents=True, exist_ok=True)
+
+    log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    log_level = logging.DEBUG if config.DEBUG else logging.INFO
+
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(log_level)
+    console_handler.setFormatter(logging.Formatter(log_format))
+
+    file_handler = RotatingFileHandler(
+        logs_dir / "bot.log",
+        maxBytes=5_000_000,
+        backupCount=3,
+        encoding="utf-8",
+    )
+    file_handler.setLevel(log_level)
+    file_handler.setFormatter(logging.Formatter(log_format))
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(log_level)
+    root_logger.handlers.clear()
+
+    if log_listener is not None:
+        log_listener.stop()
+
+    log_queue = queue.SimpleQueue()
+    queue_handler = QueueHandler(log_queue)
+    root_logger.addHandler(queue_handler)
+
+    log_listener = QueueListener(
+        log_queue,
+        console_handler,
+        file_handler,
+        respect_handler_level=True,
+    )
+    log_listener.start()
+
+
+def _print_startup_banner() -> None:
+    print("=" * 60)
+    print("Eatventure Bot - Screen Automation Tool")
+    print("=" * 60)
+    print(f"Window Title: {config.WINDOW_TITLE}")
+    print(f"Match Threshold: {config.MATCH_THRESHOLD * 100}%")
+    print(f"Assets Directory: {config.ASSETS_DIR}")
+    print("=" * 60)
+
+
+def _run_bot_event_loop() -> None:
+    while not should_exit:
+        if bot_instance is not None and bot_instance.running:
+            bot_instance.step()
+        precise_sleep(0.1)
+
+
+def _cleanup_runtime(listener: Any | None) -> None:
+    global log_listener
+    if bot_instance is not None and bot_instance.running:
+        bot_instance.stop()
+    if bot_instance is not None:
+        bot_instance.telegram.close()
+    if listener is not None:
         listener.stop()
-    
+        listener.join(timeout=1.0)
+    if log_listener is not None:
+        log_listener.stop()
+        log_listener = None
+
+
+def main() -> int:
+    global bot_instance, should_exit
+    listener = None
+
+    _print_startup_banner()
+
+    try:
+        setup_logging()
+        should_exit = False
+
+        if keyboard is None:
+            logging.getLogger(__name__).error("Keyboard listener unavailable: %s", KEYBOARD_IMPORT_ERROR)
+            return 1
+
+        listener = keyboard.Listener(on_press=on_press)
+        listener.start()
+
+        bot_instance = EatventureBot()
+
+        logger = logging.getLogger(__name__)
+        logger.info("Bot initialized and ready")
+        logger.info("Press Z to START/STOP the bot")
+        logger.info("Press X to see window-relative cursor position")
+        logger.info("Press C to wipe AI memory")
+        logger.info("Press P to EXIT the program")
+
+        _run_bot_event_loop()
+
+        logger.info("Program exiting")
+    except KeyboardInterrupt:
+        logging.getLogger(__name__).info("Bot stopped by user (Ctrl+C)")
+        return 0
+    except Exception as exc:
+        logging.getLogger(__name__).error("Fatal error: %s", exc, exc_info=True)
+        return 1
+    finally:
+        _cleanup_runtime(listener)
+
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())

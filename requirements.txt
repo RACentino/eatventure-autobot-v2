@@ -1,6 +1,7 @@
-opencv-python
-numpy
-pillow
-pywin32
-pynput
-requests
+opencv-python==4.13.0.92
+numpy==2.4.4
+pillow==12.2.0
+pywin32==311; platform_system == "Windows"
+pynput==1.8.1
+requests==2.33.1
+supervision==0.28.0

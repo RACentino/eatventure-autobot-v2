@@ -1,93 +1,146 @@
-import html
 import logging
-from dataclasses import dataclass
+import queue
+import threading
+from typing import Any
 
 import requests
+
+from core import config
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class TelegramConfig:
-    bot_token: str
-    chat_id: str
-    enabled: bool = True
-    timeout_seconds: float = 5.0
-
-
 class TelegramNotifier:
-    def __init__(self, bot_token, chat_id, enabled=True, timeout_seconds=5.0):
-        # FIX: Centralize and validate constructor inputs to avoid malformed URL state.
-        clean_token = (bot_token or "").strip()
-        clean_chat_id = str(chat_id).strip() if chat_id is not None else ""
-        self.config = TelegramConfig(
-            bot_token=clean_token,
-            chat_id=clean_chat_id,
-            enabled=bool(enabled),
-            timeout_seconds=max(1.0, float(timeout_seconds)),
-        )
-
-        # FIX: Reuse a Session for better connection pooling/performance under many notifications.
-        self._session = requests.Session()
-        self.base_url = f"https://api.telegram.org/bot{self.config.bot_token}"
-        self.enabled = self.config.enabled and bool(self.config.bot_token and self.config.chat_id)
+    def __init__(self, bot_token: Any, chat_id: Any, enabled: bool = True) -> None:
+        self.bot_token = str(bot_token or "").strip()
+        self.chat_id = str(chat_id or "").strip()
+        self.base_url = f"https://api.telegram.org/bot{self.bot_token}"
+        self.timeout = 5
+        self.enabled = bool(enabled and self.bot_token and self.chat_id)
+        try:
+            queue_size = int(getattr(config, "TELEGRAM_QUEUE_MAXSIZE", 100))
+        except (TypeError, ValueError):
+            queue_size = 100
+        self._queue = queue.Queue(maxsize=max(1, queue_size))
+        self._stop = threading.Event()
+        self._thread = None
+        self._session = requests.Session() if self.enabled else None
 
         if self.enabled:
+            self._thread = threading.Thread(target=self._worker_loop, name="telegram_notifier", daemon=True)
+            self._thread.start()
             logger.info("Telegram notifier enabled")
         else:
-            logger.warning("Telegram notifier disabled")
+            logger.info("Telegram notifier disabled")
 
-    def send_message(self, message):
-        if not self.enabled:
+    def _worker_loop(self) -> None:
+        while not self._stop.is_set() or not self._queue.empty():
+            try:
+                message = self._queue.get(timeout=0.2)
+            except queue.Empty:
+                continue
+
+            try:
+                self._send_message_now(message)
+            except Exception:
+                logger.exception("Unexpected Telegram notification failure")
+            finally:
+                self._queue.task_done()
+
+    def _send_message_now(self, message: str) -> bool:
+        if not self.enabled or self._session is None:
             return False
-
-        # FIX: Escape outgoing message text while still allowing HTML parse mode safely.
-        safe_message = html.escape(str(message or "")).strip()
-        if not safe_message:
-            logger.warning("Skipping Telegram send because message is empty")
-            return False
-
-        url = f"{self.base_url}/sendMessage"
-        payload = {
-            "chat_id": self.config.chat_id,
-            "text": safe_message,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": True,
-        }
 
         try:
-            response = self._session.post(url, json=payload, timeout=self.config.timeout_seconds)
-            response.raise_for_status()
-            body = response.json()
-            # FIX: Handle Telegram API-level failures even on HTTP 200.
-            if not body.get("ok", False):
-                logger.error("Telegram API rejected message: %s", body)
-                return False
-            logger.debug("Telegram message sent")
-            return True
+            url = f"{self.base_url}/sendMessage"
+            data = {
+                "chat_id": self.chat_id,
+                "text": message,
+            }
+
+            response = self._session.post(url, json=data, timeout=self.timeout)
+            try:
+                response_data = response.json()
+            except ValueError:
+                response_data = {}
+
+            if response.ok and response_data.get("ok"):
+                logger.debug("Telegram message sent successfully")
+                return True
+
+            description = response_data.get("description") if isinstance(response_data, dict) else None
+            if not description:
+                description = response.text[:200] if response.text else "unavailable"
+            logger.error(
+                "Failed to send Telegram message: status=%s description=%s",
+                response.status_code,
+                description,
+            )
+            return False
         except requests.RequestException as exc:
-            logger.error("Error sending Telegram message: %s", exc)
-            return False
-        except ValueError as exc:
-            logger.error("Invalid Telegram API JSON response: %s", exc)
+            logger.error("Error sending Telegram message: %s", exc.__class__.__name__)
             return False
 
-    def notify_bot_started(self):
-        # FIX: Keep formatting plain text so escaping does not break tags.
-        self.send_message("🤖 Bot Started")
+    def send_message(self, message: Any) -> bool:
+        if not self.enabled or self._stop.is_set():
+            return False
 
-    def notify_bot_stopped(self):
-        self.send_message("⏹️ Bot Stopped")
+        message = str(message).strip()
+        if not message:
+            return False
+        if len(message) > 4096:
+            message = message[:4093] + "..."
+        try:
+            self._queue.put_nowait(message)
+            return True
+        except queue.Full:
+            logger.warning("Telegram queue is full; dropping notification")
+            return False
 
-    def notify_new_level(self, level_number, time_spent):
-        # FIX: Clamp and normalize user-provided values to avoid bad formatting.
-        safe_level = max(1, int(level_number))
-        safe_time_spent = max(0.0, float(time_spent))
-        minutes = int(safe_time_spent // 60)
-        seconds = int(safe_time_spent % 60)
+    def _discard_pending_messages(self) -> None:
+        while True:
+            try:
+                self._queue.get_nowait()
+            except queue.Empty:
+                return
+            self._queue.task_done()
+
+    def close(self) -> None:
+        if not self.enabled and self._session is None:
+            return
+        self._stop.set()
+        self.enabled = False
+        self._discard_pending_messages()
+        if self._thread is not None and self._thread.is_alive():
+            try:
+                close_timeout = float(getattr(config, "TELEGRAM_CLOSE_TIMEOUT", 2.0))
+            except (TypeError, ValueError):
+                close_timeout = 2.0
+            close_timeout = max(0.0, close_timeout, float(self.timeout) + 0.5)
+            self._thread.join(timeout=close_timeout)
+            if self._thread.is_alive():
+                logger.warning("Telegram notifier did not stop before timeout; session left open")
+                return
+        if self._session is not None:
+            self._session.close()
+            self._session = None
+
+    def notify_bot_started(self) -> None:
+        message = "Bot Started"
+        self.send_message(message)
+
+    def notify_bot_stopped(self) -> None:
+        message = "Bot Stopped"
+        self.send_message(message)
+
+    def notify_new_level(self, level_number: int, time_spent: float) -> None:
+        minutes = int(time_spent // 60)
+        seconds = int(time_spent % 60)
         time_str = f"{minutes:02d}:{seconds:02d}"
-        self.send_message(f"{safe_level}. restaurant completed! Time spent: {time_str}")
 
-    def notify_level_milestone(self, total_levels):
-        safe_levels = max(0, int(total_levels))
-        self.send_message(f"📊 Milestone reached! Total cities completed: {safe_levels}")
+        message = f"{level_number}. restaurant completed! Time spent: {time_str}"
+        self.send_message(message)
+
+    def notify_level_milestone(self, total_levels: int) -> None:
+        message = f"Milestone Reached\nTotal cities completed: {total_levels}"
+        self.send_message(message)

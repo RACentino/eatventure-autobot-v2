@@ -32,7 +32,13 @@ wheels/
 
 # Project specific
 logs/
+memory/
 screenshots/
 *.log
-
 .gemini/
+tests/
+analytics/
+changelogs/
+test/
+heatmap/
+.gitnexus*

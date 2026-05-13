@@ -1,125 +1,586 @@
 import logging
-import os
-import re
-import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import Any
 
-from core.logger import setup_logger
+from core import config
+from bot.types import BoxCandidate, MatchCandidate, RedIcon, TemplatePair
 
-logger = setup_logger("vision.scanner")
+logger = logging.getLogger(__name__)
 
 
-class AssetScanner:
-    def __init__(self, image_matcher, max_workers=None):
-        self.image_matcher = image_matcher
-        cpu_count = os.cpu_count() or 1
-        self.max_workers = max_workers or min(32, cpu_count + 4)
-        self._template_cache = {}
-        self._asset_index_cache = {}
-        self._cache_lock = threading.RLock()
-
-    def scan(self, assets_dir, required_templates=None):
-        assets_path = Path(assets_dir)
-        if not assets_path.exists():
-            logger.error(f"Assets directory not found: {assets_path}")
-            return {}
-
-        required_set = set(required_templates or [])
-        template_files = self._collect_template_files(assets_path, required_set)
-
-        templates = {}
-        if not template_files:
+class VisionScannerMixin:
+    def load_templates(self) -> dict[str, TemplatePair]:
+        templates: dict[str, TemplatePair] = {}
+        templates_path = Path(config.ASSETS_DIR)
+        if not templates_path.exists():
+            logger.error("Assets directory not found: %s", templates_path)
             return templates
 
-        if len(template_files) == 1:
-            template_name, template_data = self._load_template(template_files[0])
-            if template_data is not None:
-                templates[template_name] = template_data
-                logger.info(f"Loaded template: {template_name}")
-        else:
-            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                futures = {
-                    executor.submit(self._load_template, template_file): template_file
-                    for template_file in template_files
-                }
-                for future in as_completed(futures):
-                    template_file = futures[future]
-                    try:
-                        template_name, template_data = future.result()
-                    except Exception as exc:
-                        logger.error(f"Failed to load template {template_file}: {exc}")
-                        continue
-
-                    if template_data is None:
-                        continue
-
-                    templates[template_name] = template_data
-                    logger.info(f"Loaded template: {template_name}")
-
-        if required_set:
-            missing = sorted(required_set.difference(templates.keys()))
-            if missing:
-                logger.warning(f"Missing {len(missing)} required templates: {', '.join(missing)}")
+        for template_file in sorted(templates_path.glob("*.png")):
+            try:
+                template_name = template_file.stem
+                template_img = self.image_matcher.load_template(template_file)
+                templates[template_name] = template_img
+                logger.info("Loaded template: %s", template_name)
+            except Exception as exc:
+                logger.error("Failed to load template %s: %s", template_file, exc)
 
         return templates
 
-    def _normalize_key(self, name):
-        return re.sub(r"[^a-z0-9]+", "", name.lower())
+    def _available_red_icon_template_count(self) -> int:
+        return sum(1 for name in self.templates if name.startswith("RedIcon"))
 
-    def _collect_template_files(self, assets_path, required_set):
-        indexed = self._index_assets_dir(assets_path)
-        if required_set:
-            template_files = []
-            for template_name in required_set:
-                indexed_path = indexed.get(template_name.lower())
-                if indexed_path is None:
-                    indexed_path = indexed.get(self._normalize_key(template_name))
-                if indexed_path is not None:
-                    template_files.append(indexed_path)
-        else:
-            template_files = list(indexed.values())
-        template_files = sorted(set(template_files), key=lambda path: str(path).lower())
-        return template_files
+    def _red_icon_min_matches(self) -> int:
+        if bool(getattr(config, "RED_ICON_FAST_MODE_ENABLED", False)):
+            return 1
+        available = self._available_red_icon_template_count()
+        if available <= 0:
+            return 1
+        configured = max(1, int(config.RED_ICON_MIN_MATCHES))
+        return min(configured, available)
 
-    def _index_assets_dir(self, assets_path):
-        assets_key = str(assets_path)
-        try:
-            mtime = assets_path.stat().st_mtime
-        except OSError:
-            mtime = None
+    def _validate_required_templates(self) -> bool:
+        missing = [name for name in ("newLevel", "unlock", "upgradeStation") if name not in self.templates]
+        red_icon_count = self._available_red_icon_template_count()
+        if red_icon_count <= 0:
+            missing.append("RedIcon*")
+        if missing:
+            logger.error("Missing required templates: %s", ", ".join(missing))
+            return False
+        if red_icon_count < int(config.RED_ICON_MIN_MATCHES):
+            logger.warning(
+                "Only %s red-icon templates are available; consensus requirement reduced from %s",
+                red_icon_count,
+                config.RED_ICON_MIN_MATCHES,
+            )
+        return True
 
-        with self._cache_lock:
-            cached = self._asset_index_cache.get(assets_key)
-            if cached and cached["mtime"] == mtime:
-                return cached["index"]
+    def _template(self, template_name: str) -> TemplatePair | None:
+        return self.templates.get(template_name)
 
-        indexed = {}
-        for template_path in assets_path.rglob("*"):
-            if not template_path.is_file() or template_path.suffix.lower() != ".png":
+    def _new_level_threshold(self) -> float:
+        if self.vision_optimizer.enabled:
+            return self.vision_optimizer.new_level_threshold
+        return config.NEW_LEVEL_THRESHOLD
+
+    def _red_icon_scan_threshold(self) -> float:
+        if not self.vision_optimizer.enabled:
+            return config.RED_ICON_THRESHOLD
+        return min(
+            self.vision_optimizer.red_icon_threshold,
+            self.vision_optimizer.new_level_red_icon_threshold,
+        )
+
+    def _box_threshold(self) -> float:
+        if self.vision_optimizer.enabled:
+            return self.vision_optimizer.box_threshold
+        return config.BOX_THRESHOLD
+
+    def _stats_upgrade_threshold(self) -> float:
+        if self.vision_optimizer.enabled:
+            return self.vision_optimizer.stats_upgrade_threshold
+        return config.STATS_RED_ICON_THRESHOLD
+
+    @staticmethod
+    def _supervision_nms_enabled(flag_name: str) -> bool:
+        return bool(getattr(config, "SUPERVISION_ENABLED", False) and getattr(config, flag_name, False))
+
+    def _scan_red_icon_frame(
+        self,
+        screenshot: Any,
+        limited_screenshot: Any,
+        scan_threshold: float,
+        min_matches: int,
+    ) -> tuple[list[RedIcon], list[float], RedIcon | None]:
+        all_detections = self._collect_red_icon_detections(
+            limited_screenshot,
+            scan_threshold,
+            min_distance=80,
+        )
+        red_icons, valid_red_icon_confidences = self._icons_from_detections(
+            all_detections,
+            min_matches,
+        )
+        best_new_level_icon = self._find_new_level_red_icon(screenshot, scan_threshold, min_matches)
+        return red_icons, valid_red_icon_confidences, best_new_level_icon
+
+    def _find_new_level_button(self, screenshot: Any) -> tuple[bool, float, int, int]:
+        template_pair = self._template("newLevel")
+        if template_pair is None:
+            return False, 0.0, 0, 0
+        template, mask = template_pair
+        return self.image_matcher.find_template(
+            screenshot,
+            template,
+            mask=mask,
+            threshold=self._new_level_threshold(),
+            template_name="newLevel",
+        )
+
+    def _red_icon_template_names(self) -> list[str]:
+        cached = getattr(self, "_red_icon_template_names_cache", None)
+        if cached is not None:
+            return cached
+        template_names = [name for name in self.templates if name.startswith("RedIcon")]
+        if not template_names:
+            return ["RedIcon"]
+
+        def sort_key(name: str) -> tuple[int, Any]:
+            if name == "RedIcon":
+                return (0, 0)
+            if name == "RedIconNoBG":
+                return (2, 0)
+            suffix = name.replace("RedIcon", "", 1)
+            if suffix.isdigit():
+                return (1, int(suffix))
+            return (3, suffix)
+
+        return sorted(template_names, key=sort_key)
+
+    @staticmethod
+    def _template_size(template_pair: TemplatePair) -> tuple[int, int]:
+        template, _ = template_pair
+        return int(template.shape[1]), int(template.shape[0])
+
+    def _red_icon_template_span(self) -> tuple[int, int]:
+        template_sizes = [
+            self._template_size(self.templates[template_name])
+            for template_name in self._red_icon_template_names()
+            if template_name in self.templates
+        ]
+        if not template_sizes:
+            return 0, 0
+        return (
+            max(template_width for template_width, _ in template_sizes),
+            max(template_height for _, template_height in template_sizes),
+        )
+
+    @staticmethod
+    def _extract_region(
+        screenshot: Any,
+        x_min: Any,
+        x_max: Any,
+        y_min: Any,
+        y_max: Any,
+        pad_x: Any = 0,
+        pad_y: Any = 0,
+    ) -> tuple[Any, int, int]:
+        height, width = screenshot.shape[:2]
+        left = max(0, int(x_min) - int(pad_x))
+        right = min(width, int(x_max) + int(pad_x))
+        top = max(0, int(y_min) - int(pad_y))
+        bottom = min(height, int(y_max) + int(pad_y))
+        if left >= right or top >= bottom:
+            return screenshot[0:0, 0:0], 0, 0
+        return screenshot[top:bottom, left:right], left, top
+
+    @staticmethod
+    def _box_iou(first: MatchCandidate, second: MatchCandidate) -> float:
+        _, x1, y1, w1, h1 = first[:5]
+        _, x2, y2, w2, h2 = second[:5]
+        left = max(x1 - w1 / 2, x2 - w2 / 2)
+        top = max(y1 - h1 / 2, y2 - h2 / 2)
+        right = min(x1 + w1 / 2, x2 + w2 / 2)
+        bottom = min(y1 + h1 / 2, y2 + h2 / 2)
+        intersection = max(0, right - left) * max(0, bottom - top)
+        union = (w1 * h1) + (w2 * h2) - intersection
+        return intersection / union if union > 0 else 0
+
+    @classmethod
+    def _dedupe_box_candidates(
+        cls: type,
+        candidates: list[BoxCandidate],
+        iou_threshold: float,
+    ) -> list[BoxCandidate]:
+        merged = []
+        for candidate in sorted(candidates, key=lambda item: item[0], reverse=True):
+            if all(cls._box_iou(candidate, existing) <= iou_threshold for existing in merged):
+                merged.append(candidate)
+        return merged
+
+    @classmethod
+    def _merge_box_candidates(cls: type, candidates: list[BoxCandidate]) -> list[BoxCandidate]:
+        strict = cls._dedupe_box_candidates(candidates, 0.20)
+        relaxed = cls._dedupe_box_candidates(candidates, 0.25)
+        if len(relaxed) - len(strict) == 1:
+            return relaxed
+        return strict
+
+    def _merge_box_candidates_with_supervision(self, candidates: list[BoxCandidate]) -> list[BoxCandidate]:
+        legacy_candidates = self._merge_box_candidates(candidates)
+        if not candidates or not self._supervision_nms_enabled("SUPERVISION_BOX_NMS_ENABLED"):
+            return legacy_candidates
+        supervision_candidates = self.image_matcher.filter_candidates_with_supervision_nms(
+            candidates,
+            iou_threshold=getattr(config, "SUPERVISION_BOX_NMS_IOU_THRESHOLD", 0.25),
+            class_agnostic=getattr(config, "SUPERVISION_CLASS_AGNOSTIC_NMS", True),
+        )
+        if supervision_candidates is None or (not supervision_candidates and legacy_candidates):
+            return legacy_candidates
+        return [candidate for candidate in supervision_candidates]
+
+    @staticmethod
+    def _merge_icon_detection(
+        detections: dict[tuple[int, int], list[tuple[str, float]]],
+        x: int,
+        y: int,
+        template_name: str,
+        confidence: float,
+    ) -> None:
+        for existing_x, existing_y in list(detections.keys()):
+            if abs(x - existing_x) < 10 and abs(y - existing_y) < 10:
+                detections[(existing_x, existing_y)].append((template_name, confidence))
+                return
+        detections[(x, y)] = [(template_name, confidence)]
+
+    def _collect_red_icon_detections(
+        self,
+        screenshot: Any,
+        threshold: float,
+        min_distance: int = 80,
+        offset_x: int = 0,
+        offset_y: int = 0,
+    ) -> dict[tuple[int, int], list[tuple[str, float]]]:
+        detections: dict[tuple[int, int], list[tuple[str, float]]] = {}
+        if screenshot.size == 0:
+            return detections
+        template_names = self._red_icon_template_names()
+        if bool(getattr(config, "RED_ICON_FAST_MODE_ENABLED", False)):
+            configured_names = getattr(config, "RED_ICON_FAST_TEMPLATE_NAMES", ())
+            fast_names = [name for name in configured_names if name in self.templates]
+            if fast_names:
+                template_names = fast_names
+                min_distance = int(getattr(config, "RED_ICON_FAST_MIN_DISTANCE", min_distance))
+        for template_name in template_names:
+            if template_name not in self.templates:
                 continue
-            stem = template_path.stem
-            indexed.setdefault(stem.lower(), template_path)
-            indexed.setdefault(self._normalize_key(stem), template_path)
+            template, mask = self.templates[template_name]
+            icons = self.image_matcher.find_all_templates(
+                screenshot,
+                template,
+                mask=mask,
+                threshold=threshold,
+                min_distance=min_distance,
+                template_name=template_name,
+                use_supervision_nms=self._supervision_nms_enabled("SUPERVISION_RED_ICON_NMS_ENABLED"),
+                supervision_iou_threshold=getattr(config, "SUPERVISION_RED_ICON_NMS_IOU_THRESHOLD", 0.20),
+                supervision_class_agnostic=getattr(config, "SUPERVISION_CLASS_AGNOSTIC_NMS", True),
+            )
+            for confidence, x, y in icons:
+                self._merge_icon_detection(
+                    detections,
+                    x + offset_x,
+                    y + offset_y,
+                    template_name,
+                    confidence,
+                )
+        return detections
 
-        with self._cache_lock:
-            self._asset_index_cache[assets_key] = {"mtime": mtime, "index": indexed}
-        return indexed
+    @staticmethod
+    def _best_confidence_by_template(matches: list[tuple[str, float]]) -> dict[str, float]:
+        by_template: dict[str, float] = {}
+        for template_name, confidence in matches:
+            existing = by_template.get(template_name)
+            if existing is None or confidence > existing:
+                by_template[template_name] = confidence
+        return by_template
 
-    def _load_template(self, template_file):
-        template_name = template_file.stem
-        try:
-            mtime = template_file.stat().st_mtime
-        except OSError:
-            mtime = None
+    @classmethod
+    def _icons_from_detections(
+        cls: type,
+        detections: dict[tuple[int, int], list[tuple[str, float]]],
+        min_matches: int,
+    ) -> tuple[list[RedIcon], list[float]]:
+        icons = [
+            (max(by_template.values()), x, y)
+            for (x, y), matches in detections.items()
+            if len(by_template := cls._best_confidence_by_template(matches)) >= min_matches
+        ]
+        confidences = [confidence for confidence, _, _ in icons]
+        return icons, confidences
 
-        key = str(template_file)
-        with self._cache_lock:
-            cached = self._template_cache.get(key)
-            if cached and cached["mtime"] == mtime:
-                return template_name, cached["data"]
+    @staticmethod
+    def _red_icon_in_bounds(icon: RedIcon, x_min: int, x_max: int, y_min: int, y_max: int) -> bool:
+        _, x, y = icon
+        return x_min <= x <= x_max and y_min <= y <= y_max
 
-        template_img = self.image_matcher.load_template(template_file)
-        with self._cache_lock:
-            self._template_cache[key] = {"mtime": mtime, "data": template_img}
-        return template_name, template_img
+    @classmethod
+    def _best_red_icon_in_bounds(
+        cls: type,
+        icons: list[RedIcon],
+        x_min: int,
+        x_max: int,
+        y_min: int,
+        y_max: int,
+        minimum_confidence: float = 0.0,
+    ) -> RedIcon | None:
+        eligible_icons = [
+            icon
+            for icon in icons
+            if icon[0] >= minimum_confidence and cls._red_icon_in_bounds(icon, x_min, x_max, y_min, y_max)
+        ]
+        return max(eligible_icons, key=lambda icon: icon[0], default=None)
+
+    def _find_best_zone_red_icon(
+        self,
+        screenshot: Any,
+        threshold: float,
+        x_min: int,
+        x_max: int,
+        y_min: int,
+        y_max: int,
+        min_distance: int = 80,
+    ) -> RedIcon | None:
+        region, offset_x, offset_y = self._extract_region(
+            screenshot,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+            pad_x=self._red_icon_max_width,
+            pad_y=self._red_icon_max_height,
+        )
+        if region.size == 0:
+            return None
+
+        detections = self._collect_red_icon_detections(
+            region,
+            threshold,
+            min_distance=min_distance,
+            offset_x=offset_x,
+            offset_y=offset_y,
+        )
+        min_matches = self._red_icon_min_matches()
+        icons, _ = self._icons_from_detections(detections, min_matches)
+        return self._best_red_icon_in_bounds(icons, x_min, x_max, y_min, y_max)
+
+    def _find_new_level_red_icon(
+        self,
+        screenshot: Any = None,
+        scan_threshold: float | None = None,
+        min_matches: int | None = None,
+    ) -> RedIcon | None:
+        if screenshot is None:
+            screenshot = self.window_capture.capture(max_y=config.EXTENDED_SEARCH_Y)
+        if scan_threshold is None:
+            scan_threshold = self._red_icon_scan_threshold()
+        if min_matches is None:
+            min_matches = self._red_icon_min_matches()
+
+        footer_region, offset_x, offset_y = self._extract_region(
+            screenshot,
+            config.NEW_LEVEL_RED_ICON_X_MIN,
+            config.NEW_LEVEL_RED_ICON_X_MAX,
+            config.NEW_LEVEL_RED_ICON_Y_MIN,
+            config.NEW_LEVEL_RED_ICON_Y_MAX,
+            pad_x=self._red_icon_max_width,
+            pad_y=self._red_icon_max_height,
+        )
+        footer_detections = self._collect_red_icon_detections(
+            footer_region,
+            scan_threshold,
+            min_distance=80,
+            offset_x=offset_x,
+            offset_y=offset_y,
+        )
+        all_red_icons_extended, _ = self._icons_from_detections(footer_detections, min_matches)
+
+        new_level_icon_threshold = (
+            self.vision_optimizer.new_level_red_icon_threshold
+            if self.vision_optimizer.enabled
+            else config.NEW_LEVEL_RED_ICON_THRESHOLD
+        )
+        return self._best_red_icon_in_bounds(
+            all_red_icons_extended,
+            config.NEW_LEVEL_RED_ICON_X_MIN,
+            config.NEW_LEVEL_RED_ICON_X_MAX,
+            config.NEW_LEVEL_RED_ICON_Y_MIN,
+            config.NEW_LEVEL_RED_ICON_Y_MAX,
+            minimum_confidence=new_level_icon_threshold,
+        )
+
+    def _upgrade_station_threshold(self) -> float:
+        if self.vision_optimizer.enabled:
+            return self.vision_optimizer.upgrade_station_threshold
+        return config.UPGRADE_STATION_THRESHOLD
+
+    def _candidate_passes_template_gates(
+        self,
+        screenshot: Any,
+        template: Any,
+        mask: Any,
+        location: tuple[int, int],
+        color_check_enabled: bool,
+        color_threshold: float,
+        hsv_gate_enabled: bool,
+        hsv_ranges: Any,
+        hsv_min_match_ratio: float,
+    ) -> bool:
+        if color_check_enabled and not self.image_matcher._check_color_similarity(
+            screenshot,
+            template,
+            location,
+            mask,
+            color_threshold=color_threshold,
+        ):
+            return False
+        if not hsv_gate_enabled:
+            return True
+        return self.image_matcher._check_hsv_gate(
+            screenshot,
+            template,
+            location,
+            mask,
+            hsv_ranges,
+            hsv_min_match_ratio,
+        )
+
+    @staticmethod
+    def _upgrade_station_distance_squared(match: RedIcon, expected_position: tuple[int, int]) -> int:
+        _, x, y = match
+        expected_x, expected_y = expected_position
+        return (int(x) - int(expected_x)) ** 2 + (int(y) - int(expected_y)) ** 2
+
+    def _find_upgrade_station_match(
+        self,
+        threshold: float,
+        expected_position: tuple[int, int] | None = None,
+        maximum_distance: float | None = None,
+    ) -> RedIcon | None:
+        if "upgradeStation" not in self.templates:
+            return None
+
+        limited_screenshot = self.window_capture.capture(max_y=config.UPGRADE_STATION_SEARCH_Y)
+        template, mask = self.templates["upgradeStation"]
+        candidates = self.image_matcher.find_all_templates(
+            limited_screenshot,
+            template,
+            mask=mask,
+            threshold=threshold,
+            min_distance=15,
+            template_name="upgradeStation",
+            use_supervision_nms=self._supervision_nms_enabled("SUPERVISION_UPGRADE_STATION_NMS_ENABLED"),
+            supervision_iou_threshold=getattr(config, "SUPERVISION_UPGRADE_STATION_NMS_IOU_THRESHOLD", 0.20),
+            supervision_class_agnostic=getattr(config, "SUPERVISION_CLASS_AGNOSTIC_NMS", True),
+        )
+        if not candidates:
+            return None
+
+        template_height, template_width = template.shape[:2]
+        best_target_match = None
+        best_target_distance = None
+        maximum_distance_squared = None
+        if expected_position is not None and maximum_distance is not None:
+            maximum_distance_squared = max(0.0, float(maximum_distance)) ** 2
+
+        for confidence, x, y in candidates:
+            x = int(x)
+            y = int(y)
+            location = (x - template_width // 2, y - template_height // 2)
+
+            if not self._candidate_passes_template_gates(
+                limited_screenshot,
+                template,
+                mask,
+                location,
+                config.UPGRADE_STATION_COLOR_CHECK,
+                0.7,
+                config.UPGRADE_STATION_HSV_COLOR_GATE_ENABLED,
+                config.UPGRADE_STATION_HSV_RANGES,
+                config.UPGRADE_STATION_HSV_MIN_MATCH_RATIO,
+            ):
+                continue
+
+            if self.mouse_controller.is_in_forbidden_zone(x, y, relative=True):
+                continue
+
+            match = float(confidence), x, y
+            if expected_position is None:
+                return match
+
+            distance_squared = self._upgrade_station_distance_squared(match, expected_position)
+            if maximum_distance_squared is not None and distance_squared > maximum_distance_squared:
+                continue
+            if best_target_distance is None or distance_squared < best_target_distance:
+                best_target_match = match
+                best_target_distance = distance_squared
+
+        return best_target_match
+
+    def _find_verified_upgrade_station_match(
+        self,
+        base_threshold: float,
+        relaxed_threshold: float,
+        expected_position: tuple[int, int],
+    ) -> tuple[RedIcon | None, bool]:
+        verify_attempts = max(1, int(config.UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS))
+        verify_radius = float(getattr(config, "UPGRADE_STATION_VERIFY_RADIUS", 36))
+        for attempt in range(verify_attempts):
+            current_threshold = base_threshold if attempt == 0 else relaxed_threshold
+            verified_match = self._find_upgrade_station_match(
+                current_threshold,
+                expected_position=expected_position,
+                maximum_distance=verify_radius,
+            )
+            if verified_match is not None:
+                return verified_match, True
+            if attempt < verify_attempts - 1 and not self._sleep(config.UPGRADE_STATION_VERIFY_SEARCH_INTERVAL):
+                return None, False
+        return None, True
+
+    def _box_template_names(self) -> list[str]:
+        return [box_name for box_name in ("box1", "box2", "box3", "box4") if box_name in self.templates]
+
+    def _box_candidate_from_match(
+        self,
+        limited_screenshot: Any,
+        template: Any,
+        mask: Any,
+        box_name: str,
+        match: MatchCandidate,
+    ) -> BoxCandidate | None:
+        confidence, x, y, candidate_width, candidate_height = match
+        candidate_width = int(candidate_width)
+        candidate_height = int(candidate_height)
+        location = (int(x) - candidate_width // 2, int(y) - candidate_height // 2)
+        if not self._candidate_passes_template_gates(
+            limited_screenshot,
+            template,
+            mask,
+            location,
+            config.BOX_COLOR_CHECK,
+            config.BOX_COLOR_THRESHOLD,
+            config.BOX_HSV_COLOR_GATE_ENABLED,
+            config.BOX_HSV_RANGES,
+            config.BOX_HSV_MIN_MATCH_RATIO,
+        ):
+            return None
+        return confidence, int(x), int(y), candidate_width, candidate_height, box_name
+
+    def _collect_box_candidates(self, limited_screenshot: Any, box_threshold: float) -> list[BoxCandidate]:
+        box_candidates: list[BoxCandidate] = []
+        for box_name in self._box_template_names():
+            template, mask = self.templates[box_name]
+            candidates = self.image_matcher.find_template_candidates(
+                limited_screenshot,
+                template,
+                mask=mask,
+                threshold=box_threshold,
+                min_distance=12,
+                template_name=box_name,
+            )
+            box_candidates.extend(
+                box_candidate
+                for candidate in candidates
+                if (
+                    box_candidate := self._box_candidate_from_match(
+                        limited_screenshot,
+                        template,
+                        mask,
+                        box_name,
+                        candidate,
+                    )
+                )
+                is not None
+            )
+        return box_candidates
