@@ -1,23 +1,14 @@
-import ctypes
 import logging
 import threading
-import time
-from collections.abc import Callable
 from typing import Any
 
 import numpy as np
 
-from core.platform import IS_WINDOWS, pywintypes, require_windows_backend, win32api, win32con, win32gui, win32ui
+from core.platform import mss, pywinctl, require_automation_backend
 
 logger = logging.getLogger(__name__)
 WindowRect = tuple[int, int, int, int]
 ForbiddenZone = tuple[int, int, int, int]
-
-if IS_WINDOWS:
-    try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(2)
-    except Exception:
-        logger.debug("DPI awareness is already configured or unavailable")
 
 
 class WindowCaptureError(RuntimeError):
@@ -30,9 +21,10 @@ class WindowNotAvailableError(WindowCaptureError):
 
 class WindowCapture:
     def __init__(self, window_title: str, target_width: int = 800, target_height: int = 600) -> None:
-        require_windows_backend("WindowCapture")
+        require_automation_backend("WindowCapture")
         self.window_title = window_title
         self.hwnd = None
+        self._window = None
         try:
             self.target_width = int(target_width)
             self.target_height = int(target_height)
@@ -42,115 +34,163 @@ class WindowCapture:
             raise WindowCaptureError(f"Invalid target window size: {self.target_width}x{self.target_height}")
         self._lock = threading.RLock()
         try:
+            self._screenshotter = mss.mss()
+        except Exception as exc:
+            raise WindowCaptureError(f"Cannot initialize screenshot backend: {exc}") from exc
+        try:
             self.ensure_window(resize=True)
         except WindowCaptureError as exc:
             logger.warning("%s", exc)
 
-    def _find_window_handle(self) -> int | None:
-        hwnd = win32gui.FindWindow(None, self.window_title)
-        if hwnd and win32gui.IsWindow(hwnd):
-            return hwnd
+    @staticmethod
+    def _window_is_alive(window: Any) -> bool:
+        alive = getattr(window, "isAlive", None)
+        if alive is None:
+            return True
+        try:
+            return bool(alive() if callable(alive) else alive)
+        except Exception:
+            return False
+
+    @staticmethod
+    def _window_handle(window: Any) -> Any:
+        handle = getattr(window, "getHandle", None)
+        if callable(handle):
+            try:
+                return handle()
+            except Exception:
+                return None
+        return getattr(window, "handle", None)
+
+    @staticmethod
+    def _geometry_value(geometry: Any, names: tuple[str, ...], index: int) -> Any:
+        for name in names:
+            if hasattr(geometry, name):
+                return getattr(geometry, name)
+        if isinstance(geometry, dict):
+            for name in names:
+                if name in geometry:
+                    return geometry[name]
+        try:
+            return geometry[index]
+        except (TypeError, KeyError, IndexError) as exc:
+            raise AttributeError(f"Geometry value not found for {names}") from exc
+
+    @classmethod
+    def _rect_bounds(cls: type["WindowCapture"], rect: Any) -> WindowRect:
+        left = int(cls._geometry_value(rect, ("left", "x"), 0))
+        top = int(cls._geometry_value(rect, ("top", "y"), 1))
+        right = int(cls._geometry_value(rect, ("right",), 2))
+        bottom = int(cls._geometry_value(rect, ("bottom",), 3))
+        return left, top, right - left, bottom - top
+
+    @classmethod
+    def _box_bounds(cls: type["WindowCapture"], box: Any) -> WindowRect:
+        left = int(cls._geometry_value(box, ("left", "x"), 0))
+        top = int(cls._geometry_value(box, ("top", "y"), 1))
+        width = int(cls._geometry_value(box, ("width", "w"), 2))
+        height = int(cls._geometry_value(box, ("height", "h"), 3))
+        return left, top, width, height
+
+    def _find_window_object(self) -> Any | None:
+        try:
+            windows = pywinctl.getWindowsWithTitle(self.window_title) or []
+        except Exception as exc:
+            raise WindowCaptureError(f"Could not search for window '{self.window_title}': {exc}") from exc
+
+        exact_matches = [
+            window
+            for window in windows
+            if getattr(window, "title", None) == self.window_title and self._window_is_alive(window)
+        ]
+        if exact_matches:
+            return exact_matches[0]
+
+        for window in windows:
+            if self._window_is_alive(window):
+                return window
         return None
 
     def _invalidate_window(self) -> None:
         self.hwnd = None
-
-    def _translate_win32_error(self, exc: pywintypes.error, action: str) -> WindowCaptureError:
-        winerror = exc.args[0] if exc.args else None
-        if winerror == 1400:
-            self._invalidate_window()
-            return WindowNotAvailableError(
-                f"Window '{self.window_title}' is no longer available during {action}"
-            )
-        return WindowCaptureError(f"{action} failed for window '{self.window_title}': {exc}")
+        self._window = None
 
     def _resize_bound_window(self) -> None:
-        if not self.hwnd or not win32gui.IsWindow(self.hwnd):
+        if self._window is None or not self._window_is_alive(self._window):
             return
-
         try:
-            rect = win32gui.GetWindowRect(self.hwnd)
-        except pywintypes.error as exc:
-            raise self._translate_win32_error(exc, "resizing the window") from exc
-        x, y = rect[0], rect[1]
-
-        result = ctypes.windll.user32.SetWindowPos(
-            self.hwnd,
-            0,
-            int(x),
-            int(y),
-            int(self.target_width),
-            int(self.target_height),
-            win32con.SWP_NOZORDER | win32con.SWP_SHOWWINDOW,
-        )
-        if not result:
-            raise WindowCaptureError(f"SetWindowPos failed for '{self.window_title}'")
+            resized = self._window.resizeTo(self.target_width, self.target_height, wait=True)
+        except Exception as exc:
+            raise WindowCaptureError(f"Resizing window '{self.window_title}' failed: {exc}") from exc
+        if resized is False:
+            raise WindowCaptureError(f"Resizing window '{self.window_title}' failed")
         logger.info("Window resized to %sx%s", self.target_width, self.target_height)
 
-    def find_window(self) -> int:
+    def find_window(self) -> Any:
         with self._lock:
-            hwnd = self._find_window_handle()
-            if not hwnd:
+            window = self._find_window_object()
+            if window is None:
                 self._invalidate_window()
                 raise WindowNotAvailableError(f"Window '{self.window_title}' not found")
-            if hwnd != self.hwnd:
-                logger.info("Window found: %s (HWND: %s)", self.window_title, hwnd)
-            self.hwnd = hwnd
-            return self.hwnd
+            handle = self._window_handle(window)
+            if handle != self.hwnd:
+                logger.info("Window found: %s (handle: %s)", self.window_title, handle)
+            self._window = window
+            self.hwnd = handle
+            return self._window
 
-    def ensure_window(self, resize: bool = False) -> int:
+    def ensure_window(self, resize: bool = False) -> Any:
         with self._lock:
-            if self.hwnd and win32gui.IsWindow(self.hwnd):
+            if self._window is not None and self._window_is_alive(self._window):
                 if resize:
                     self._resize_bound_window()
-                return self.hwnd
+                return self._window
 
-            previous_hwnd = self.hwnd
-            hwnd = self._find_window_handle()
-            if not hwnd:
+            previous_handle = self.hwnd
+            window = self._find_window_object()
+            if window is None:
                 self._invalidate_window()
-                if previous_hwnd:
-                    logger.warning("Window handle %s is no longer valid", previous_hwnd)
+                if previous_handle:
+                    logger.warning("Window handle %s is no longer valid", previous_handle)
                 raise WindowNotAvailableError(f"Window '{self.window_title}' not found")
 
-            handle_changed = hwnd != previous_hwnd
-            self.hwnd = hwnd
-            if handle_changed:
-                logger.info("Window found: %s (HWND: %s)", self.window_title, hwnd)
-            if resize or handle_changed:
+            handle = self._window_handle(window)
+            self._window = window
+            self.hwnd = handle
+            if handle != previous_handle:
+                logger.info("Window found: %s (handle: %s)", self.window_title, handle)
+            if resize or handle != previous_handle:
                 self._resize_bound_window()
-            return self.hwnd
+            return self._window
 
-    def get_hwnd(self) -> int:
-        return self.ensure_window()
+    def get_hwnd(self) -> Any:
+        self.ensure_window()
+        return self.hwnd
 
     def resize_window(self) -> None:
         with self._lock:
             self.ensure_window()
             self._resize_bound_window()
 
-    def _get_client_size(self, hwnd: int) -> tuple[tuple[int, int, int, int], int, int]:
+    def _get_client_bounds(self, window: Any) -> WindowRect:
         try:
-            rect = win32gui.GetClientRect(hwnd)
-        except pywintypes.error as exc:
-            raise self._translate_win32_error(exc, "reading the window bounds") from exc
-
-        width = rect[2] - rect[0]
-        height = rect[3] - rect[1]
+            frame = window.getClientFrame()
+            x, y, width, height = self._rect_bounds(frame)
+        except Exception:
+            try:
+                x, y, width, height = self._box_bounds(window.box)
+            except Exception as exc:
+                raise WindowCaptureError(f"Cannot read window bounds for '{self.window_title}': {exc}") from exc
         if width <= 0 or height <= 0:
             raise WindowCaptureError(
                 f"Window '{self.window_title}' has an invalid client size: {width}x{height}"
             )
-        return rect, width, height
+        return x, y, width, height
 
     def get_window_rect(self) -> WindowRect:
-        hwnd = self.ensure_window()
-        rect, width, height = self._get_client_size(hwnd)
-        try:
-            x, y = win32gui.ClientToScreen(hwnd, (rect[0], rect[1]))
-        except pywintypes.error as exc:
-            raise self._translate_win32_error(exc, "reading the window bounds") from exc
-        return x, y, width, height
+        with self._lock:
+            window = self.ensure_window()
+            return self._get_client_bounds(window)
 
     @staticmethod
     def _apply_capture_height_limit(height: int, max_y: Any) -> int:
@@ -168,236 +208,137 @@ class WindowCapture:
             f"Window '{self.window_title}' cannot be captured with size {width}x{height}"
         )
 
-    def _decode_bitmap(self, bitmap_bytes: bytes, width: int, height: int) -> np.ndarray:
-        expected_size = height * width * 4
-        if len(bitmap_bytes) != expected_size:
+    @staticmethod
+    def _decode_screenshot(screenshot: Any, width: int, height: int) -> np.ndarray:
+        screenshot_image = np.asarray(screenshot)
+        if screenshot_image.dtype != np.uint8:
+            screenshot_image = screenshot_image.astype(np.uint8, copy=False)
+        if screenshot_image.shape[:2] != (height, width):
             raise WindowCaptureError(
-                f"Captured bitmap size mismatch: expected {expected_size} bytes, got {len(bitmap_bytes)}"
+                f"Captured image size mismatch: expected {width}x{height}, got "
+                f"{screenshot_image.shape[1]}x{screenshot_image.shape[0]}"
             )
-        bitmap_image = np.frombuffer(bitmap_bytes, dtype=np.uint8).reshape((height, width, 4))
-        return np.ascontiguousarray(bitmap_image[:, :, :3])
-
-    @staticmethod
-    def _release_capture_resources(
-        hwnd: int,
-        hwnd_dc: Any,
-        mfc_dc: Any,
-        save_dc: Any,
-        save_bitmap: Any,
-        old_bitmap: Any,
-    ) -> None:
-        if save_dc is not None and old_bitmap is not None:
-            WindowCapture._release_capture_resource(
-                "restore selected bitmap",
-                lambda: save_dc.SelectObject(old_bitmap),
-            )
-        if save_bitmap is not None:
-            WindowCapture._release_capture_resource(
-                "delete bitmap",
-                lambda: win32gui.DeleteObject(save_bitmap.GetHandle()),
-            )
-        if save_dc is not None:
-            WindowCapture._release_capture_resource("delete compatible dc", save_dc.DeleteDC)
-        if mfc_dc is not None:
-            WindowCapture._release_capture_resource("delete source dc", mfc_dc.DeleteDC)
-        if hwnd_dc is not None and hwnd:
-            WindowCapture._release_capture_resource(
-                "release window dc",
-                lambda: win32gui.ReleaseDC(hwnd, hwnd_dc),
-            )
-
-    @staticmethod
-    def _release_capture_resource(action_name: str, release_action: Callable[[], Any]) -> None:
-        try:
-            release_action()
-        except Exception as exc:
-            logger.debug("Could not release capture resource during %s: %s", action_name, exc)
+        if screenshot_image.ndim != 3 or screenshot_image.shape[2] < 3:
+            raise WindowCaptureError(f"Captured image has invalid shape: {screenshot_image.shape}")
+        decoded = screenshot_image[:, :, :3]
+        if decoded.flags.c_contiguous:
+            return decoded
+        return np.ascontiguousarray(decoded)
 
     def capture(self, max_y: Any = None) -> np.ndarray:
         with self._lock:
-            hwnd = self.ensure_window()
-            _, width, height = self._get_client_size(hwnd)
-
+            window = self.ensure_window()
+            x, y, width, height = self._get_client_bounds(window)
             height = self._apply_capture_height_limit(height, max_y)
             self._validate_capture_size(width, height)
-
-            hwnd_dc = None
-            mfc_dc = None
-            save_dc = None
-            save_bitmap = None
-            old_bitmap = None
             try:
-                hwnd_dc = win32gui.GetWindowDC(hwnd)
-                mfc_dc = win32ui.CreateDCFromHandle(hwnd_dc)
-                save_dc = mfc_dc.CreateCompatibleDC()
-
-                save_bitmap = win32ui.CreateBitmap()
-                save_bitmap.CreateCompatibleBitmap(mfc_dc, width, height)
-                old_bitmap = save_dc.SelectObject(save_bitmap)
-
-                result = ctypes.windll.user32.PrintWindow(hwnd, save_dc.GetSafeHdc(), 3)
-                if result != 1:
-                    raise WindowCaptureError(f"PrintWindow failed for '{self.window_title}'")
-
-                bitmap_bytes = save_bitmap.GetBitmapBits(True)
-                return self._decode_bitmap(bitmap_bytes, width, height)
-            except pywintypes.error as exc:
-                raise self._translate_win32_error(exc, "capturing the window") from exc
-            except ValueError as exc:
-                raise WindowCaptureError(f"Captured bitmap could not be decoded: {exc}") from exc
-            finally:
-                self._release_capture_resources(hwnd, hwnd_dc, mfc_dc, save_dc, save_bitmap, old_bitmap)
+                screenshot = self._screenshotter.grab(
+                    {"left": int(x), "top": int(y), "width": int(width), "height": int(height)}
+                )
+                return self._decode_screenshot(screenshot, width, height)
+            except WindowCaptureError:
+                raise
+            except Exception as exc:
+                if not self.is_window_active():
+                    raise WindowNotAvailableError(
+                        f"Window '{self.window_title}' is no longer available during capture"
+                    ) from exc
+                raise WindowCaptureError(f"Capturing window '{self.window_title}' failed: {exc}") from exc
 
     def is_window_active(self) -> bool:
         with self._lock:
-            if self.hwnd and win32gui.IsWindow(self.hwnd):
+            if self._window is not None and self._window_is_alive(self._window):
                 return True
-            self.hwnd = self._find_window_handle()
-            return bool(self.hwnd)
+            self._window = self._find_window_object()
+            self.hwnd = self._window_handle(self._window) if self._window is not None else None
+            return self._window is not None
+
+    def close(self) -> None:
+        close = getattr(self._screenshotter, "close", None)
+        if callable(close):
+            close()
 
 
 class ForbiddenAreaOverlay:
-    def __init__(self, target_hwnd: int, forbidden_zones: list[ForbiddenZone]) -> None:
-        require_windows_backend("ForbiddenAreaOverlay")
-        self.target_hwnd = target_hwnd
+    def __init__(self, window_capture: WindowCapture, forbidden_zones: list[ForbiddenZone]) -> None:
+        self.window_capture = window_capture
         self.forbidden_zones = forbidden_zones
-        self.overlay_hwnd = None
         self.running = False
         self.thread = None
-        
+        self._root = None
+
     def start(self) -> None:
         if self.running:
             return
         self.running = True
         self.thread = threading.Thread(target=self._create_overlay, daemon=True)
         self.thread.start()
-        logger.info("Forbidden area overlay started")
-    
+        logger.info("Forbidden area visualizer started")
+
     def stop(self) -> None:
         self.running = False
-        if self.overlay_hwnd:
-            try:
-                win32gui.DestroyWindow(self.overlay_hwnd)
-            except pywintypes.error as exc:
-                logger.debug("Overlay destroy failed: %s", exc)
-            self.overlay_hwnd = None
         if self.thread is not None and self.thread.is_alive():
             self.thread.join(timeout=1.0)
-        logger.info("Forbidden area overlay stopped")
+        logger.info("Forbidden area visualizer stopped")
 
-    def _build_window_class(self) -> Any:
-        overlay_class = win32gui.WNDCLASS()
-        overlay_class.lpfnWndProc = self._wnd_proc
-        overlay_class.lpszClassName = "ForbiddenAreaOverlay"
-        overlay_class.hCursor = win32gui.LoadCursor(0, win32con.IDC_ARROW)
-        overlay_class.hbrBackground = win32gui.GetStockObject(win32con.NULL_BRUSH)
-        return overlay_class
+    @staticmethod
+    def _preview_position(x: int, y: int, width: int) -> tuple[int, int]:
+        return x + width + 16, max(0, y)
 
-    def _register_window_class(self) -> None:
-        try:
-            win32gui.RegisterClass(self._build_window_class())
-        except pywintypes.error:
-            pass
+    def _draw_zones(self, canvas: Any, width: int, height: int) -> None:
+        canvas.delete("zone")
+        canvas.create_rectangle(0, 0, width, height, outline="#6f6f6f", width=1, tags="zone")
+        for x_min, x_max, y_min, y_max in self.forbidden_zones:
+            canvas.create_rectangle(
+                int(x_min),
+                int(y_min),
+                int(x_max),
+                int(y_max),
+                fill="#ff4040",
+                stipple="gray25",
+                outline="#ff4040",
+                tags="zone",
+            )
 
-    def _target_window_metrics(self) -> tuple[tuple[int, int], int, int]:
-        target_rect = win32gui.GetClientRect(self.target_hwnd)
-        target_position = win32gui.ClientToScreen(self.target_hwnd, (0, 0))
-        width = target_rect[2] - target_rect[0]
-        height = target_rect[3] - target_rect[1]
-        return target_position, width, height
+    def _sync_preview_window(self, root: Any, canvas: Any) -> None:
+        x, y, width, height = self.window_capture.get_window_rect()
+        preview_x, preview_y = self._preview_position(x, y, width)
+        root.geometry(f"{width}x{height}+{preview_x}+{preview_y}")
+        canvas.config(width=width, height=height)
+        self._draw_zones(canvas, width, height)
 
-    def _create_overlay_window(self, target_position: tuple[int, int], width: int, height: int) -> int:
-        return win32gui.CreateWindowEx(
-            win32con.WS_EX_LAYERED | win32con.WS_EX_TRANSPARENT | win32con.WS_EX_TOPMOST | win32con.WS_EX_TOOLWINDOW,
-            "ForbiddenAreaOverlay",
-            "Forbidden Area Overlay",
-            win32con.WS_POPUP,
-            target_position[0], target_position[1],
-            width, height,
-            0, 0, 0, None
-        )
-
-    def _show_overlay_window(self) -> None:
-        win32gui.SetLayeredWindowAttributes(
-            self.overlay_hwnd,
-            0,
-            128,
-            win32con.LWA_ALPHA
-        )
-        win32gui.ShowWindow(self.overlay_hwnd, win32con.SW_SHOW)
-        win32gui.UpdateWindow(self.overlay_hwnd)
-
-    def _sync_overlay_position(self, last_position: tuple[int, int], width: int, height: int) -> tuple[int, int]:
-        new_position = win32gui.ClientToScreen(self.target_hwnd, (0, 0))
-        if new_position == last_position:
-            return last_position
-        win32gui.SetWindowPos(
-            self.overlay_hwnd,
-            win32con.HWND_TOPMOST,
-            new_position[0], new_position[1],
-            width, height,
-            win32con.SWP_SHOWWINDOW
-        )
-        self._draw_zones()
-        return new_position
-    
     def _create_overlay(self) -> None:
         try:
-            self._register_window_class()
-            target_position, width, height = self._target_window_metrics()
-            self.overlay_hwnd = self._create_overlay_window(target_position, width, height)
-            self._show_overlay_window()
-            self._draw_zones()
-            
-            last_position = target_position
-            while self.running:
+            import tkinter as tk
+
+            root = tk.Tk()
+            self._root = root
+            root.title("Forbidden Area Visualizer")
+            root.resizable(False, False)
+            try:
+                root.attributes("-topmost", True)
+            except Exception:
+                pass
+            canvas = tk.Canvas(root, highlightthickness=0, background="#111111")
+            canvas.pack(fill="both", expand=True)
+
+            def tick() -> None:
+                if not self.running:
+                    root.destroy()
+                    return
                 try:
-                    last_position = self._sync_overlay_position(last_position, width, height)
-                except pywintypes.error as exc:
-                    logger.error("Error in overlay update loop: %s", exc)
-                    break
-                
-                time.sleep(0.1)
-                
-        except pywintypes.error as exc:
-            logger.error("Failed to create overlay window: %s", exc)
+                    self._sync_preview_window(root, canvas)
+                except Exception as exc:
+                    logger.error("Error in forbidden area visualizer loop: %s", exc)
+                    self.running = False
+                    root.destroy()
+                    return
+                root.after(100, tick)
+
+            tick()
+            root.mainloop()
+        except Exception as exc:
+            logger.error("Failed to create forbidden area visualizer: %s", exc)
         finally:
             self.running = False
-
-    def _draw_zone_rectangles(self, device_context: Any, brush: Any) -> None:
-        for x_min, x_max, y_min, y_max in self.forbidden_zones:
-            old_brush = win32gui.SelectObject(device_context, brush)
-            win32gui.Rectangle(device_context, int(x_min), int(y_min), int(x_max), int(y_max))
-            win32gui.SelectObject(device_context, old_brush)
-    
-    def _draw_zones(self) -> None:
-        if not self.overlay_hwnd:
-            return
-            
-        hdc = None
-        red_brush = None
-        try:
-            hdc = win32gui.GetDC(self.overlay_hwnd)
-            red_brush = win32gui.CreateSolidBrush(win32api.RGB(255, 0, 0))
-            self._draw_zone_rectangles(hdc, red_brush)
-        except pywintypes.error as exc:
-            logger.error("Error drawing zones: %s", exc)
-        finally:
-            if red_brush is not None:
-                win32gui.DeleteObject(red_brush)
-            if hdc is not None:
-                win32gui.ReleaseDC(self.overlay_hwnd, hdc)
-    
-    def _wnd_proc(self, hwnd: int, msg: int, wparam: int, lparam: int) -> int:
-        if msg == win32con.WM_PAINT:
-            hdc, ps = win32gui.BeginPaint(hwnd)
-            
-            red_brush = win32gui.CreateSolidBrush(win32api.RGB(255, 0, 0))
-            self._draw_zone_rectangles(hdc, red_brush)
-            win32gui.DeleteObject(red_brush)
-            win32gui.EndPaint(hwnd, ps)
-            return 0
-        if msg == win32con.WM_DESTROY:
-            win32gui.PostQuitMessage(0)
-            return 0
-        return win32gui.DefWindowProc(hwnd, msg, wparam, lparam)
+            self._root = None

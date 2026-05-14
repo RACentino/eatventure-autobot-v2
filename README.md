@@ -66,7 +66,7 @@ The bot utilizes a refactored **Forbidden Zone Handling** system. Zones are defi
 
 ## Requirements
 
-* **Operating System**: Windows or Linux. The bundled live window-capture and input backend uses Windows automation APIs; non-Windows runs keep imports, configuration, and file handling platform-safe.
+* **Operating System**: Windows or Linux with an X11/XWayland desktop session. The live window-capture and input backend uses cross-platform Python automation libraries for window geometry, screenshots, and mouse control.
 * **Python**: Use a version supported by the pinned packages in `requirements.txt`; the project has been verified locally with Python 3.14.
 * **Android Device**: Connected via USB or Wireless ADB, with **Developer Options** and **USB Debugging** enabled.
 
@@ -83,7 +83,7 @@ pip install -r requirements.txt
 ### Step 2: Configure scrcpy
 
 1. Download **scrcpy**: [https://github.com/Genymobile/scrcpy](https://github.com/Genymobile/scrcpy)
-2. Extract the files and add the folder to your System PATH.
+2. Extract the files and add the executable directory to your `PATH`.
 3. Connect your Android device and ensure it is recognized (`adb devices`).
 4. Run scrcpy with the specific title used in `config.py`:
 

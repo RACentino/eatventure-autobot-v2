@@ -1,22 +1,14 @@
 import logging
 import queue
-import threading
-from pathlib import Path
 import sys
+import threading
 from enum import Enum, auto
 from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
+from pathlib import Path
 from typing import Any
 
-try:
-    from pynput import keyboard
-except Exception as exc:
-    keyboard = None
-    KEYBOARD_IMPORT_ERROR = exc
-else:
-    KEYBOARD_IMPORT_ERROR = None
-
 from core import config
-from core.platform import require_windows_backend, win32api, win32gui
+from core.platform import BackendDependencyError, pynput_keyboard, require_keyboard_backend
 from bot import EatventureBot
 from interaction.mouse import precise_sleep
 
@@ -44,15 +36,8 @@ def _log_window_relative_cursor_position(logger: logging.Logger) -> None:
     if bot_instance is None or not bot_instance.window_capture.is_window_active():
         logger.info("[X pressed] Bot window is not available")
         return
-    try:
-        require_windows_backend("Cursor position logging")
-    except RuntimeError as exc:
-        logger.info("[X pressed] %s", exc)
-        return
-
-    hwnd = bot_instance.window_capture.get_hwnd()
-    screen_x, screen_y = win32api.GetCursorPos()
-    window_x, window_y = win32gui.ClientToScreen(hwnd, (0, 0))
+    screen_x, screen_y = bot_instance.mouse_controller.get_cursor_position()
+    window_x, window_y, _, _ = bot_instance.window_capture.get_window_rect()
     logger.info("[X pressed] Window position: (%s, %s)", screen_x - window_x, screen_y - window_y)
 
 
@@ -131,6 +116,13 @@ def on_press(key: Any) -> None:
         logging.getLogger(__name__).error("Keyboard listener error: %s", exc)
 
 
+def _create_keyboard_listener() -> Any:
+    require_keyboard_backend("Keyboard listener")
+    if pynput_keyboard is None:
+        raise BackendDependencyError("Keyboard listener backend is unavailable")
+    return pynput_keyboard.Listener(on_press=on_press)
+
+
 def setup_logging() -> None:
     global log_listener
     logs_dir = Path(config.LOGS_DIR)
@@ -194,6 +186,7 @@ def _run_bot_event_loop() -> None:
 
 def _cleanup_runtime(listener: Any | None) -> None:
     global log_listener
+    logger = logging.getLogger(__name__)
     if bot_instance is not None and bot_instance.running:
         bot_instance.stop()
     if listener is not None:
@@ -201,6 +194,10 @@ def _cleanup_runtime(listener: Any | None) -> None:
         listener.join(timeout=1.0)
     if bot_instance is not None:
         bot_instance.telegram.close()
+        try:
+            bot_instance.window_capture.close()
+        except Exception as exc:
+            logger.debug("Window capture close failed: %s", exc)
     if log_listener is not None:
         log_listener.stop()
         log_listener = None
@@ -216,11 +213,11 @@ def main() -> int:
         setup_logging()
         exit_requested.clear()
 
-        if keyboard is None:
-            logging.getLogger(__name__).error("Keyboard listener unavailable: %s", KEYBOARD_IMPORT_ERROR)
+        try:
+            listener = _create_keyboard_listener()
+        except BackendDependencyError as exc:
+            logging.getLogger(__name__).error("Keyboard listener unavailable: %s", exc)
             return 1
-
-        listener = keyboard.Listener(on_press=on_press)
         listener.start()
 
         bot_instance = EatventureBot()

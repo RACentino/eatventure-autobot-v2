@@ -6,7 +6,6 @@ from datetime import datetime
 from typing import Any
 
 from core import config
-from core.platform import pywintypes
 from vision.matcher import ImageMatcher
 from interaction.mouse import MouseController, precise_sleep, wait_event
 from bot.handlers.base import StateRegistrationMixin
@@ -52,6 +51,7 @@ class EatventureBot(
         self._stop_requested = threading.Event()
         self._step_active = threading.Event()
         self._pending_learned_behaviors: queue.SimpleQueue[dict[str, float]] = queue.SimpleQueue()
+        self._applied_runtime_behavior: tuple[float, float, float] | None = None
 
         self._initialize_runtime_services()
         self._initialize_learning_services()
@@ -64,7 +64,7 @@ class EatventureBot(
         self.window_capture = WindowCapture(config.WINDOW_TITLE, config.WINDOW_WIDTH, config.WINDOW_HEIGHT)
         self.image_matcher = ImageMatcher(config.MATCH_THRESHOLD)
         self.mouse_controller = MouseController(
-            self.window_capture.get_hwnd,
+            self.window_capture.get_window_rect,
             config.CLICK_DELAY,
             config.MOUSE_MOVE_DELAY,
         )
@@ -92,6 +92,7 @@ class EatventureBot(
         self.register_states()
         self.templates = self.load_templates()
         self._red_icon_template_names_cache = self._red_icon_template_names()
+        self._box_template_names_cache = self._box_template_names()
         self._red_icon_max_width, self._red_icon_max_height = self._red_icon_template_span()
         self.ready = self._validate_required_templates()
 
@@ -157,8 +158,17 @@ class EatventureBot(
         return wait_event(self._stop_requested, duration)
 
     def _apply_tuning(self) -> None:
-        self.mouse_controller.click_delay = float(self.tuner.click_delay)
-        self.mouse_controller.move_delay = float(self.tuner.move_delay)
+        runtime_behavior = (
+            float(self.tuner.click_delay),
+            float(self.tuner.move_delay),
+            float(self.tuner.search_interval),
+        )
+        if runtime_behavior == self._applied_runtime_behavior:
+            return
+        click_delay, move_delay, _ = runtime_behavior
+        self.mouse_controller.click_delay = click_delay
+        self.mouse_controller.move_delay = move_delay
+        self._applied_runtime_behavior = runtime_behavior
         self._runtime_behavior_snapshot = self._runtime_behavior_from_tuner()
 
     def _runtime_behavior_from_tuner(self) -> dict[str, float]:
@@ -294,7 +304,7 @@ class EatventureBot(
             self.current_level_start_time = datetime.now()
         self.historical_learner.start()
         if config.ShowForbiddenArea and self.overlay is None:
-            self.overlay = ForbiddenAreaOverlay(self.window_capture.hwnd, self.forbidden_zones)
+            self.overlay = ForbiddenAreaOverlay(self.window_capture, self.forbidden_zones)
             self.overlay.start()
         return True
 
@@ -335,10 +345,6 @@ class EatventureBot(
             return True
         except (WindowNotAvailableError, WindowCaptureError) as exc:
             logger.error("Stopping bot: %s", exc)
-            self.stop()
-            return False
-        except pywintypes.error as exc:
-            logger.error("Stopping bot due to Windows input failure: %s", exc)
             self.stop()
             return False
         except Exception:

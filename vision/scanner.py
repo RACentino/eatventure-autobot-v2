@@ -192,16 +192,26 @@ class VisionScannerMixin:
         candidates: list[BoxCandidate],
         iou_threshold: float,
     ) -> list[BoxCandidate]:
+        ordered_candidates = sorted(candidates, key=lambda item: item[0], reverse=True)
+        return cls._dedupe_ordered_box_candidates(ordered_candidates, iou_threshold)
+
+    @classmethod
+    def _dedupe_ordered_box_candidates(
+        cls: type,
+        candidates: list[BoxCandidate],
+        iou_threshold: float,
+    ) -> list[BoxCandidate]:
         merged = []
-        for candidate in sorted(candidates, key=lambda item: item[0], reverse=True):
+        for candidate in candidates:
             if all(cls._box_iou(candidate, existing) <= iou_threshold for existing in merged):
                 merged.append(candidate)
         return merged
 
     @classmethod
     def _merge_box_candidates(cls: type, candidates: list[BoxCandidate]) -> list[BoxCandidate]:
-        strict = cls._dedupe_box_candidates(candidates, 0.20)
-        relaxed = cls._dedupe_box_candidates(candidates, 0.25)
+        ordered_candidates = sorted(candidates, key=lambda item: item[0], reverse=True)
+        strict = cls._dedupe_ordered_box_candidates(ordered_candidates, 0.20)
+        relaxed = cls._dedupe_ordered_box_candidates(ordered_candidates, 0.25)
         if len(relaxed) - len(strict) == 1:
             return relaxed
         return strict
@@ -227,7 +237,7 @@ class VisionScannerMixin:
         template_name: str,
         confidence: float,
     ) -> None:
-        for existing_x, existing_y in list(detections.keys()):
+        for existing_x, existing_y in detections:
             if abs(x - existing_x) < 10 and abs(y - existing_y) < 10:
                 detections[(existing_x, existing_y)].append((template_name, confidence))
                 return
@@ -314,12 +324,15 @@ class VisionScannerMixin:
         y_max: int,
         minimum_confidence: float = 0.0,
     ) -> RedIcon | None:
-        eligible_icons = [
-            icon
-            for icon in icons
-            if icon[0] >= minimum_confidence and cls._red_icon_in_bounds(icon, x_min, x_max, y_min, y_max)
-        ]
-        return max(eligible_icons, key=lambda icon: icon[0], default=None)
+        return max(
+            (
+                icon
+                for icon in icons
+                if icon[0] >= minimum_confidence and cls._red_icon_in_bounds(icon, x_min, x_max, y_min, y_max)
+            ),
+            key=lambda icon: icon[0],
+            default=None,
+        )
 
     def _find_best_zone_red_icon(
         self,
@@ -529,6 +542,9 @@ class VisionScannerMixin:
         return None, True
 
     def _box_template_names(self) -> list[str]:
+        cached = getattr(self, "_box_template_names_cache", None)
+        if cached is not None:
+            return cached
         return [box_name for box_name in ("box1", "box2", "box3", "box4") if box_name in self.templates]
 
     def _box_candidate_from_match(

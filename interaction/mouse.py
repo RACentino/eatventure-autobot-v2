@@ -1,5 +1,3 @@
-import atexit
-import ctypes
 import logging
 import math
 import random
@@ -9,43 +7,14 @@ from collections.abc import Callable
 from typing import Any
 
 from core import config
-from core.platform import IS_WINDOWS, pywintypes, require_windows_backend, win32api, win32con, win32gui
+from core.platform import pynput_mouse, require_automation_backend
 
 logger = logging.getLogger(__name__)
 
-_timer_resolution_enabled = False
 Point = tuple[int, int]
 WindowBounds = tuple[int, int, int, int]
 RelativeScreenPosition = tuple[int, int, int, int, int, int]
 ForbiddenZone = tuple[str, int, int, int, int | None]
-
-
-def _disable_timer_resolution() -> None:
-    global _timer_resolution_enabled
-    if not IS_WINDOWS:
-        return
-    if not _timer_resolution_enabled:
-        return
-    try:
-        ctypes.windll.winmm.timeEndPeriod(1)
-    except Exception:
-        return
-    _timer_resolution_enabled = False
-
-
-def _enable_timer_resolution() -> None:
-    global _timer_resolution_enabled
-    if not IS_WINDOWS:
-        return
-    if _timer_resolution_enabled:
-        return
-    try:
-        result = ctypes.windll.winmm.timeBeginPeriod(1)
-    except Exception:
-        return
-    if result == 0:
-        _timer_resolution_enabled = True
-        atexit.register(_disable_timer_resolution)
 
 
 def _coerce_duration(duration: Any, default: float = 0.0) -> float:
@@ -98,20 +67,23 @@ def wait_event(stop_event: threading.Event | None, duration: Any) -> bool:
     return sleep_until(time.perf_counter() + duration, stop_event)
 
 
-_enable_timer_resolution()
-
-
 class MouseController:
     def __init__(
         self,
-        hwnd_source: Any,
+        window_bounds_source: Any,
         click_delay: Any = None,
         move_delay: Any = None,
         hover_enabled: bool | None = None,
         hover_duration: Any = None,
+        mouse_device: Any = None,
     ) -> None:
-        require_windows_backend("MouseController")
-        self._hwnd_source = hwnd_source
+        if mouse_device is None:
+            require_automation_backend("MouseController")
+            self._mouse = pynput_mouse.Controller()
+        else:
+            self._mouse = mouse_device
+        self._left_button = pynput_mouse.Button.left if pynput_mouse is not None else "left"
+        self._window_bounds_source = window_bounds_source
         self.click_delay = self._coerce_non_negative_float(
             config.CLICK_DELAY if click_delay is None else click_delay,
             float(config.CLICK_DELAY),
@@ -128,6 +100,7 @@ class MouseController:
         self.input_retry_count = 3
         self.input_retry_delay = 0.05
         self._input_lock = threading.RLock()
+        self._forbidden_zones = self._configured_forbidden_zones()
 
     @staticmethod
     def _coerce_non_negative_float(value: Any, default: float = 0.0) -> float:
@@ -150,11 +123,9 @@ class MouseController:
                 number = 0
         return max(0, number)
 
-    def _get_hwnd(self) -> int:
-        hwnd = self._hwnd_source() if callable(self._hwnd_source) else self._hwnd_source
-        if not hwnd or not win32gui.IsWindow(hwnd):
-            raise RuntimeError("Target window is not available")
-        return hwnd
+    def get_cursor_position(self) -> Point:
+        current_x, current_y = self._mouse.position
+        return int(current_x), int(current_y)
 
     def get_window_position(self) -> Point:
         win_x, win_y, _, _ = self.get_window_bounds()
@@ -162,16 +133,17 @@ class MouseController:
 
     def get_window_bounds(self) -> WindowBounds:
         try:
-            hwnd = self._get_hwnd()
-            rect = win32gui.GetClientRect(hwnd)
-            width = int(rect[2] - rect[0])
-            height = int(rect[3] - rect[1])
-            if width <= 0 or height <= 0:
-                raise RuntimeError(f"Target window has invalid client size: {width}x{height}")
-            x, y = win32gui.ClientToScreen(hwnd, (0, 0))
-            return int(x), int(y), width, height
-        except pywintypes.error as exc:
+            bounds = self._window_bounds_source() if callable(self._window_bounds_source) else self._window_bounds_source
+            win_x, win_y, width, height = bounds
+            win_x = int(win_x)
+            win_y = int(win_y)
+            width = int(width)
+            height = int(height)
+        except Exception as exc:
             raise RuntimeError(f"Cannot read target window bounds: {exc}") from exc
+        if width <= 0 or height <= 0:
+            raise RuntimeError(f"Target window has invalid client size: {width}x{height}")
+        return win_x, win_y, width, height
 
     def _relative_from_screen(self, x: Any, y: Any) -> RelativeScreenPosition:
         win_x, win_y, width, height = self.get_window_bounds()
@@ -181,32 +153,33 @@ class MouseController:
     def _within_client(x: Any, y: Any, width: Any, height: Any) -> bool:
         return 0 <= int(x) < int(width) and 0 <= int(y) < int(height)
 
-    @staticmethod
-    def _cursor_matches_position(screen_x: int, screen_y: int) -> tuple[bool, int, int]:
-        current_x, current_y = win32api.GetCursorPos()
-        matches = abs(int(current_x) - screen_x) <= 1 and abs(int(current_y) - screen_y) <= 1
+    def _cursor_matches_position(self, screen_x: int, screen_y: int) -> tuple[bool, int, int]:
+        current_x, current_y = self.get_cursor_position()
+        matches = abs(current_x - screen_x) <= 1 and abs(current_y - screen_y) <= 1
         return matches, current_x, current_y
 
     def _sleep_before_input_retry(self, attempt: int) -> None:
         if attempt < self.input_retry_count:
             precise_sleep(self.input_retry_delay)
 
-    def _set_cursor_pos(self, x: Any, y: Any) -> bool:
+    def _set_cursor_pos(self, x: Any, y: Any, verify_position: bool = True) -> bool:
         screen_x = int(x)
         screen_y = int(y)
         last_exc = None
         for attempt in range(1, self.input_retry_count + 1):
             try:
-                win32api.SetCursorPos((screen_x, screen_y))
+                self._mouse.position = (screen_x, screen_y)
+                if not verify_position:
+                    return True
                 precise_sleep(0.001)
                 matches, current_x, current_y = self._cursor_matches_position(screen_x, screen_y)
                 if matches:
                     return True
                 last_exc = RuntimeError(f"cursor settled at ({current_x}, {current_y})")
-            except pywintypes.error as exc:
+            except Exception as exc:
                 last_exc = exc
                 logger.warning(
-                    "SetCursorPos failed at (%s, %s) on attempt %s/%s: %s",
+                    "Cursor positioning failed at (%s, %s) on attempt %s/%s: %s",
                     screen_x,
                     screen_y,
                     attempt,
@@ -214,22 +187,22 @@ class MouseController:
                     exc,
                 )
             self._sleep_before_input_retry(attempt)
-        logger.error("SetCursorPos failed at (%s, %s): %s", screen_x, screen_y, last_exc)
+        logger.error("Cursor positioning failed at (%s, %s): %s", screen_x, screen_y, last_exc)
         return False
 
-    def _mouse_event(self, event: int, x: Any, y: Any) -> bool:
+    def _mouse_button_action(self, action_name: str, action: Callable[[], Any], x: Any, y: Any) -> bool:
         screen_x = int(x)
         screen_y = int(y)
         last_exc = None
         for attempt in range(1, self.input_retry_count + 1):
             try:
-                win32api.mouse_event(event, screen_x, screen_y, 0, 0)
+                action()
                 return True
-            except pywintypes.error as exc:
+            except Exception as exc:
                 last_exc = exc
                 logger.warning(
-                    "mouse_event %s failed at (%s, %s) on attempt %s/%s: %s",
-                    event,
+                    "%s failed at (%s, %s) on attempt %s/%s: %s",
+                    action_name,
                     screen_x,
                     screen_y,
                     attempt,
@@ -238,13 +211,13 @@ class MouseController:
                 )
                 if attempt < self.input_retry_count:
                     precise_sleep(self.input_retry_delay)
-        logger.error("mouse_event %s failed at (%s, %s): %s", event, screen_x, screen_y, last_exc)
+        logger.error("%s failed at (%s, %s): %s", action_name, screen_x, screen_y, last_exc)
         return False
 
     def _best_effort_left_up(self, x: Any, y: Any) -> bool:
         try:
-            win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, int(x), int(y), 0, 0)
-        except pywintypes.error:
+            self._mouse.release(self._left_button)
+        except Exception:
             return False
         return True
 
@@ -312,7 +285,7 @@ class MouseController:
             logger.error("Cannot evaluate forbidden zone: %s", exc)
             return True
 
-        for forbidden_zone in self._configured_forbidden_zones():
+        for forbidden_zone in self._forbidden_zones:
             zone_name = forbidden_zone[0]
             if self._position_in_forbidden_zone(relative_x, relative_y, forbidden_zone):
                 logger.debug("Coordinates (%s, %s) blocked - %s", relative_x, relative_y, zone_name)
@@ -428,7 +401,12 @@ class MouseController:
         duration: Any = None,
         interrupt_check: Callable[[], bool] | None = None,
     ) -> bool:
-        if not self._mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, screen_x, screen_y):
+        if not self._mouse_button_action(
+            "left down",
+            lambda: self._mouse.press(self._left_button),
+            screen_x,
+            screen_y,
+        ):
             self._best_effort_left_up(screen_x, screen_y)
             return False
         wait_time = (
@@ -452,7 +430,12 @@ class MouseController:
         duration: Any = None,
         interrupt_check: Callable[[], bool] | None = None,
     ) -> bool:
-        if not self._mouse_event(win32con.MOUSEEVENTF_LEFTUP, screen_x, screen_y):
+        if not self._mouse_button_action(
+            "left up",
+            lambda: self._mouse.release(self._left_button),
+            screen_x,
+            screen_y,
+        ):
             self._best_effort_left_up(screen_x, screen_y)
             return False
         wait_time = (
@@ -794,7 +777,7 @@ class MouseController:
                 position = index / steps
                 current_x = int(screen_from_x + (screen_to_x - screen_from_x) * position)
                 current_y = int(screen_from_y + (screen_to_y - screen_from_y) * position)
-                if not self._set_cursor_pos(current_x, current_y):
+                if not self._set_cursor_pos(current_x, current_y, verify_position=index == steps):
                     self._left_up_at_screen(current_x, current_y)
                     return False
                 sleep_until(start_time + ((index + 1) * (duration / steps)))

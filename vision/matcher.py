@@ -1,4 +1,5 @@
 import logging
+from functools import lru_cache
 from typing import Any
 
 import cv2
@@ -18,11 +19,18 @@ MatchResult = tuple[bool, float, int, int]
 MatchCandidate = tuple[float, int, int, int, int]
 Point = tuple[int, int]
 HsvRange = tuple[np.ndarray, np.ndarray]
+DEFAULT_SCALES = (1.0,)
+TemplateMatchMatrix = tuple[np.ndarray, float, Point]
 
 
 class ImageMatcher:
     def __init__(self, threshold: float = 0.85) -> None:
         self.threshold = self._normalize_threshold(threshold)
+        self._normalized_mask_cache: dict[tuple[int, tuple[int, ...], str], np.ndarray] = {}
+        self._hsv_range_cache: dict[
+            tuple[tuple[tuple[int, int, int], tuple[int, int, int]], ...],
+            list[HsvRange],
+        ] = {}
 
     @staticmethod
     def _normalize_threshold(value: Any, default: float = 0.85) -> float:
@@ -54,13 +62,16 @@ class ImageMatcher:
             return cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
         raise ValueError(f"{label} has unsupported shape {image.shape}")
 
-    @staticmethod
-    def _normalize_mask(mask: np.ndarray | None, template_shape: tuple[int, ...], template_name: str) -> np.ndarray | None:
+    def _normalize_mask(self, mask: np.ndarray | None, template_shape: tuple[int, ...], template_name: str) -> np.ndarray | None:
         if mask is None:
             return None
         if not hasattr(mask, "shape") or mask.size == 0:
             logger.warning("[%s] Ignoring empty mask", template_name)
             return None
+        cache_key = (id(mask), tuple(mask.shape), str(mask.dtype))
+        cached_mask = self._normalized_mask_cache.get(cache_key)
+        if cached_mask is not None:
+            return cached_mask
         if mask.ndim == 3:
             try:
                 mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
@@ -83,6 +94,9 @@ class ImageMatcher:
         if not np.any(normalized):
             logger.warning("[%s] Ignoring mask without active pixels", template_name)
             return None
+        if len(self._normalized_mask_cache) >= 128:
+            self._normalized_mask_cache.clear()
+        self._normalized_mask_cache[cache_key] = normalized
         return normalized
 
     @staticmethod
@@ -91,7 +105,7 @@ class ImageMatcher:
         template: np.ndarray,
         mask: np.ndarray | None,
         template_name: str,
-    ) -> np.ndarray | None:
+    ) -> TemplateMatchMatrix | None:
         try:
             result = cv2.matchTemplate(screenshot, template, cv2.TM_SQDIFF_NORMED, mask=mask)
         except cv2.error as exc:
@@ -99,8 +113,21 @@ class ImageMatcher:
             return None
         if result.size == 0:
             return None
-        result = np.nan_to_num(result, nan=1.0, posinf=1.0, neginf=1.0)
-        return np.clip(result, 0.0, 1.0)
+        if result.dtype == np.float32:
+            try:
+                cv2.patchNaNs(result, 1.0)
+            except cv2.error:
+                np.nan_to_num(result, copy=False, nan=1.0, posinf=1.0, neginf=1.0)
+        else:
+            np.nan_to_num(result, copy=False, nan=1.0, posinf=1.0, neginf=1.0)
+        min_value, max_value, min_location, _ = cv2.minMaxLoc(result)
+        if not np.isfinite(min_value) or not np.isfinite(max_value):
+            np.nan_to_num(result, copy=False, nan=1.0, posinf=1.0, neginf=1.0)
+            min_value, max_value, min_location, _ = cv2.minMaxLoc(result)
+        if min_value < 0.0 or max_value > 1.0:
+            np.clip(result, 0.0, 1.0, out=result)
+            min_value, _, min_location, _ = cv2.minMaxLoc(result)
+        return result, float(min_value), (int(min_location[0]), int(min_location[1]))
 
     @staticmethod
     def supervision_available() -> bool:
@@ -370,11 +397,11 @@ class ImageMatcher:
         if not self._template_fits_screenshot(screenshot, template, template_name):
             return self._failed_match()
 
-        result = self._safe_match_template(screenshot, template, mask, template_name)
-        if result is None:
+        match_matrix = self._safe_match_template(screenshot, template, mask, template_name)
+        if match_matrix is None:
             return self._failed_match()
 
-        min_value, _, min_location, _ = cv2.minMaxLoc(result)
+        _, min_value, min_location = match_matrix
         confidence = float(1.0 - min_value)
         if not np.isfinite(confidence):
             return self._failed_match()
@@ -479,18 +506,48 @@ class ImageMatcher:
             return None
         return cls._normalize_hsv_component(lower), cls._normalize_hsv_component(upper)
 
-    @classmethod
-    def _normalize_hsv_ranges(cls: type["ImageMatcher"], hsv_ranges: Any) -> list[HsvRange]:
-        if not hsv_ranges:
+    @staticmethod
+    def _hsv_range_cache_key(
+        hsv_ranges: Any,
+    ) -> tuple[tuple[tuple[int, int, int], tuple[int, int, int]], ...] | None:
+        try:
+            return tuple(
+                (
+                    tuple(int(component) for component in lower),
+                    tuple(int(component) for component in upper),
+                )
+                for lower, upper in hsv_ranges
+            )
+        except (TypeError, ValueError):
+            return None
+
+    def _normalize_hsv_ranges(self, hsv_ranges: Any) -> list[HsvRange]:
+        if hsv_ranges is None:
             return []
         try:
-            return [
+            hsv_range_items = tuple(hsv_ranges)
+        except TypeError:
+            return []
+        if not hsv_range_items:
+            return []
+        cache_key = self._hsv_range_cache_key(hsv_range_items)
+        if cache_key is not None:
+            cached_ranges = self._hsv_range_cache.get(cache_key)
+            if cached_ranges is not None:
+                return cached_ranges
+        try:
+            normalized_ranges = [
                 normalized_range
-                for hsv_range in hsv_ranges
-                if (normalized_range := cls._normalize_hsv_range(hsv_range)) is not None
+                for hsv_range in hsv_range_items
+                if (normalized_range := self._normalize_hsv_range(hsv_range)) is not None
             ]
         except TypeError:
             return []
+        if cache_key is not None:
+            if len(self._hsv_range_cache) >= 64:
+                self._hsv_range_cache.clear()
+            self._hsv_range_cache[cache_key] = normalized_ranges
+        return normalized_ranges
 
     @staticmethod
     def _apply_hsv_range_mask(hsv_region: np.ndarray, lower: np.ndarray, upper: np.ndarray) -> np.ndarray:
@@ -629,7 +686,7 @@ class ImageMatcher:
         mask = self._normalize_mask(mask, template.shape, template_name)
 
         if scales is None:
-            scales = [1.0]
+            scales = DEFAULT_SCALES
 
         for scale_value in scales:
             scale = self._valid_scale(scale_value)
@@ -640,12 +697,13 @@ class ImageMatcher:
             if scaled_template.shape[0] > screenshot.shape[0] or scaled_template.shape[1] > screenshot.shape[1]:
                 continue
 
-            result = self._safe_match_template(screenshot, scaled_template, scaled_mask, template_name)
-            if result is None:
+            match_matrix = self._safe_match_template(screenshot, scaled_template, scaled_mask, template_name)
+            if match_matrix is None:
                 continue
+            result, min_value, _ = match_matrix
 
             template_height, template_width = scaled_template.shape[:2]
-            candidates = self._local_minima_candidates(result, 1.0 - thresh, min_distance)
+            candidates = self._local_minima_candidates(result, 1.0 - thresh, min_distance, min_value)
             for candidate_x, candidate_y in candidates:
                 confidence = float(1.0 - result[candidate_y, candidate_x])
                 if not np.isfinite(confidence):
@@ -657,19 +715,35 @@ class ImageMatcher:
         return sorted(all_matches, key=lambda match: match[0], reverse=True)
 
     @staticmethod
-    def _local_minima_candidates(result: np.ndarray | None, max_score: float, min_distance: int) -> list[Point]:
+    @lru_cache(maxsize=32)
+    def _local_minima_kernel(window: int) -> np.ndarray:
+        return np.ones((window, window), dtype=np.float32)
+
+    @staticmethod
+    def _local_minima_candidates(
+        result: np.ndarray | None,
+        max_score: float,
+        min_distance: int,
+        min_value: float | None = None,
+    ) -> list[Point]:
         if result is None or result.size == 0:
+            return []
+        if max_score < 0:
+            return []
+        if min_value is None:
+            min_value, _, _, _ = cv2.minMaxLoc(result)
+        if min_value > max_score:
             return []
         window = max(3, int(min_distance))
         if window % 2 == 0:
             window += 1
-        kernel = np.ones((window, window), dtype=np.float32)
+        kernel = ImageMatcher._local_minima_kernel(window)
         local_min = cv2.erode(result, kernel)
         candidate_mask = (result <= max_score) & (result <= local_min + 1e-6)
         if not np.any(candidate_mask):
             return []
         mask = candidate_mask.astype(np.uint8)
-        count, labels, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+        count, _, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
         candidates = []
         for index in range(1, count):
             component_x, component_y, component_width, component_height, component_area = stats[index]
