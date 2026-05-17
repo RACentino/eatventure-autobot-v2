@@ -97,8 +97,8 @@ class MouseController:
             config.HOVER_DURATION if hover_duration is None else hover_duration,
             0.0,
         )
-        self.input_retry_count = 3
-        self.input_retry_delay = 0.05
+        self.input_retry_count = max(1, int(config.INPUT_RETRY_COUNT))
+        self.input_retry_delay = max(0.0, float(config.INPUT_RETRY_DELAY))
         self._input_lock = threading.RLock()
         self._forbidden_zones = self._configured_forbidden_zones()
 
@@ -223,7 +223,7 @@ class MouseController:
 
     @staticmethod
     def _configured_forbidden_zones() -> list[ForbiddenZone]:
-        return [
+        zones: list[ForbiddenZone] = [
             (
                 "FORBIDDEN_CLICK zone",
                 config.FORBIDDEN_CLICK_X_MIN,
@@ -231,42 +231,12 @@ class MouseController:
                 config.FORBIDDEN_CLICK_Y_MIN,
                 None,
             ),
-            (
-                "FORBIDDEN_ZONE_1",
-                config.FORBIDDEN_ZONE_1_X_MIN,
-                config.FORBIDDEN_ZONE_1_X_MAX,
-                config.FORBIDDEN_ZONE_1_Y_MIN,
-                config.FORBIDDEN_ZONE_1_Y_MAX,
-            ),
-            (
-                "FORBIDDEN_ZONE_2",
-                config.FORBIDDEN_ZONE_2_X_MIN,
-                config.FORBIDDEN_ZONE_2_X_MAX,
-                config.FORBIDDEN_ZONE_2_Y_MIN,
-                config.FORBIDDEN_ZONE_2_Y_MAX,
-            ),
-            (
-                "FORBIDDEN_ZONE_3",
-                config.FORBIDDEN_ZONE_3_X_MIN,
-                config.FORBIDDEN_ZONE_3_X_MAX,
-                config.FORBIDDEN_ZONE_3_Y_MIN,
-                config.FORBIDDEN_ZONE_3_Y_MAX,
-            ),
-            (
-                "FORBIDDEN_ZONE_4",
-                config.FORBIDDEN_ZONE_4_X_MIN,
-                config.FORBIDDEN_ZONE_4_X_MAX,
-                config.FORBIDDEN_ZONE_4_Y_MIN,
-                config.FORBIDDEN_ZONE_4_Y_MAX,
-            ),
-            (
-                "FORBIDDEN_ZONE_5",
-                config.FORBIDDEN_ZONE_5_X_MIN,
-                config.FORBIDDEN_ZONE_5_X_MAX,
-                config.FORBIDDEN_ZONE_5_Y_MIN,
-                config.FORBIDDEN_ZONE_5_Y_MAX,
-            ),
         ]
+        for index, (x_min, x_max, y_min, y_max) in enumerate(
+            config.numbered_forbidden_zone_bounds(), start=1,
+        ):
+            zones.append((f"FORBIDDEN_ZONE_{index}", x_min, x_max, y_min, y_max))
+        return zones
 
     @staticmethod
     def _position_in_forbidden_zone(x: int, y: int, forbidden_zone: ForbiddenZone) -> bool:
@@ -543,7 +513,7 @@ class MouseController:
             return False
 
     def double_click(self, x: Any, y: Any, relative: bool = True) -> bool:
-        if not self.click(x, y, relative=relative, delay=0.05):
+        if not self.click(x, y, relative=relative, delay=config.DOUBLE_CLICK_INTER_DELAY):
             return False
         return self.click(x, y, relative=relative)
 

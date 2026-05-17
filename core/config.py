@@ -186,6 +186,36 @@ SPAM_CLICK_DURATION = 1.20
 # Delay between generic spam-click actions.
 SPAM_CLICK_DELAY = 0.055
 
+# Settling delay before scan actions in transition handlers.
+IDLE_SETTLE_DELAY = 0.05
+
+# Delay after clicking the new-level button.
+NEW_LEVEL_CLICK_SETTLE_DELAY = 0.30
+
+# Delay after clicking the level transition confirmation.
+LEVEL_TRANSITION_CONFIRM_DELAY = 0.20
+
+# Delay after the level transition animation completes.
+LEVEL_TRANSITION_COMPLETE_DELAY = 1.0
+
+# Retry interval during level transition attempts.
+LEVEL_TRANSITION_RETRY_INTERVAL = 0.20
+
+# Retry interval when waiting for the unlock button to appear.
+WAIT_FOR_UNLOCK_RETRY_INTERVAL = 0.30
+
+# Settling delay after clicking the unlock button.
+WAIT_FOR_UNLOCK_SETTLE_DELAY = 0.50
+
+# Delay between clicks in a double-click action.
+DOUBLE_CLICK_INTER_DELAY = 0.05
+
+# Maximum input retry attempts for cursor positioning and mouse actions.
+INPUT_RETRY_COUNT = 3
+
+# Delay between input retry attempts.
+INPUT_RETRY_DELAY = 0.05
+
 
 # Telegram Notifications
 
@@ -314,6 +344,24 @@ POST_SCROLL_SETTLE = 0.250
 
 # Duration of each scroll drag gesture.
 SCROLL_DURATION = 0.250
+
+
+# Handler Limits
+
+# Maximum attempts when searching for an upgrade station.
+UPGRADE_STATION_SEARCH_MAX_ATTEMPTS = 5
+
+# Minimum upgrade counter before opening the stats panel.
+UPGRADE_STATION_STATS_THRESHOLD = 2
+
+# Maximum retry attempts during level transition.
+TRANSITION_LEVEL_MAX_ATTEMPTS = 5
+
+# Consecutive failed scan cycles before triggering idle recovery.
+CONSECUTIVE_FAILED_CYCLES_THRESHOLD = 3
+
+# Idle passes without progress before triggering a scroll search.
+IDLE_PASS_SCROLL_THRESHOLD = 2
 
 
 # Adaptive Runtime Tuning
@@ -602,3 +650,18 @@ FORBIDDEN_ZONE_5_Y_MIN = 660
 
 # Maximum y-coordinate for forbidden zone 5.
 FORBIDDEN_ZONE_5_Y_MAX = 725
+
+
+def numbered_forbidden_zone_bounds() -> list[tuple[int, int, int, int]]:
+    return [
+        (FORBIDDEN_ZONE_1_X_MIN, FORBIDDEN_ZONE_1_X_MAX,
+         FORBIDDEN_ZONE_1_Y_MIN, FORBIDDEN_ZONE_1_Y_MAX),
+        (FORBIDDEN_ZONE_2_X_MIN, FORBIDDEN_ZONE_2_X_MAX,
+         FORBIDDEN_ZONE_2_Y_MIN, FORBIDDEN_ZONE_2_Y_MAX),
+        (FORBIDDEN_ZONE_3_X_MIN, FORBIDDEN_ZONE_3_X_MAX,
+         FORBIDDEN_ZONE_3_Y_MIN, FORBIDDEN_ZONE_3_Y_MAX),
+        (FORBIDDEN_ZONE_4_X_MIN, FORBIDDEN_ZONE_4_X_MAX,
+         FORBIDDEN_ZONE_4_Y_MIN, FORBIDDEN_ZONE_4_Y_MAX),
+        (FORBIDDEN_ZONE_5_X_MIN, FORBIDDEN_ZONE_5_X_MAX,
+         FORBIDDEN_ZONE_5_Y_MIN, FORBIDDEN_ZONE_5_Y_MAX),
+    ]

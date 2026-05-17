@@ -24,7 +24,7 @@ class TransitionHandlerMixin:
         if not self._click_idle():
             logger.warning("Failed to clear focus before confirming the new level")
             return State.CHECK_NEW_LEVEL
-        self._sleep(0.05)
+        self._sleep(config.IDLE_SETTLE_DELAY)
         if not self._new_level_red_icon_verified:
             if not self._perform_single_down_scroll():
                 logger.warning("Failed to perform verification scroll for new level red icon")
@@ -55,7 +55,7 @@ class TransitionHandlerMixin:
         if not opened:
             logger.warning("Failed to click the new level button at %s", config.NEW_LEVEL_BUTTON_POS)
             return State.CHECK_NEW_LEVEL
-        self._sleep(0.30)
+        self._sleep(config.NEW_LEVEL_CLICK_SETTLE_DELAY)
         advanced = self.mouse_controller.click(
             config.LEVEL_TRANSITION_POS[0],
             config.LEVEL_TRANSITION_POS[1],
@@ -64,7 +64,7 @@ class TransitionHandlerMixin:
         if not advanced:
             logger.warning("Failed to click the level transition button at %s", config.LEVEL_TRANSITION_POS)
             return State.CHECK_NEW_LEVEL
-        if not self._sleep(0.20):
+        if not self._sleep(config.LEVEL_TRANSITION_CONFIRM_DELAY):
             return State.OPEN_BOXES
         elapsed = self._record_level_completion()
         logger.info(
@@ -77,7 +77,7 @@ class TransitionHandlerMixin:
     def handle_transition_level(self, current_state: State) -> StateResult:
         self._click_idle()
 
-        max_attempts = 5
+        max_attempts = int(config.TRANSITION_LEVEL_MAX_ATTEMPTS)
         for attempt in range(max_attempts):
             limited_screenshot = self.window_capture.capture(max_y=config.MAX_SEARCH_Y)
 
@@ -89,7 +89,7 @@ class TransitionHandlerMixin:
                 if not clicked:
                     logger.warning("New level button click failed at (%s, %s)", x, y)
                     return State.CHECK_NEW_LEVEL
-                self._sleep(1.0)
+                self._sleep(config.LEVEL_TRANSITION_COMPLETE_DELAY)
                 elapsed = self._record_level_completion()
                 logger.info(
                     "Level %s completed. Time spent: %.1fs",
@@ -99,7 +99,7 @@ class TransitionHandlerMixin:
                 return State.WAIT_FOR_UNLOCK
 
             if attempt < max_attempts - 1:
-                self._sleep(0.20)
+                self._sleep(config.LEVEL_TRANSITION_RETRY_INTERVAL)
 
         self.vision_optimizer.update_new_level_miss()
         logger.warning("New level button not found after %s attempts", max_attempts)
@@ -110,7 +110,7 @@ class TransitionHandlerMixin:
         if not self._click_idle():
             logger.warning("Failed to clear focus while waiting for the next unlock")
             return State.WAIT_FOR_UNLOCK
-        self._sleep(0.05)
+        self._sleep(config.IDLE_SETTLE_DELAY)
 
         self.wait_for_unlock_attempts += 1
         if self.wait_for_unlock_attempts > self.max_wait_for_unlock_attempts:
@@ -125,7 +125,7 @@ class TransitionHandlerMixin:
         screenshot = self.window_capture.capture()
         template_pair = self._template("unlock")
         if template_pair is None:
-            self._sleep(0.30)
+            self._sleep(config.WAIT_FOR_UNLOCK_RETRY_INTERVAL)
             return State.WAIT_FOR_UNLOCK
 
         template, mask = template_pair
@@ -137,19 +137,19 @@ class TransitionHandlerMixin:
             template_name="unlock",
         )
         if not found:
-            self._sleep(0.30)
+            self._sleep(config.WAIT_FOR_UNLOCK_RETRY_INTERVAL)
             return State.WAIT_FOR_UNLOCK
 
         logger.info("Unlock button found at (%s, %s) [%.3f]", x, y, confidence)
         if self.mouse_controller.is_in_forbidden_zone(x, y, relative=True):
             logger.warning("Unlock button found in forbidden zone at (%s, %s)", x, y)
-            self._sleep(0.30)
+            self._sleep(config.WAIT_FOR_UNLOCK_RETRY_INTERVAL)
             return State.WAIT_FOR_UNLOCK
         if not self.mouse_controller.click(x, y, relative=True):
             logger.warning("Unlock button click failed at (%s, %s)", x, y)
             return State.WAIT_FOR_UNLOCK
 
-        self._sleep(0.50)
+        self._sleep(config.WAIT_FOR_UNLOCK_SETTLE_DELAY)
         self.wait_for_unlock_attempts = 0
         self._reset_search_cycle()
         return State.FIND_RED_ICONS

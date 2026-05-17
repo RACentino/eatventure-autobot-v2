@@ -21,7 +21,7 @@ class MiscHandlerMixin:
         return boxes_found, best_box_confidence
 
     def _next_state_after_box_cycle(self) -> State:
-        if self.consecutive_failed_cycles >= 3:
+        if self.consecutive_failed_cycles >= int(config.CONSECUTIVE_FAILED_CYCLES_THRESHOLD):
             self.consecutive_failed_cycles = 0
             self.cycle_counter = 0
             logger.info("Repeated search failures reached threshold, forcing scroll")
@@ -40,7 +40,7 @@ class MiscHandlerMixin:
 
         self.cycle_counter += 1
         logger.info("No work detected in current area (idle pass %s/2)", self.cycle_counter)
-        if self.cycle_counter >= 2:
+        if self.cycle_counter >= int(config.IDLE_PASS_SCROLL_THRESHOLD):
             self.cycle_counter = 0
             return State.SCROLL
 

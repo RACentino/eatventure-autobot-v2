@@ -151,7 +151,7 @@ class UpgradeHandlerMixin:
     def handle_search_upgrade_station(self, current_state: State) -> StateResult:
         base_threshold = self._upgrade_station_threshold()
         relaxed_threshold = max(0.0, base_threshold - 0.05)
-        max_attempts = 5
+        max_attempts = int(config.UPGRADE_STATION_SEARCH_MAX_ATTEMPTS)
 
         for attempt in range(max_attempts):
             if "upgradeStation" not in self.templates:
@@ -265,7 +265,7 @@ class UpgradeHandlerMixin:
         self._click_idle()
         self._sleep(config.STATE_DELAY)
         self.upgrade_station_counter += 1
-        if self.upgrade_station_counter >= 2:
+        if self.upgrade_station_counter >= int(config.UPGRADE_STATION_STATS_THRESHOLD):
             self.upgrade_station_counter = 0
             logger.info("Upgrade counter reached stats threshold")
             return State.UPGRADE_STATS
