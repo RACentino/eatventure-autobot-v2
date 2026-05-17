@@ -61,13 +61,13 @@ SUPERVISION_UPGRADE_STATION_NMS_IOU_THRESHOLD = 0.20
 SCRCPY_MISS_RECOVERY_ENABLED = True
 
 # Retry delay after a red icon scan miss.
-SCRCPY_RED_ICON_MISS_RECOVERY_DELAY = 0.160
+SCRCPY_RED_ICON_MISS_RECOVERY_DELAY = 0.140
 
 # Retry delay after a box scan miss.
-SCRCPY_BOX_MISS_RECOVERY_DELAY = 0.160
+SCRCPY_BOX_MISS_RECOVERY_DELAY = 0.120
 
 # Retry delay after an upgrade station scan miss.
-SCRCPY_UPGRADE_MISS_RECOVERY_DELAY = 0.180
+SCRCPY_UPGRADE_MISS_RECOVERY_DELAY = 0.160
 
 
 # Vision Matching
@@ -76,7 +76,7 @@ SCRCPY_UPGRADE_MISS_RECOVERY_DELAY = 0.180
 MATCH_THRESHOLD = 0.98
 
 # Template confidence threshold for red icon scans.
-RED_ICON_THRESHOLD = 0.910
+RED_ICON_THRESHOLD = 0.920
 
 # Template confidence threshold for new-level red icon validation.
 NEW_LEVEL_RED_ICON_THRESHOLD = 0.942
@@ -151,22 +151,22 @@ MOUSE_UP_DURATION = 0.040
 HOVER_ENABLED = True
 
 # Duration for hover movement before click actions.
-HOVER_DURATION = 0.100
+HOVER_DURATION = 0.012
 
 # Delay between upgrade station search attempts.
-UPGRADE_SEARCH_INTERVAL = 0.150
+UPGRADE_SEARCH_INTERVAL = 0.075
 
 # Delay between state-machine actions.
-STATE_DELAY = 0.180
+STATE_DELAY = 0.090
 
 # Settling delay before verifying an upgrade station hold target.
-UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.260
+UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.150
 
 # Maximum attempts for upgrade station verification.
 UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 2
 
 # Delay between upgrade station verification attempts.
-UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.150
+UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.0.75
 
 # Maximum pixel radius for accepting a verified upgrade station match.
 UPGRADE_STATION_VERIFY_RADIUS = 36
