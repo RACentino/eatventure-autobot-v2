@@ -458,11 +458,17 @@ class MouseController:
             logger.error("%s failed at (%s, %s)", action_name, screen_pos[0], screen_pos[1])
 
     def _perform_precise_click_at_screen(self, screen_x: int, screen_y: int) -> bool:
-        if not self._set_cursor_pos(screen_x, screen_y):
-            return False
+        matches, _, _ = self._cursor_matches_position(screen_x, screen_y)
+        if not matches:
+            if not self._set_cursor_pos(screen_x, screen_y):
+                return False
+            if self.move_delay > 0:
+                precise_sleep(self.move_delay)
+            self._hover_before_click()
         if not self._left_down_at_screen(screen_x, screen_y):
             return False
-        if not self._set_cursor_pos(screen_x, screen_y):
+        matches, _, _ = self._cursor_matches_position(screen_x, screen_y)
+        if not matches:
             self._best_effort_left_up(screen_x, screen_y)
             return False
         return self._left_up_at_screen(screen_x, screen_y)
