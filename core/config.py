@@ -166,7 +166,7 @@ UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.150
 UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 2
 
 # Delay between upgrade station verification attempts.
-UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.0.75
+UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.075
 
 # Maximum pixel radius for accepting a verified upgrade station match.
 UPGRADE_STATION_VERIFY_RADIUS = 36
