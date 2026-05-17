@@ -68,7 +68,7 @@ class IconHandlerMixin:
         if (
             not self.red_icons
             and best_new_level_icon is None
-            and self._scrcpy_miss_recovery_sleep(getattr(config, "SCRCPY_RED_ICON_MISS_RECOVERY_DELAY", 0.0))
+            and self._scrcpy_miss_recovery_sleep(config.SCRCPY_RED_ICON_MISS_RECOVERY_DELAY)
         ):
             screenshot = self.window_capture.capture(max_y=config.EXTENDED_SEARCH_Y)
             limited_screenshot = screenshot[: config.MAX_SEARCH_Y, :]

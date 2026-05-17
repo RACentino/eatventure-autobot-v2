@@ -31,7 +31,7 @@ class VisionScannerMixin:
         return sum(1 for name in self.templates if name.startswith("RedIcon"))
 
     def _red_icon_min_matches(self) -> int:
-        if bool(getattr(config, "RED_ICON_FAST_MODE_ENABLED", False)):
+        if bool(config.RED_ICON_FAST_MODE_ENABLED):
             return 1
         available = self._available_red_icon_template_count()
         if available <= 0:
@@ -82,8 +82,16 @@ class VisionScannerMixin:
         return config.STATS_RED_ICON_THRESHOLD
 
     @staticmethod
-    def _supervision_nms_enabled(flag_name: str) -> bool:
-        return bool(getattr(config, "SUPERVISION_ENABLED", False) and getattr(config, flag_name, False))
+    def _supervision_nms_enabled(detector_name: str) -> bool:
+        if not bool(config.SUPERVISION_ENABLED):
+            return False
+        if detector_name == "box":
+            return bool(config.SUPERVISION_BOX_NMS_ENABLED)
+        if detector_name == "red_icon":
+            return bool(config.SUPERVISION_RED_ICON_NMS_ENABLED)
+        if detector_name == "upgrade_station":
+            return bool(config.SUPERVISION_UPGRADE_STATION_NMS_ENABLED)
+        return False
 
     def _scan_red_icon_frame(
         self,
@@ -218,12 +226,12 @@ class VisionScannerMixin:
 
     def _merge_box_candidates_with_supervision(self, candidates: list[BoxCandidate]) -> list[BoxCandidate]:
         legacy_candidates = self._merge_box_candidates(candidates)
-        if not candidates or not self._supervision_nms_enabled("SUPERVISION_BOX_NMS_ENABLED"):
+        if not candidates or not self._supervision_nms_enabled("box"):
             return legacy_candidates
         supervision_candidates = self.image_matcher.filter_candidates_with_supervision_nms(
             candidates,
-            iou_threshold=getattr(config, "SUPERVISION_BOX_NMS_IOU_THRESHOLD", 0.25),
-            class_agnostic=getattr(config, "SUPERVISION_CLASS_AGNOSTIC_NMS", True),
+            iou_threshold=config.SUPERVISION_BOX_NMS_IOU_THRESHOLD,
+            class_agnostic=config.SUPERVISION_CLASS_AGNOSTIC_NMS,
         )
         if supervision_candidates is None or (not supervision_candidates and legacy_candidates):
             return legacy_candidates
@@ -255,12 +263,12 @@ class VisionScannerMixin:
         if screenshot.size == 0:
             return detections
         template_names = self._red_icon_template_names()
-        if bool(getattr(config, "RED_ICON_FAST_MODE_ENABLED", False)):
-            configured_names = getattr(config, "RED_ICON_FAST_TEMPLATE_NAMES", ())
+        if bool(config.RED_ICON_FAST_MODE_ENABLED):
+            configured_names = config.RED_ICON_FAST_TEMPLATE_NAMES
             fast_names = [name for name in configured_names if name in self.templates]
             if fast_names:
                 template_names = fast_names
-                min_distance = int(getattr(config, "RED_ICON_FAST_MIN_DISTANCE", min_distance))
+                min_distance = int(config.RED_ICON_FAST_MIN_DISTANCE)
         for template_name in template_names:
             if template_name not in self.templates:
                 continue
@@ -272,9 +280,9 @@ class VisionScannerMixin:
                 threshold=threshold,
                 min_distance=min_distance,
                 template_name=template_name,
-                use_supervision_nms=self._supervision_nms_enabled("SUPERVISION_RED_ICON_NMS_ENABLED"),
-                supervision_iou_threshold=getattr(config, "SUPERVISION_RED_ICON_NMS_IOU_THRESHOLD", 0.20),
-                supervision_class_agnostic=getattr(config, "SUPERVISION_CLASS_AGNOSTIC_NMS", True),
+                use_supervision_nms=self._supervision_nms_enabled("red_icon"),
+                supervision_iou_threshold=config.SUPERVISION_RED_ICON_NMS_IOU_THRESHOLD,
+                supervision_class_agnostic=config.SUPERVISION_CLASS_AGNOSTIC_NMS,
             )
             for confidence, x, y in icons:
                 self._merge_icon_detection(
@@ -472,9 +480,9 @@ class VisionScannerMixin:
             threshold=threshold,
             min_distance=15,
             template_name="upgradeStation",
-            use_supervision_nms=self._supervision_nms_enabled("SUPERVISION_UPGRADE_STATION_NMS_ENABLED"),
-            supervision_iou_threshold=getattr(config, "SUPERVISION_UPGRADE_STATION_NMS_IOU_THRESHOLD", 0.20),
-            supervision_class_agnostic=getattr(config, "SUPERVISION_CLASS_AGNOSTIC_NMS", True),
+            use_supervision_nms=self._supervision_nms_enabled("upgrade_station"),
+            supervision_iou_threshold=config.SUPERVISION_UPGRADE_STATION_NMS_IOU_THRESHOLD,
+            supervision_class_agnostic=config.SUPERVISION_CLASS_AGNOSTIC_NMS,
         )
         if not candidates:
             return None
@@ -527,7 +535,7 @@ class VisionScannerMixin:
         expected_position: tuple[int, int],
     ) -> tuple[RedIcon | None, bool]:
         verify_attempts = max(1, int(config.UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS))
-        verify_radius = float(getattr(config, "UPGRADE_STATION_VERIFY_RADIUS", 36))
+        verify_radius = float(config.UPGRADE_STATION_VERIFY_RADIUS)
         for attempt in range(verify_attempts):
             current_threshold = base_threshold if attempt == 0 else relaxed_threshold
             verified_match = self._find_upgrade_station_match(

@@ -211,7 +211,7 @@ class EatventureBot(
 
 
     def _scrcpy_miss_recovery_sleep(self, duration: Any) -> bool:
-        if not bool(getattr(config, "SCRCPY_MISS_RECOVERY_ENABLED", False)):
+        if not bool(config.SCRCPY_MISS_RECOVERY_ENABLED):
             return False
         try:
             delay = max(0.0, float(duration))
@@ -303,7 +303,7 @@ class EatventureBot(
         if self.current_level_start_time is None:
             self.current_level_start_time = datetime.now()
         self.historical_learner.start()
-        if config.ShowForbiddenArea and self.overlay is None:
+        if config.SHOW_FORBIDDEN_AREA and self.overlay is None:
             self.overlay = ForbiddenAreaOverlay(self.window_capture, self.forbidden_zones)
             self.overlay.start()
         return True

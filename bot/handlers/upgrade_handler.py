@@ -46,7 +46,7 @@ class UpgradeHandlerMixin:
         current_match = self._find_upgrade_station_match(relaxed_threshold)
         if current_match is not None:
             return current_match
-        if self._scrcpy_miss_recovery_sleep(getattr(config, "SCRCPY_UPGRADE_MISS_RECOVERY_DELAY", 0.0)):
+        if self._scrcpy_miss_recovery_sleep(config.SCRCPY_UPGRADE_MISS_RECOVERY_DELAY):
             return self._find_upgrade_station_match(relaxed_threshold)
         return None
 

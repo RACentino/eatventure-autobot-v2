@@ -49,9 +49,7 @@ class MiscHandlerMixin:
     def handle_open_boxes(self, current_state: State) -> StateResult:
         self._click_idle()
 
-        limited_screenshot = self.window_capture.capture(
-            max_y=getattr(config, "BOX_SEARCH_Y", config.MAX_SEARCH_Y)
-        )
+        limited_screenshot = self.window_capture.capture(max_y=config.BOX_SEARCH_Y)
 
         found, confidence, _, _ = self._find_new_level_button(limited_screenshot)
         if found:
@@ -61,10 +59,8 @@ class MiscHandlerMixin:
 
         box_threshold = self._box_threshold()
         box_candidates = self._collect_box_candidates(limited_screenshot, box_threshold)
-        if not box_candidates and self._scrcpy_miss_recovery_sleep(getattr(config, "SCRCPY_BOX_MISS_RECOVERY_DELAY", 0.0)):
-            limited_screenshot = self.window_capture.capture(
-                max_y=getattr(config, "BOX_SEARCH_Y", config.MAX_SEARCH_Y)
-            )
+        if not box_candidates and self._scrcpy_miss_recovery_sleep(config.SCRCPY_BOX_MISS_RECOVERY_DELAY):
+            limited_screenshot = self.window_capture.capture(max_y=config.BOX_SEARCH_Y)
             found, confidence, _, _ = self._find_new_level_button(limited_screenshot)
             if found:
                 self.vision_optimizer.update_new_level_confidence(confidence)
