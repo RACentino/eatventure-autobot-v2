@@ -139,7 +139,7 @@ RED_ICON_FAST_MIN_DISTANCE = 30
 CLICK_DELAY = 0.110
 
 # Delay after cursor movement.
-MOUSE_MOVE_DELAY = 0.020
+MOUSE_MOVE_DELAY = 0.075
 
 # Duration to hold the mouse button down during click actions.
 MOUSE_DOWN_DURATION = 0.055
@@ -151,13 +151,13 @@ MOUSE_UP_DURATION = 0.040
 HOVER_ENABLED = True
 
 # Duration for hover movement before click actions.
-HOVER_DURATION = 0.012
+HOVER_DURATION = 0.075
 
 # Delay between upgrade station search attempts.
 UPGRADE_SEARCH_INTERVAL = 0.075
 
 # Delay between state-machine actions.
-STATE_DELAY = 0.090
+STATE_DELAY = 0.045
 
 # Settling delay before verifying an upgrade station hold target.
 UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.150
