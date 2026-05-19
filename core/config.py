@@ -127,7 +127,7 @@ RED_ICON_MIN_MATCHES = 6
 RED_ICON_FAST_MODE_ENABLED = True
 
 # Red icon template names used when fast mode is enabled.
-RED_ICON_FAST_TEMPLATE_NAMES = ("RedIcon11",)
+RED_ICON_FAST_TEMPLATE_NAMES = ("RedIcon3", "RedIcon6", "RedIcon9",)
 
 # Minimum pixel distance between fast-mode red icon matches.
 RED_ICON_FAST_MIN_DISTANCE = 30
@@ -337,10 +337,10 @@ MAX_SCROLL_CYCLES = 10
 SCROLL_INCREMENT_STEP = 1
 
 # Delay between scroll intervals.
-SCROLL_INTERVAL_PAUSE = 0.25
+SCROLL_INTERVAL_PAUSE = 0.250
 
 # Settling delay after a scroll gesture.
-POST_SCROLL_SETTLE = 0.60
+POST_SCROLL_SETTLE = 0.300
 
 # Duration of each scroll drag gesture.
 SCROLL_DURATION = 0.150
