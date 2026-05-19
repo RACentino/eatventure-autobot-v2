@@ -121,7 +121,7 @@ UNLOCK_THRESHOLD = 0.905
 NEW_LEVEL_THRESHOLD = 0.965
 
 # Minimum red icon templates that must agree outside fast mode.
-RED_ICON_MIN_MATCHES = 3
+RED_ICON_MIN_MATCHES = 6
 
 # Enables single-template red icon scan mode for faster passes.
 RED_ICON_FAST_MODE_ENABLED = True
