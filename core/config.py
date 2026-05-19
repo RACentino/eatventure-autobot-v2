@@ -601,7 +601,7 @@ FORBIDDEN_ZONE_1_X_MAX = 350
 FORBIDDEN_ZONE_1_Y_MIN = 93
 
 # Maximum y-coordinate for forbidden zone 1.
-FORBIDDEN_ZONE_1_Y_MAX = 375
+FORBIDDEN_ZONE_1_Y_MAX = 320
 
 # Minimum x-coordinate for forbidden zone 2.
 FORBIDDEN_ZONE_2_X_MIN = 0
