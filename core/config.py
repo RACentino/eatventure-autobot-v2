@@ -76,7 +76,7 @@ SCRCPY_UPGRADE_MISS_RECOVERY_DELAY = 0.240
 MATCH_THRESHOLD = 0.98
 
 # Template confidence threshold for red icon scans.
-RED_ICON_THRESHOLD = 0.920
+RED_ICON_THRESHOLD = 0.910
 
 # Template confidence threshold for new-level red icon validation.
 NEW_LEVEL_RED_ICON_THRESHOLD = 0.942
@@ -142,16 +142,16 @@ CLICK_DELAY = 0.120
 MOUSE_MOVE_DELAY = 0.025
 
 # Duration to hold the mouse button down during click actions.
-MOUSE_DOWN_DURATION = 0.045
+MOUSE_DOWN_DURATION = 0.075
 
 # Delay after releasing the mouse button.
-MOUSE_UP_DURATION = 0.035
+MOUSE_UP_DURATION = 0.055
 
 # Enables hover movement before click actions.
 HOVER_ENABLED = True
 
 # Duration for hover movement before click actions.
-HOVER_DURATION = 0.060
+HOVER_DURATION = 0.100
 
 # Delay between upgrade station search attempts.
 UPGRADE_SEARCH_INTERVAL = 0.135
@@ -172,13 +172,13 @@ UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.150
 UPGRADE_STATION_VERIFY_RADIUS = 36
 
 # Maximum duration for holding an upgrade station click.
-CLICK_HOLD_MAX_DURATION = 10.00
+CLICK_HOLD_MAX_DURATION = 8.50
 
 # Duration for stats upgrade spam-clicking.
 STATS_UPGRADE_CLICK_DURATION = 1.60
 
 # Delay between stats upgrade spam-clicks.
-STATS_UPGRADE_CLICK_DELAY = 0.040
+STATS_UPGRADE_CLICK_DELAY = 0.016
 
 # Duration for generic spam-click loops.
 SPAM_CLICK_DURATION = 1.10
@@ -211,7 +211,7 @@ WAIT_FOR_UNLOCK_SETTLE_DELAY = 0.80
 DOUBLE_CLICK_INTER_DELAY = 0.095
 
 # Maximum input retry attempts for cursor positioning and mouse actions.
-INPUT_RETRY_COUNT = 3
+INPUT_RETRY_COUNT = 2
 
 # Delay between input retry attempts.
 INPUT_RETRY_DELAY = 0.090
@@ -325,7 +325,7 @@ UPGRADE_RED_ICON_Y_MAX = 680
 # Scrolling
 
 # Pixel distance for each scroll drag.
-SCROLL_PIXEL_STEP = 100
+SCROLL_PIXEL_STEP = 120
 
 # Multiplier applied to scroll pixel distance.
 SCROLL_DISTANCE_RATIO = 1.0
@@ -337,13 +337,13 @@ MAX_SCROLL_CYCLES = 10
 SCROLL_INCREMENT_STEP = 1
 
 # Delay between scroll intervals.
-SCROLL_INTERVAL_PAUSE = 0.180
+SCROLL_INTERVAL_PAUSE = 0.250
 
 # Settling delay after a scroll gesture.
-POST_SCROLL_SETTLE = 0.150
+POST_SCROLL_SETTLE = 0.250
 
 # Duration of each scroll drag gesture.
-SCROLL_DURATION = 0.125
+SCROLL_DURATION = 0.250
 
 
 # Handler Limits
