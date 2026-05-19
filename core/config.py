@@ -136,10 +136,10 @@ RED_ICON_FAST_MIN_DISTANCE = 30
 # Mouse and Action Timing
 
 # Delay after normal click actions.
-CLICK_DELAY = 0.005
+CLICK_DELAY = 0.075
 
 # Delay after cursor movement.
-MOUSE_MOVE_DELAY = 0.002
+MOUSE_MOVE_DELAY = 0.075
 
 # Duration to hold the mouse button down during click actions.
 MOUSE_DOWN_DURATION = 0.075
@@ -160,13 +160,13 @@ UPGRADE_SEARCH_INTERVAL = 0.005
 STATE_DELAY = 0.005
 
 # Settling delay before verifying an upgrade station hold target.
-UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.005
+UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.250
 
 # Maximum attempts for upgrade station verification.
 UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 2
 
 # Delay between upgrade station verification attempts.
-UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.005
+UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.125
 
 # Maximum pixel radius for accepting a verified upgrade station match.
 UPGRADE_STATION_VERIFY_RADIUS = 36
