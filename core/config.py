@@ -127,7 +127,7 @@ RED_ICON_MIN_MATCHES = 6
 RED_ICON_FAST_MODE_ENABLED = True
 
 # Red icon template names used when fast mode is enabled.
-RED_ICON_FAST_TEMPLATE_NAMES = ("RedIcon6",)
+RED_ICON_FAST_TEMPLATE_NAMES = ("RedIcon11",)
 
 # Minimum pixel distance between fast-mode red icon matches.
 RED_ICON_FAST_MIN_DISTANCE = 30
