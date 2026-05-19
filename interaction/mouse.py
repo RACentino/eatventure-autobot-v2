@@ -17,6 +17,71 @@ RelativeScreenPosition = tuple[int, int, int, int, int, int]
 ForbiddenZone = tuple[str, int, int, int, int | None]
 
 
+def _point_within_client_area(
+    relative_x_coordinate: int,
+    relative_y_coordinate: int,
+    client_width: int,
+    client_height: int,
+) -> bool:
+    return (
+        0 <= relative_x_coordinate < client_width
+        and 0 <= relative_y_coordinate < client_height
+    )
+
+
+def _point_in_forbidden_zone(
+    relative_x_coordinate: int,
+    relative_y_coordinate: int,
+    forbidden_zone: ForbiddenZone,
+) -> bool:
+    _, x_minimum, x_maximum, y_minimum, y_maximum = forbidden_zone
+    if y_maximum is None:
+        return (
+            relative_y_coordinate >= y_minimum
+            and x_minimum <= relative_x_coordinate <= x_maximum
+        )
+    return (
+        y_minimum <= relative_y_coordinate <= y_maximum
+        and x_minimum <= relative_x_coordinate <= x_maximum
+    )
+
+
+def _matching_forbidden_zone_name(
+    relative_x_coordinate: int,
+    relative_y_coordinate: int,
+    forbidden_zones: list[ForbiddenZone],
+) -> str | None:
+    for forbidden_zone in forbidden_zones:
+        if _point_in_forbidden_zone(
+            relative_x_coordinate,
+            relative_y_coordinate,
+            forbidden_zone,
+        ):
+            return forbidden_zone[0]
+    return None
+
+
+def _screen_to_relative_position(
+    screen_x_coordinate: int,
+    screen_y_coordinate: int,
+    window_bounds: WindowBounds,
+) -> RelativeScreenPosition:
+    (
+        window_x_coordinate,
+        window_y_coordinate,
+        client_width,
+        client_height,
+    ) = window_bounds
+    return (
+        screen_x_coordinate - window_x_coordinate,
+        screen_y_coordinate - window_y_coordinate,
+        window_x_coordinate,
+        window_y_coordinate,
+        client_width,
+        client_height,
+    )
+
+
 def _coerce_duration(duration: Any, default: float = 0.0) -> float:
     try:
         value = float(duration)
@@ -101,6 +166,7 @@ class MouseController:
         self.input_retry_delay = max(0.0, float(config.INPUT_RETRY_DELAY))
         self._input_lock = threading.RLock()
         self._forbidden_zones = self._configured_forbidden_zones()
+        self._left_button_is_down = False
 
     @staticmethod
     def _coerce_non_negative_float(value: Any, default: float = 0.0) -> float:
@@ -146,12 +212,11 @@ class MouseController:
         return win_x, win_y, width, height
 
     def _relative_from_screen(self, x: Any, y: Any) -> RelativeScreenPosition:
-        win_x, win_y, width, height = self.get_window_bounds()
-        return int(x) - win_x, int(y) - win_y, win_x, win_y, width, height
+        return _screen_to_relative_position(int(x), int(y), self.get_window_bounds())
 
     @staticmethod
     def _within_client(x: Any, y: Any, width: Any, height: Any) -> bool:
-        return 0 <= int(x) < int(width) and 0 <= int(y) < int(height)
+        return _point_within_client_area(int(x), int(y), int(width), int(height))
 
     def _cursor_matches_position(self, screen_x: int, screen_y: int) -> tuple[bool, int, int]:
         current_x, current_y = self.get_cursor_position()
@@ -163,8 +228,10 @@ class MouseController:
             precise_sleep(self.input_retry_delay)
 
     def _set_cursor_pos(self, x: Any, y: Any, verify_position: bool = True) -> bool:
-        screen_x = int(x)
-        screen_y = int(y)
+        validated_screen_position = self._validated_screen_input_position(x, y, "cursor move")
+        if validated_screen_position is None:
+            return False
+        screen_x, screen_y = validated_screen_position
         last_exc = None
         for attempt in range(1, self.input_retry_count + 1):
             try:
@@ -215,10 +282,13 @@ class MouseController:
         return False
 
     def _best_effort_left_up(self, x: Any, y: Any) -> bool:
+        if not self._left_button_is_down:
+            return True
         try:
             self._mouse.release(self._left_button)
         except Exception:
             return False
+        self._left_button_is_down = False
         return True
 
     @staticmethod
@@ -240,10 +310,7 @@ class MouseController:
 
     @staticmethod
     def _position_in_forbidden_zone(x: int, y: int, forbidden_zone: ForbiddenZone) -> bool:
-        _, x_minimum, x_maximum, y_minimum, y_maximum = forbidden_zone
-        if y_maximum is None:
-            return y >= y_minimum and x_minimum <= x <= x_maximum
-        return y_minimum <= y <= y_maximum and x_minimum <= x <= x_maximum
+        return _point_in_forbidden_zone(int(x), int(y), forbidden_zone)
 
     def is_in_forbidden_zone(self, x: Any, y: Any, relative: bool = True) -> bool:
         try:
@@ -255,13 +322,120 @@ class MouseController:
             logger.error("Cannot evaluate forbidden zone: %s", exc)
             return True
 
-        for forbidden_zone in self._forbidden_zones:
-            zone_name = forbidden_zone[0]
-            if self._position_in_forbidden_zone(relative_x, relative_y, forbidden_zone):
-                logger.debug("Coordinates (%s, %s) blocked - %s", relative_x, relative_y, zone_name)
-                return True
+        forbidden_zone_name = _matching_forbidden_zone_name(
+            relative_x,
+            relative_y,
+            self._forbidden_zones,
+        )
+        if forbidden_zone_name is not None:
+            logger.debug(
+                "Coordinates (%s, %s) blocked - %s",
+                relative_x,
+                relative_y,
+                forbidden_zone_name,
+            )
+            return True
 
         return False
+
+    def _validated_target_position(
+        self,
+        x: Any,
+        y: Any,
+        relative: bool = True,
+        check_forbidden: bool = True,
+        action_name: str = "input",
+    ) -> RelativeScreenPosition | None:
+        try:
+            if relative:
+                (
+                    window_x_coordinate,
+                    window_y_coordinate,
+                    client_width,
+                    client_height,
+                ) = self.get_window_bounds()
+                relative_x_coordinate = int(x)
+                relative_y_coordinate = int(y)
+            else:
+                (
+                    relative_x_coordinate,
+                    relative_y_coordinate,
+                    window_x_coordinate,
+                    window_y_coordinate,
+                    client_width,
+                    client_height,
+                ) = self._relative_from_screen(x, y)
+        except (RuntimeError, TypeError, ValueError) as exc:
+            logger.error("Cannot validate %s position: %s", action_name, exc)
+            return None
+
+        if not _point_within_client_area(
+            relative_x_coordinate,
+            relative_y_coordinate,
+            client_width,
+            client_height,
+        ):
+            logger.warning(
+                "Rejected %s outside target window: relative=(%s, %s), bounds=%sx%s",
+                action_name,
+                relative_x_coordinate,
+                relative_y_coordinate,
+                client_width,
+                client_height,
+            )
+            return None
+
+        if check_forbidden:
+            forbidden_zone_name = _matching_forbidden_zone_name(
+                relative_x_coordinate,
+                relative_y_coordinate,
+                self._forbidden_zones,
+            )
+            if forbidden_zone_name is not None:
+                logger.warning(
+                    "Rejected %s inside forbidden zone %s: relative=(%s, %s)",
+                    action_name,
+                    forbidden_zone_name,
+                    relative_x_coordinate,
+                    relative_y_coordinate,
+                )
+                return None
+
+        return (
+            relative_x_coordinate,
+            relative_y_coordinate,
+            window_x_coordinate,
+            window_y_coordinate,
+            client_width,
+            client_height,
+        )
+
+    def _validated_screen_input_position(
+        self,
+        x: Any,
+        y: Any,
+        action_name: str,
+    ) -> Point | None:
+        validated_position = self._validated_target_position(
+            x,
+            y,
+            relative=False,
+            action_name=action_name,
+        )
+        if validated_position is None:
+            return None
+        (
+            relative_x_coordinate,
+            relative_y_coordinate,
+            window_x_coordinate,
+            window_y_coordinate,
+            _,
+            _,
+        ) = validated_position
+        return (
+            int(window_x_coordinate + relative_x_coordinate),
+            int(window_y_coordinate + relative_y_coordinate),
+        )
 
     def _resolve_screen_position(
         self,
@@ -270,31 +444,27 @@ class MouseController:
         relative: bool = True,
         check_forbidden: bool = True,
     ) -> Point | None:
-        try:
-            if relative:
-                win_x, win_y, width, height = self.get_window_bounds()
-                rel_x = int(x)
-                rel_y = int(y)
-            else:
-                rel_x, rel_y, win_x, win_y, width, height = self._relative_from_screen(x, y)
-
-            if not self._within_client(rel_x, rel_y, width, height):
-                logger.warning(
-                    "Rejected input outside target window: relative=(%s, %s), bounds=%sx%s",
-                    rel_x,
-                    rel_y,
-                    width,
-                    height,
-                )
-                return None
-
-            if check_forbidden and self.is_in_forbidden_zone(rel_x, rel_y, relative=True):
-                return None
-
-            return int(win_x + rel_x), int(win_y + rel_y)
-        except (RuntimeError, TypeError, ValueError) as exc:
-            logger.error("Cannot resolve screen position: %s", exc)
+        validated_position = self._validated_target_position(
+            x,
+            y,
+            relative=relative,
+            check_forbidden=check_forbidden,
+            action_name="input",
+        )
+        if validated_position is None:
             return None
+        (
+            relative_x_coordinate,
+            relative_y_coordinate,
+            window_x_coordinate,
+            window_y_coordinate,
+            _,
+            _,
+        ) = validated_position
+        return (
+            int(window_x_coordinate + relative_x_coordinate),
+            int(window_y_coordinate + relative_y_coordinate),
+        )
 
     def move_to(self, x: Any, y: Any, relative: bool = True) -> bool:
         with self._input_lock:
@@ -371,6 +541,14 @@ class MouseController:
         duration: Any = None,
         interrupt_check: Callable[[], bool] | None = None,
     ) -> bool:
+        validated_screen_position = self._validated_screen_input_position(
+            screen_x,
+            screen_y,
+            "left down",
+        )
+        if validated_screen_position is None:
+            return False
+        screen_x, screen_y = validated_screen_position
         if not self._mouse_button_action(
             "left down",
             lambda: self._mouse.press(self._left_button),
@@ -379,6 +557,7 @@ class MouseController:
         ):
             self._best_effort_left_up(screen_x, screen_y)
             return False
+        self._left_button_is_down = True
         wait_time = (
             self._get_mouse_down_duration()
             if duration is None
@@ -400,6 +579,15 @@ class MouseController:
         duration: Any = None,
         interrupt_check: Callable[[], bool] | None = None,
     ) -> bool:
+        validated_screen_position = self._validated_screen_input_position(
+            screen_x,
+            screen_y,
+            "left up",
+        )
+        if validated_screen_position is None:
+            self._best_effort_left_up(screen_x, screen_y)
+            return False
+        screen_x, screen_y = validated_screen_position
         if not self._mouse_button_action(
             "left up",
             lambda: self._mouse.release(self._left_button),
@@ -408,6 +596,7 @@ class MouseController:
         ):
             self._best_effort_left_up(screen_x, screen_y)
             return False
+        self._left_button_is_down = False
         wait_time = (
             self._get_mouse_up_duration()
             if duration is None
@@ -430,6 +619,7 @@ class MouseController:
         if not self._left_down_at_screen(screen_x, screen_y, down_duration, interrupt_check):
             return False
         if not self._left_up_at_screen(screen_x, screen_y, up_duration, interrupt_check):
+            self._best_effort_left_up(screen_x, screen_y)
             return False
         return True
 
@@ -471,7 +661,10 @@ class MouseController:
         if not matches:
             self._best_effort_left_up(screen_x, screen_y)
             return False
-        return self._left_up_at_screen(screen_x, screen_y)
+        if not self._left_up_at_screen(screen_x, screen_y):
+            self._best_effort_left_up(screen_x, screen_y)
+            return False
+        return True
 
     def click(self, x: Any, y: Any, relative: bool = True, delay: Any = None) -> bool:
         with self._input_lock:
@@ -551,10 +744,12 @@ class MouseController:
             logger.debug("Holding at (%s, %s) for %.2fs", screen_x, screen_y, duration)
 
             if not self._interruptible_delay(duration, interrupt_check):
-                self._left_up_at_screen(screen_x, screen_y)
+                if not self._left_up_at_screen(screen_x, screen_y):
+                    self._best_effort_left_up(screen_x, screen_y)
                 return False
 
             if not self._left_up_at_screen(screen_x, screen_y, interrupt_check=interrupt_check):
+                self._best_effort_left_up(screen_x, screen_y)
                 return False
             if self.click_delay > 0:
                 precise_sleep(self.click_delay)
@@ -607,7 +802,7 @@ class MouseController:
         jitter: int,
     ) -> Point | None:
         if jitter <= 0:
-            return base_x, base_y
+            return self._validated_screen_input_position(base_x, base_y, "spam click target")
         target_x = base_x + random.randint(-jitter, jitter)
         target_y = base_y + random.randint(-jitter, jitter)
         jittered_position = self._resolve_screen_position(target_x, target_y, relative=False)
@@ -718,6 +913,33 @@ class MouseController:
             logger.debug("Spam-click complete: %s clicks", click_count)
             return True
 
+    def _validated_drag_path(
+        self,
+        screen_from_x: int,
+        screen_from_y: int,
+        screen_to_x: int,
+        screen_to_y: int,
+        steps: int,
+    ) -> list[Point] | None:
+        drag_path = []
+        for index in range(steps + 1):
+            position_ratio = index / steps
+            current_x_coordinate = int(
+                screen_from_x + (screen_to_x - screen_from_x) * position_ratio
+            )
+            current_y_coordinate = int(
+                screen_from_y + (screen_to_y - screen_from_y) * position_ratio
+            )
+            validated_position = self._validated_screen_input_position(
+                current_x_coordinate,
+                current_y_coordinate,
+                "drag path",
+            )
+            if validated_position is None:
+                return None
+            drag_path.append(validated_position)
+        return drag_path
+
     def drag(
         self,
         from_x: Any,
@@ -738,6 +960,16 @@ class MouseController:
                 return False
             screen_from_x, screen_from_y = from_pos
             screen_to_x, screen_to_y = to_pos
+            steps = 20
+            drag_path = self._validated_drag_path(
+                screen_from_x,
+                screen_from_y,
+                screen_to_x,
+                screen_to_y,
+                steps,
+            )
+            if drag_path is None:
+                return False
 
             if not self._set_cursor_pos(screen_from_x, screen_from_y):
                 return False
@@ -747,18 +979,15 @@ class MouseController:
             if not self._left_down_at_screen(screen_from_x, screen_from_y):
                 return False
 
-            steps = 20
             start_time = time.perf_counter()
-            for index in range(steps + 1):
-                position = index / steps
-                current_x = int(screen_from_x + (screen_to_x - screen_from_x) * position)
-                current_y = int(screen_from_y + (screen_to_y - screen_from_y) * position)
+            for index, (current_x, current_y) in enumerate(drag_path):
                 if not self._set_cursor_pos(current_x, current_y, verify_position=index == steps):
-                    self._left_up_at_screen(current_x, current_y)
+                    self._best_effort_left_up(current_x, current_y)
                     return False
                 sleep_until(start_time + ((index + 1) * (duration / steps)))
 
             if not self._left_up_at_screen(screen_to_x, screen_to_y):
+                self._best_effort_left_up(screen_to_x, screen_to_y)
                 return False
             logger.debug("Dragged from (%s, %s) to (%s, %s)", from_x, from_y, to_x, to_y)
             if self.click_delay > 0:
