@@ -251,6 +251,98 @@ class VisionScannerMixin:
                 return
         detections[(x, y)] = [(template_name, confidence)]
 
+    def _red_icon_template_match_plan(self, min_distance: int) -> tuple[list[str], int]:
+        template_names = self._red_icon_template_names()
+        if not bool(config.RED_ICON_FAST_MODE_ENABLED):
+            return template_names, min_distance
+
+        fast_template_names = [
+            template_name
+            for template_name in config.RED_ICON_FAST_TEMPLATE_NAMES
+            if template_name in self.templates
+        ]
+        if not fast_template_names:
+            return template_names, min_distance
+        return fast_template_names, int(config.RED_ICON_FAST_MIN_DISTANCE)
+
+    def _merge_red_icon_matches(
+        self,
+        detections: dict[tuple[int, int], list[tuple[str, float]]],
+        template_name: str,
+        matches: list[tuple[float, int, int]],
+        offset_x: int,
+        offset_y: int,
+    ) -> None:
+        for confidence, center_x, center_y in matches:
+            self._merge_icon_detection(
+                detections,
+                center_x + offset_x,
+                center_y + offset_y,
+                template_name,
+                confidence,
+            )
+
+    def _collect_template_red_icon_detections(
+        self,
+        detections: dict[tuple[int, int], list[tuple[str, float]]],
+        screenshot: Any,
+        template_names: list[str],
+        threshold: float,
+        min_distance: int,
+        offset_x: int,
+        offset_y: int,
+    ) -> None:
+        for template_name in template_names:
+            template_pair = self._template(template_name)
+            if template_pair is None:
+                continue
+            template, mask = template_pair
+            matches = self.image_matcher.find_all_templates(
+                screenshot,
+                template,
+                mask=mask,
+                threshold=threshold,
+                min_distance=min_distance,
+                template_name=template_name,
+                use_supervision_nms=self._supervision_nms_enabled("red_icon"),
+                supervision_iou_threshold=config.SUPERVISION_RED_ICON_NMS_IOU_THRESHOLD,
+                supervision_class_agnostic=config.SUPERVISION_CLASS_AGNOSTIC_NMS,
+            )
+            self._merge_red_icon_matches(detections, template_name, matches, offset_x, offset_y)
+
+    def _collect_hsv_red_icon_detections(
+        self,
+        detections: dict[tuple[int, int], list[tuple[str, float]]],
+        screenshot: Any,
+        template_names: list[str],
+        threshold: float,
+        min_distance: int,
+        offset_x: int,
+        offset_y: int,
+    ) -> None:
+        screenshot_color_mask = self.image_matcher.red_hsv_mask(screenshot)
+        if screenshot_color_mask is None:
+            return
+
+        for template_name in template_names:
+            template_pair = self._template(template_name)
+            if template_pair is None:
+                continue
+            template, mask = template_pair
+            matches = self.image_matcher.find_all_hsv_mask_templates(
+                screenshot,
+                template,
+                mask=mask,
+                threshold=threshold,
+                min_distance=min_distance,
+                template_name=template_name,
+                screenshot_color_mask=screenshot_color_mask,
+                use_supervision_nms=self._supervision_nms_enabled("red_icon"),
+                supervision_iou_threshold=config.SUPERVISION_RED_ICON_NMS_IOU_THRESHOLD,
+                supervision_class_agnostic=config.SUPERVISION_CLASS_AGNOSTIC_NMS,
+            )
+            self._merge_red_icon_matches(detections, template_name, matches, offset_x, offset_y)
+
     def _collect_red_icon_detections(
         self,
         screenshot: Any,
@@ -262,36 +354,27 @@ class VisionScannerMixin:
         detections: dict[tuple[int, int], list[tuple[str, float]]] = {}
         if screenshot.size == 0:
             return detections
-        template_names = self._red_icon_template_names()
-        if bool(config.RED_ICON_FAST_MODE_ENABLED):
-            configured_names = config.RED_ICON_FAST_TEMPLATE_NAMES
-            fast_names = [name for name in configured_names if name in self.templates]
-            if fast_names:
-                template_names = fast_names
-                min_distance = int(config.RED_ICON_FAST_MIN_DISTANCE)
-        for template_name in template_names:
-            if template_name not in self.templates:
-                continue
-            template, mask = self.templates[template_name]
-            icons = self.image_matcher.find_all_templates(
-                screenshot,
-                template,
-                mask=mask,
-                threshold=threshold,
-                min_distance=min_distance,
-                template_name=template_name,
-                use_supervision_nms=self._supervision_nms_enabled("red_icon"),
-                supervision_iou_threshold=config.SUPERVISION_RED_ICON_NMS_IOU_THRESHOLD,
-                supervision_class_agnostic=config.SUPERVISION_CLASS_AGNOSTIC_NMS,
-            )
-            for confidence, x, y in icons:
-                self._merge_icon_detection(
-                    detections,
-                    x + offset_x,
-                    y + offset_y,
-                    template_name,
-                    confidence,
-                )
+
+        template_match_names, template_match_min_distance = self._red_icon_template_match_plan(min_distance)
+        hsv_match_names = self._red_icon_template_names()
+        self._collect_template_red_icon_detections(
+            detections,
+            screenshot,
+            template_match_names,
+            threshold,
+            template_match_min_distance,
+            offset_x,
+            offset_y,
+        )
+        self._collect_hsv_red_icon_detections(
+            detections,
+            screenshot,
+            hsv_match_names,
+            threshold,
+            template_match_min_distance,
+            offset_x,
+            offset_y,
+        )
         return detections
 
     @staticmethod
