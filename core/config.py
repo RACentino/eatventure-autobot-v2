@@ -331,7 +331,7 @@ SCROLL_PIXEL_STEP = 150
 SCROLL_DISTANCE_RATIO = 1.0
 
 # Maximum oscillating scroll cycles before reset.
-MAX_SCROLL_CYCLES = 5
+MAX_SCROLL_CYCLES = 4
 
 # Step increment applied to each oscillating scroll cycle.
 SCROLL_INCREMENT_STEP = 2
