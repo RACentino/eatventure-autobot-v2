@@ -61,13 +61,13 @@ SUPERVISION_UPGRADE_STATION_NMS_IOU_THRESHOLD = 0.20
 SCRCPY_MISS_RECOVERY_ENABLED = True
 
 # Retry delay after a red icon scan miss.
-SCRCPY_RED_ICON_MISS_RECOVERY_DELAY = 0.45
+SCRCPY_RED_ICON_MISS_RECOVERY_DELAY = 0.12
 
 # Retry delay after a box scan miss.
-SCRCPY_BOX_MISS_RECOVERY_DELAY = 0.45
+SCRCPY_BOX_MISS_RECOVERY_DELAY = 0.12
 
 # Retry delay after an upgrade station scan miss.
-SCRCPY_UPGRADE_MISS_RECOVERY_DELAY = 0.55
+SCRCPY_UPGRADE_MISS_RECOVERY_DELAY = 0.12
 
 
 # Vision Matching
@@ -76,7 +76,7 @@ SCRCPY_UPGRADE_MISS_RECOVERY_DELAY = 0.55
 MATCH_THRESHOLD = 0.98
 
 # Template confidence threshold for red icon scans.
-RED_ICON_THRESHOLD = 0.910
+RED_ICON_THRESHOLD = 0.920
 
 # Template confidence threshold for new-level red icon validation.
 NEW_LEVEL_RED_ICON_THRESHOLD = 0.942
@@ -136,37 +136,37 @@ RED_ICON_FAST_MIN_DISTANCE = 30
 # Mouse and Action Timing
 
 # Delay after normal click actions.
-CLICK_DELAY = 0.18
+CLICK_DELAY = 0.02
 
 # Delay after cursor movement.
-MOUSE_MOVE_DELAY = 0.070
+MOUSE_MOVE_DELAY = 0.030
 
 # Duration to hold the mouse button down during click actions.
-MOUSE_DOWN_DURATION = 0.095
+MOUSE_DOWN_DURATION = 0.050
 
 # Delay after releasing the mouse button.
-MOUSE_UP_DURATION = 0.095
+MOUSE_UP_DURATION = 0.050
 
 # Enables hover movement before click actions.
 HOVER_ENABLED = True
 
 # Duration for hover movement before click actions.
-HOVER_DURATION = 0.140
+HOVER_DURATION = 0.100
 
 # Delay between upgrade station search attempts.
-UPGRADE_SEARCH_INTERVAL = 0.320
+UPGRADE_SEARCH_INTERVAL = 0.05
 
 # Delay between state-machine actions.
-STATE_DELAY = 0.42
+STATE_DELAY = 0.05
 
 # Settling delay before verifying an upgrade station hold target.
-UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.600
+UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.200
 
 # Maximum attempts for upgrade station verification.
 UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 2
 
 # Delay between upgrade station verification attempts.
-UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.200
+UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.100
 
 # Maximum pixel radius for accepting a verified upgrade station match.
 UPGRADE_STATION_VERIFY_RADIUS = 36
@@ -175,46 +175,46 @@ UPGRADE_STATION_VERIFY_RADIUS = 36
 CLICK_HOLD_MAX_DURATION = 10.0
 
 # Duration for stats upgrade spam-clicking.
-STATS_UPGRADE_CLICK_DURATION = 2.35
+STATS_UPGRADE_CLICK_DURATION = 1.5
 
 # Delay between stats upgrade spam-clicks.
-STATS_UPGRADE_CLICK_DELAY = 0.055
+STATS_UPGRADE_CLICK_DELAY = 0.016
 
 # Duration for generic spam-click loops.
-SPAM_CLICK_DURATION = 1.60
+SPAM_CLICK_DURATION = 1.0
 
 # Delay between generic spam-click actions.
-SPAM_CLICK_DELAY = 0.18
+SPAM_CLICK_DELAY = 0.02
 
 # Settling delay before scan actions in transition handlers.
-IDLE_SETTLE_DELAY = 0.35
+IDLE_SETTLE_DELAY = 0.05
 
 # Delay after clicking the new-level button.
-NEW_LEVEL_CLICK_SETTLE_DELAY = 0.75
+NEW_LEVEL_CLICK_SETTLE_DELAY = 0.12
 
 # Delay after clicking the level transition confirmation.
-LEVEL_TRANSITION_CONFIRM_DELAY = 1.35
+LEVEL_TRANSITION_CONFIRM_DELAY = 0.25
 
 # Delay after the level transition animation completes.
-LEVEL_TRANSITION_COMPLETE_DELAY = 1.75
+LEVEL_TRANSITION_COMPLETE_DELAY = 0.35
 
 # Retry interval during level transition attempts.
-LEVEL_TRANSITION_RETRY_INTERVAL = 0.50
+LEVEL_TRANSITION_RETRY_INTERVAL = 0.12
 
 # Retry interval when waiting for the unlock button to appear.
-WAIT_FOR_UNLOCK_RETRY_INTERVAL = 0.60
+WAIT_FOR_UNLOCK_RETRY_INTERVAL = 0.12
 
 # Settling delay after clicking the unlock button.
-WAIT_FOR_UNLOCK_SETTLE_DELAY = 0.90
+WAIT_FOR_UNLOCK_SETTLE_DELAY = 0.15
 
 # Delay between clicks in a double-click action.
-DOUBLE_CLICK_INTER_DELAY = 0.18
+DOUBLE_CLICK_INTER_DELAY = 0.02
 
 # Maximum input retry attempts for cursor positioning and mouse actions.
 INPUT_RETRY_COUNT = 2
 
 # Delay between input retry attempts.
-INPUT_RETRY_DELAY = 0.09
+INPUT_RETRY_DELAY = 0.01
 
 
 # Telegram Notifications
@@ -232,7 +232,7 @@ TELEGRAM_CHAT_ID = ""
 TELEGRAM_QUEUE_MAXSIZE = 100
 
 # Maximum Telegram worker shutdown wait in seconds.
-TELEGRAM_CLOSE_TIMEOUT = 8.0
+TELEGRAM_CLOSE_TIMEOUT = 1.0
 
 
 # Capture Regions
@@ -325,13 +325,13 @@ UPGRADE_RED_ICON_Y_MAX = 680
 # Scrolling
 
 # Pixel distance for each scroll drag.
-SCROLL_PIXEL_STEP = 150
+SCROLL_PIXEL_STEP = 120
 
 # Multiplier applied to scroll pixel distance.
 SCROLL_DISTANCE_RATIO = 1.0
 
 # Maximum oscillating scroll cycles before reset.
-MAX_SCROLL_CYCLES = 4
+MAX_SCROLL_CYCLES = 5
 
 # Step increment applied to each oscillating scroll cycle.
 SCROLL_INCREMENT_STEP = 2
@@ -385,40 +385,40 @@ ADAPTIVE_TUNER_SEARCH_LOW_THRESHOLD = 0.90
 ADAPTIVE_TUNER_SEARCH_HIGH_THRESHOLD = 0.985
 
 # Amount added to click delay after low click success.
-ADAPTIVE_TUNER_CLICK_DELAY_STEP = 0.030
+ADAPTIVE_TUNER_CLICK_DELAY_STEP = 0.005
 
 # Amount added to move delay after low click success.
-ADAPTIVE_TUNER_MOVE_DELAY_STEP = 0.015
+ADAPTIVE_TUNER_MOVE_DELAY_STEP = 0.002
 
 # Amount subtracted from click delay after high click success.
-ADAPTIVE_TUNER_CLICK_DECREMENT = 0.004
+ADAPTIVE_TUNER_CLICK_DECREMENT = 0.001
 
 # Amount subtracted from move delay after high click success.
-ADAPTIVE_TUNER_MOVE_DECREMENT = 0.002
+ADAPTIVE_TUNER_MOVE_DECREMENT = 0.0005
 
 # Amount added to search interval after low search success.
-ADAPTIVE_TUNER_SEARCH_INTERVAL_STEP = 0.060
+ADAPTIVE_TUNER_SEARCH_INTERVAL_STEP = 0.01
 
 # Amount subtracted from search interval after high search success.
-ADAPTIVE_TUNER_SEARCH_DECREMENT = 0.010
+ADAPTIVE_TUNER_SEARCH_DECREMENT = 0.002
 
 # Minimum click delay allowed by adaptive tuning.
-ADAPTIVE_TUNER_MIN_CLICK_DELAY = 0.160
+ADAPTIVE_TUNER_MIN_CLICK_DELAY = 0.01
 
 # Maximum click delay allowed by adaptive tuning.
-ADAPTIVE_TUNER_MAX_CLICK_DELAY = 0.420
+ADAPTIVE_TUNER_MAX_CLICK_DELAY = 0.1
 
 # Minimum move delay allowed by adaptive tuning.
-ADAPTIVE_TUNER_MIN_MOVE_DELAY = 0.060
+ADAPTIVE_TUNER_MIN_MOVE_DELAY = 0.005
 
 # Maximum move delay allowed by adaptive tuning.
-ADAPTIVE_TUNER_MAX_MOVE_DELAY = 0.140
+ADAPTIVE_TUNER_MAX_MOVE_DELAY = 0.05
 
 # Minimum search interval allowed by adaptive tuning.
-ADAPTIVE_TUNER_MIN_SEARCH_INTERVAL = 0.280
+ADAPTIVE_TUNER_MIN_SEARCH_INTERVAL = 0.05
 
 # Maximum search interval allowed by adaptive tuning.
-ADAPTIVE_TUNER_MAX_SEARCH_INTERVAL = 0.750
+ADAPTIVE_TUNER_MAX_SEARCH_INTERVAL = 0.2
 
 
 # Adaptive Vision
@@ -535,10 +535,10 @@ AI_LEARNING_SAVE_INTERVAL = 300.0
 AI_LEARNING_RECORDS_LIMIT = 256
 
 # Maximum wait for the historical learning worker to stop.
-AI_LEARNING_THREAD_JOIN_TIMEOUT = 4.0
+AI_LEARNING_THREAD_JOIN_TIMEOUT = 1.0
 
 # Delay between historical learning worker passes.
-AI_LEARNING_THREAD_INTERVAL = 3.0
+AI_LEARNING_THREAD_INTERVAL = 0.5
 
 # Number of adjacent level records considered as pairs.
 AI_LEARNING_PAIR_WINDOW = 5
@@ -559,25 +559,25 @@ AI_LEARNING_MIN_IMPROVEMENT_RATIO = 0.05
 AI_LEARNING_APPLY_COOLDOWN = 150.0
 
 # Minimum click delay allowed by historical learning.
-AI_LEARNING_MIN_CLICK_DELAY = 0.160
+AI_LEARNING_MIN_CLICK_DELAY = 0.01
 
 # Maximum click delay allowed by historical learning.
-AI_LEARNING_MAX_CLICK_DELAY = 0.420
+AI_LEARNING_MAX_CLICK_DELAY = 0.1
 
 # Minimum move delay allowed by historical learning.
-AI_LEARNING_MIN_MOVE_DELAY = 0.060
+AI_LEARNING_MIN_MOVE_DELAY = 0.005
 
 # Maximum move delay allowed by historical learning.
-AI_LEARNING_MAX_MOVE_DELAY = 0.140
+AI_LEARNING_MAX_MOVE_DELAY = 0.05
 
 # Minimum search interval allowed by historical learning.
-AI_LEARNING_MIN_SEARCH_INTERVAL = 0.280
+AI_LEARNING_MIN_SEARCH_INTERVAL = 0.05
 
 # Maximum search interval allowed by historical learning.
-AI_LEARNING_MAX_SEARCH_INTERVAL = 0.750
+AI_LEARNING_MAX_SEARCH_INTERVAL = 0.2
 
 # Minimum sleep between historical learning worker loops.
-LEARNING_LOOP_MIN_SLEEP = 1.5
+LEARNING_LOOP_MIN_SLEEP = 0.2
 
 
 # Forbidden Zones
