@@ -163,7 +163,7 @@ STATE_DELAY = 0.034
 UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.150
 
 # Maximum attempts for upgrade station verification.
-UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 4
+UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 1
 
 # Delay between upgrade station verification attempts.
 UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.050
