@@ -142,16 +142,16 @@ CLICK_DELAY = 0.034
 MOUSE_MOVE_DELAY = 0.008
 
 # Duration to hold the mouse button down during click actions.
-MOUSE_DOWN_DURATION = 0.012
+MOUSE_DOWN_DURATION = 0.075
 
 # Delay after releasing the mouse button.
-MOUSE_UP_DURATION = 0.008
+MOUSE_UP_DURATION = 0.075
 
 # Enables hover movement before click actions.
 HOVER_ENABLED = True
 
 # Duration for hover movement before click actions.
-HOVER_DURATION = 0.006
+HOVER_DURATION = 0.075
 
 # Delay between upgrade station search attempts.
 UPGRADE_SEARCH_INTERVAL = 0.034
@@ -160,7 +160,7 @@ UPGRADE_SEARCH_INTERVAL = 0.034
 STATE_DELAY = 0.034
 
 # Settling delay before verifying an upgrade station hold target.
-UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.050
+UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.200
 
 # Maximum attempts for upgrade station verification.
 UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 2
@@ -172,13 +172,13 @@ UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.050
 UPGRADE_STATION_VERIFY_RADIUS = 36
 
 # Maximum duration for holding an upgrade station click.
-CLICK_HOLD_MAX_DURATION = 8.0
+CLICK_HOLD_MAX_DURATION = 8.5
 
 # Duration for stats upgrade spam-clicking.
-STATS_UPGRADE_CLICK_DURATION = 0.80
+STATS_UPGRADE_CLICK_DURATION = 1.50
 
 # Delay between stats upgrade spam-clicks.
-STATS_UPGRADE_CLICK_DELAY = 0.020
+STATS_UPGRADE_CLICK_DELAY = 0.016
 
 # Duration for generic spam-click loops.
 SPAM_CLICK_DURATION = 0.60
@@ -325,7 +325,7 @@ UPGRADE_RED_ICON_Y_MAX = 680
 # Scrolling
 
 # Pixel distance for each scroll drag.
-SCROLL_PIXEL_STEP = 120
+SCROLL_PIXEL_STEP = 90
 
 # Multiplier applied to scroll pixel distance.
 SCROLL_DISTANCE_RATIO = 1.0
@@ -337,13 +337,13 @@ MAX_SCROLL_CYCLES = 5
 SCROLL_INCREMENT_STEP = 2
 
 # Delay between scroll intervals.
-SCROLL_INTERVAL_PAUSE = 0.034
+SCROLL_INTERVAL_PAUSE = 0.180
 
 # Settling delay after a scroll gesture.
-POST_SCROLL_SETTLE = 0.050
+POST_SCROLL_SETTLE = 0.180
 
 # Duration of each scroll drag gesture.
-SCROLL_DURATION = 0.090
+SCROLL_DURATION = 0.100
 
 
 # Handler Limits
