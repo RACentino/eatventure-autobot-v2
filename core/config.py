@@ -160,13 +160,13 @@ UPGRADE_SEARCH_INTERVAL = 0.034
 STATE_DELAY = 0.034
 
 # Settling delay before verifying an upgrade station hold target.
-UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.200
+UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.150
 
 # Maximum attempts for upgrade station verification.
-UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 2
+UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 4
 
 # Delay between upgrade station verification attempts.
-UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.100
+UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.050
 
 # Maximum pixel radius for accepting a verified upgrade station match.
 UPGRADE_STATION_VERIFY_RADIUS = 36
