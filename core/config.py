@@ -139,13 +139,13 @@ RED_ICON_FAST_MIN_DISTANCE = 30
 CLICK_DELAY = 0.034
 
 # Delay after cursor movement.
-MOUSE_MOVE_DELAY = 0.008
+MOUSE_MOVE_DELAY = 0.075
 
 # Duration to hold the mouse button down during click actions.
-MOUSE_DOWN_DURATION = 0.075
+MOUSE_DOWN_DURATION = 0.055
 
 # Delay after releasing the mouse button.
-MOUSE_UP_DURATION = 0.075
+MOUSE_UP_DURATION = 0.055
 
 # Enables hover movement before click actions.
 HOVER_ENABLED = True
@@ -166,7 +166,7 @@ UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.200
 UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 2
 
 # Delay between upgrade station verification attempts.
-UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.050
+UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.100
 
 # Maximum pixel radius for accepting a verified upgrade station match.
 UPGRADE_STATION_VERIFY_RADIUS = 36
