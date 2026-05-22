@@ -136,16 +136,16 @@ RED_ICON_FAST_MIN_DISTANCE = 30
 # Mouse and Action Timing
 
 # Delay after normal click actions.
-CLICK_DELAY = 0.100
+CLICK_DELAY = 0.38
 
 # Delay after cursor movement.
-MOUSE_MOVE_DELAY = 0.100
+MOUSE_MOVE_DELAY = 0.075
 
 # Duration to hold the mouse button down during click actions.
-MOUSE_DOWN_DURATION = 0.075
+MOUSE_DOWN_DURATION = 0.055
 
 # Delay after releasing the mouse button.
-MOUSE_UP_DURATION = 0.075
+MOUSE_UP_DURATION = 0.055
 
 # Enables hover movement before click actions.
 HOVER_ENABLED = True
