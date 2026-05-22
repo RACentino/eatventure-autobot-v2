@@ -51,6 +51,26 @@ class UpgradeHandlerMixin:
             expected_position,
         )
 
+    def _single_click_verify_upgrade_station(
+        self,
+        expected_position: tuple[int, int],
+        base_threshold: float,
+        relaxed_threshold: float,
+    ) -> tuple[RedIcon | None, bool]:
+        station_x, station_y = expected_position
+        logger.info("Single-clicking upgrade station before verification at (%s, %s)", station_x, station_y)
+        clicked = self.mouse_controller.precise_click(station_x, station_y, relative=True)
+        self.tuner.record_click_result(clicked)
+        self._apply_tuning()
+        if not clicked:
+            logger.warning("Upgrade station verification click failed at (%s, %s)", station_x, station_y)
+            return None, False
+        return self._find_settled_upgrade_station_match(
+            expected_position,
+            base_threshold,
+            relaxed_threshold,
+        )
+
     def _position_cursor_for_upgrade_hold(self, x: int, y: int) -> tuple[int, int] | None:
         screen_pos = self.mouse_controller._resolve_screen_position(x, y, relative=True)
         if screen_pos is None:
@@ -236,6 +256,27 @@ class UpgradeHandlerMixin:
 
         if verified_match is None:
             logger.info("Upgrade station was not stable after menu settle; retrying search")
+            self._record_upgrade_station_unavailable()
+            return State.SEARCH_UPGRADE_STATION
+
+        station_confidence, station_x, station_y = self._record_upgrade_station_match(verified_match)
+        logger.info(
+            "Upgrade station settled at (%s, %s) [%.3f]",
+            station_x,
+            station_y,
+            station_confidence,
+        )
+
+        verified_match, verification_completed = self._single_click_verify_upgrade_station(
+            (station_x, station_y),
+            base_threshold,
+            relaxed_threshold,
+        )
+        if not verification_completed:
+            return State.OPEN_BOXES
+
+        if verified_match is None:
+            logger.info("Upgrade station disappeared after single-click verification; retrying search")
             self._record_upgrade_station_unavailable()
             return State.SEARCH_UPGRADE_STATION
 
