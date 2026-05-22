@@ -136,7 +136,7 @@ RED_ICON_FAST_MIN_DISTANCE = 30
 # Mouse and Action Timing
 
 # Delay after normal click actions.
-CLICK_DELAY = 0.075
+CLICK_DELAY = 0.100
 
 # Delay after cursor movement.
 MOUSE_MOVE_DELAY = 0.100
