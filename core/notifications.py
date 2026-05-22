@@ -34,7 +34,9 @@ class TelegramNotifier:
             logger.info("Telegram notifier disabled")
 
     def _worker_loop(self) -> None:
-        while not self._stop.is_set() or not self._queue.empty():
+        for _ in range(int(config.TELEGRAM_WORKER_MAX_ITERATIONS)):
+            if self._stop.is_set() and self._queue.empty():
+                return
             try:
                 message = self._queue.get(timeout=0.2)
             except queue.Empty:
@@ -46,6 +48,7 @@ class TelegramNotifier:
                 logger.exception("Unexpected Telegram notification failure")
             finally:
                 self._queue.task_done()
+        logger.warning("Telegram notifier reached configured worker iteration limit")
 
     def _send_message_now(self, message: str) -> bool:
         if not self.enabled or self._session is None:
@@ -98,7 +101,8 @@ class TelegramNotifier:
             return False
 
     def _discard_pending_messages(self) -> None:
-        while True:
+        pending_count = self._queue.qsize()
+        for _ in range(pending_count):
             try:
                 self._queue.get_nowait()
             except queue.Empty:

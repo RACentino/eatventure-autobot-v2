@@ -89,7 +89,8 @@ def _process_bot_command(command: BotCommand, logger: logging.Logger) -> None:
 
 
 def _drain_bot_commands(logger: logging.Logger) -> None:
-    while True:
+    pending_count = bot_command_queue.qsize()
+    for _ in range(pending_count):
         try:
             command = bot_command_queue.get_nowait()
         except queue.Empty:
@@ -176,12 +177,15 @@ def _print_startup_banner() -> None:
 
 def _run_bot_event_loop() -> None:
     logger = logging.getLogger(__name__)
-    while not exit_requested.is_set():
+    for _ in range(int(config.MAIN_EVENT_LOOP_MAX_ITERATIONS)):
+        if exit_requested.is_set():
+            return
         _drain_bot_commands(logger)
         if bot_instance is not None and bot_instance.running:
             bot_instance.step()
         _drain_bot_commands(logger)
         precise_sleep(0.1)
+    logger.warning("Main event loop reached configured iteration limit")
 
 
 def _cleanup_runtime(listener: Any | None) -> None:

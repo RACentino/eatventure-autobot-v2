@@ -35,57 +35,59 @@ class IconHandlerMixin:
                 return (0, y, -confidence)
         return (1, y, -confidence)
 
-    def handle_find_red_icons(self, current_state: State) -> StateResult:
-        self._click_idle()
-
-        self.work_done = False
-
+    def _capture_red_icon_search_frames(self) -> tuple[Any, Any]:
         screenshot = self.window_capture.capture(max_y=config.EXTENDED_SEARCH_Y)
-        limited_screenshot = screenshot[: config.MAX_SEARCH_Y, :]
+        return screenshot, screenshot[: config.MAX_SEARCH_Y, :]
 
-        has_new_level_template = self._template("newLevel") is not None
+    def _state_for_new_level_button(self, limited_screenshot: Any, recovery: bool = False) -> State | None:
         found, confidence, x, y = self._find_new_level_button(limited_screenshot)
-        if found:
-            self.cycle_counter = 0
-            self.vision_optimizer.update_new_level_confidence(confidence)
-            logger.info("newLevel.png found at (%s, %s)", x, y)
-            return State.TRANSITION_LEVEL
-        if has_new_level_template:
-            self.vision_optimizer.update_new_level_miss()
+        if not found:
+            return None
+        self.cycle_counter = 0
+        self.vision_optimizer.update_new_level_confidence(confidence)
+        suffix = " after SCRCPY recovery" if recovery else ""
+        logger.info("newLevel.png found at (%s, %s)%s", x, y, suffix)
+        return State.TRANSITION_LEVEL
 
-        scan_threshold = self._red_icon_scan_threshold()
-
-        min_matches = self._red_icon_min_matches()
+    def _scan_and_record_red_icon_frame(
+        self,
+        screenshot: Any,
+        limited_screenshot: Any,
+        scan_threshold: float,
+        min_matches: int,
+    ) -> RedIcon | None:
         self.red_icons, valid_red_icon_confidences, best_new_level_icon = self._scan_red_icon_frame(
             screenshot,
             limited_screenshot,
             scan_threshold,
             min_matches,
         )
-
         self.vision_optimizer.update_red_icon_scan(valid_red_icon_confidences)
+        return best_new_level_icon
 
+    def _recover_red_icon_scan(
+        self,
+        scan_threshold: float,
+        min_matches: int,
+    ) -> tuple[State | None, RedIcon | None]:
         if (
-            not self.red_icons
-            and best_new_level_icon is None
-            and self._scrcpy_miss_recovery_sleep(config.SCRCPY_RED_ICON_MISS_RECOVERY_DELAY)
+            self.red_icons
+            or not self._scrcpy_miss_recovery_sleep(config.SCRCPY_RED_ICON_MISS_RECOVERY_DELAY)
         ):
-            screenshot = self.window_capture.capture(max_y=config.EXTENDED_SEARCH_Y)
-            limited_screenshot = screenshot[: config.MAX_SEARCH_Y, :]
-            found, confidence, x, y = self._find_new_level_button(limited_screenshot)
-            if found:
-                self.cycle_counter = 0
-                self.vision_optimizer.update_new_level_confidence(confidence)
-                logger.info("newLevel.png found at (%s, %s) after SCRCPY recovery", x, y)
-                return State.TRANSITION_LEVEL
-            self.red_icons, valid_red_icon_confidences, best_new_level_icon = self._scan_red_icon_frame(
-                screenshot,
-                limited_screenshot,
-                scan_threshold,
-                min_matches,
-            )
-            self.vision_optimizer.update_red_icon_scan(valid_red_icon_confidences)
+            return None, None
 
+        screenshot, limited_screenshot = self._capture_red_icon_search_frames()
+        next_state = self._state_for_new_level_button(limited_screenshot, recovery=True)
+        if next_state is not None:
+            return next_state, None
+        return None, self._scan_and_record_red_icon_frame(
+            screenshot,
+            limited_screenshot,
+            scan_threshold,
+            min_matches,
+        )
+
+    def _state_for_new_level_red_icon(self, best_new_level_icon: RedIcon | None) -> State | None:
         if best_new_level_icon is not None:
             self.vision_optimizer.update_new_level_red_icon_confidence(best_new_level_icon[0])
             logger.info(
@@ -97,22 +99,53 @@ class IconHandlerMixin:
             self._new_level_red_icon_verified = False
             return State.CHECK_NEW_LEVEL
         self.vision_optimizer.update_new_level_red_icon_miss()
+        return None
 
-        if self.red_icons:
-            filtered_icons = self._clickable_red_icons(self.red_icons)
+    def _state_for_clickable_red_icons(self) -> State | None:
+        if not self.red_icons:
+            return None
 
-            if not filtered_icons:
-                logger.info("No valid red icons after forbidden-zone filtering")
-                return State.OPEN_BOXES
+        filtered_icons = self._clickable_red_icons(self.red_icons)
+        if not filtered_icons:
+            logger.info("No valid red icons after forbidden-zone filtering")
+            return State.OPEN_BOXES
 
-            self.red_icons = sorted(filtered_icons, key=self._red_icon_priority_key)
-            self.current_red_icon_index = 0
-            self.cycle_counter = 0
-            self.work_done = True
-            logger.info("%s red icons ready to process", len(self.red_icons))
-            return State.CLICK_RED_ICON
+        self.red_icons = sorted(filtered_icons, key=self._red_icon_priority_key)
+        self.current_red_icon_index = 0
+        self.cycle_counter = 0
+        self.work_done = True
+        logger.info("%s red icons ready to process", len(self.red_icons))
+        return State.CLICK_RED_ICON
 
-        return State.OPEN_BOXES
+    def handle_find_red_icons(self, current_state: State) -> StateResult:
+        self._click_idle()
+        self.work_done = False
+
+        screenshot, limited_screenshot = self._capture_red_icon_search_frames()
+        next_state = self._state_for_new_level_button(limited_screenshot)
+        if next_state is not None:
+            return next_state
+        if self._template("newLevel") is not None:
+            self.vision_optimizer.update_new_level_miss()
+
+        scan_threshold = self._red_icon_scan_threshold()
+        min_matches = self._red_icon_min_matches()
+        best_new_level_icon = self._scan_and_record_red_icon_frame(
+            screenshot,
+            limited_screenshot,
+            scan_threshold,
+            min_matches,
+        )
+        if not self.red_icons and best_new_level_icon is None:
+            next_state, best_new_level_icon = self._recover_red_icon_scan(scan_threshold, min_matches)
+            if next_state is not None:
+                return next_state
+
+        next_state = self._state_for_new_level_red_icon(best_new_level_icon)
+        if next_state is not None:
+            return next_state
+
+        return self._state_for_clickable_red_icons() or State.OPEN_BOXES
 
     def handle_click_red_icon(self, current_state: State) -> StateResult:
         if self.current_red_icon_index >= len(self.red_icons):
