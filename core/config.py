@@ -151,7 +151,7 @@ MOUSE_UP_DURATION = 0.055
 HOVER_ENABLED = True
 
 # Duration for hover movement before click actions.
-HOVER_DURATION = 0.075
+HOVER_DURATION = 0.100
 
 # Delay between upgrade station search attempts.
 UPGRADE_SEARCH_INTERVAL = 0.034
