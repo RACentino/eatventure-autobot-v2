@@ -1,4 +1,5 @@
 import logging
+import math
 from pathlib import Path
 from typing import Any
 
@@ -545,16 +546,30 @@ class VisionScannerMixin:
         expected_x, expected_y = expected_position
         return (int(x) - int(expected_x)) ** 2 + (int(y) - int(expected_y)) ** 2
 
+    @staticmethod
+    def _normalized_candidate_center(candidate: tuple[Any, ...]) -> RedIcon | None:
+        try:
+            confidence, center_x, center_y = candidate[:3]
+            confidence = float(confidence)
+            center_x = int(center_x)
+            center_y = int(center_y)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(confidence):
+            return None
+        return confidence, center_x, center_y
+
     def _upgrade_station_candidate_match(
         self,
         limited_screenshot: Any,
         template: Any,
         mask: Any,
-        candidate: MatchCandidate,
+        candidate: tuple[Any, ...],
     ) -> RedIcon | None:
-        confidence, x, y, _, _ = candidate
-        x = int(x)
-        y = int(y)
+        candidate_center = self._normalized_candidate_center(candidate)
+        if candidate_center is None:
+            return None
+        confidence, x, y = candidate_center
         template_height, template_width = template.shape[:2]
         location = (x - template_width // 2, y - template_height // 2)
         if not self._candidate_passes_template_gates(
