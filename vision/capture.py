@@ -254,9 +254,9 @@ class WindowCapture:
             return self._window is not None
 
     def close(self) -> None:
-        backend_close = getattr(self._screenshotter, "close", None)
-        if callable(backend_close):
-            backend_close()
+        close = getattr(self._screenshotter, "close", None)
+        if callable(close):
+            close()
 
 
 class ForbiddenAreaOverlay:

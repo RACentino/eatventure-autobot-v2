@@ -571,15 +571,12 @@ class HistoricalLearner:
         self._persist(force=True)
 
     def _loop(self) -> None:
-        for _ in range(int(config.AI_LEARNING_THREAD_MAX_ITERATIONS)):
-            if self._stop.is_set():
-                return
+        while not self._stop.is_set():
             try:
                 self._run_cycle()
             except Exception:
                 logger.exception("Historical learner cycle failed")
             self._stop.wait(self.interval)
-        logger.warning("Historical learner reached configured worker iteration limit")
 
     def _run_cycle(self) -> None:
         with self._lock:

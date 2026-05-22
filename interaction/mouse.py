@@ -15,9 +15,6 @@ Point = tuple[int, int]
 WindowBounds = tuple[int, int, int, int]
 RelativeScreenPosition = tuple[int, int, int, int, int, int]
 ForbiddenZone = tuple[str, int, int, int, int | None]
-MINIMUM_SLEEP_SLICE_SECONDS = 0.001
-MAXIMUM_SLEEP_SLICE_SECONDS = 0.050
-INTERRUPTIBLE_SLEEP_SLICE_SECONDS = 0.005
 
 
 def _point_within_client_area(
@@ -95,57 +92,6 @@ def _coerce_duration(duration: Any, default: float = 0.0) -> float:
     return max(0.0, value)
 
 
-def _deadline_remaining_seconds(deadline: float) -> float:
-    return float(deadline) - time.perf_counter()
-
-
-def _deadline_wait_attempt_count(deadline: float, slice_seconds: float) -> int:
-    remaining_seconds = max(0.0, _deadline_remaining_seconds(deadline))
-    bounded_slice_seconds = max(float(slice_seconds), MINIMUM_SLEEP_SLICE_SECONDS)
-    return max(1, int(math.ceil(remaining_seconds / bounded_slice_seconds)) + 2)
-
-
-def _stop_event_is_clear(stop_event: threading.Event | None) -> bool:
-    return stop_event is None or not stop_event.is_set()
-
-
-def _interrupt_check_is_clear(interrupt_check: Callable[[], bool] | None) -> bool:
-    return interrupt_check is None or not interrupt_check()
-
-
-def _finish_stop_event_deadline_wait(deadline: float, stop_event: threading.Event | None) -> bool:
-    if not _stop_event_is_clear(stop_event):
-        return False
-    remaining_seconds = _deadline_remaining_seconds(deadline)
-    if remaining_seconds <= 0:
-        return _stop_event_is_clear(stop_event)
-    if stop_event is None:
-        time.sleep(remaining_seconds)
-        return True
-    return not stop_event.wait(remaining_seconds)
-
-
-def _wait_for_interruptible_deadline(
-    deadline: float,
-    interrupt_check: Callable[[], bool] | None,
-) -> bool:
-    attempt_count = _deadline_wait_attempt_count(deadline, INTERRUPTIBLE_SLEEP_SLICE_SECONDS)
-    for _ in range(attempt_count):
-        if not _interrupt_check_is_clear(interrupt_check):
-            return False
-        remaining_seconds = _deadline_remaining_seconds(deadline)
-        if remaining_seconds <= 0:
-            return True
-        time.sleep(min(remaining_seconds, INTERRUPTIBLE_SLEEP_SLICE_SECONDS))
-
-    if not _interrupt_check_is_clear(interrupt_check):
-        return False
-    remaining_seconds = _deadline_remaining_seconds(deadline)
-    if remaining_seconds > 0:
-        time.sleep(remaining_seconds)
-    return _interrupt_check_is_clear(interrupt_check)
-
-
 def precise_sleep(duration: Any) -> None:
     duration = _coerce_duration(duration)
     if duration <= 0:
@@ -155,7 +101,7 @@ def precise_sleep(duration: Any) -> None:
 
 def _wait_until_next_deadline_slice(remaining: float, stop_event: threading.Event | None) -> bool:
     if remaining > 0.004:
-        wait_time = min(remaining - 0.002, MAXIMUM_SLEEP_SLICE_SECONDS)
+        wait_time = min(remaining - 0.002, 0.05)
         if stop_event is None:
             time.sleep(wait_time)
             return True
@@ -166,8 +112,7 @@ def _wait_until_next_deadline_slice(remaining: float, stop_event: threading.Even
 
 
 def sleep_until(deadline: float, stop_event: threading.Event | None = None) -> bool:
-    attempt_count = _deadline_wait_attempt_count(deadline, MINIMUM_SLEEP_SLICE_SECONDS)
-    for _ in range(attempt_count):
+    while True:
         if stop_event is not None and stop_event.is_set():
             return False
         remaining = float(deadline) - time.perf_counter()
@@ -175,7 +120,6 @@ def sleep_until(deadline: float, stop_event: threading.Event | None = None) -> b
             return stop_event is None or not stop_event.is_set()
         if not _wait_until_next_deadline_slice(remaining, stop_event):
             return False
-    return _finish_stop_event_deadline_wait(deadline, stop_event)
 
 
 def wait_event(stop_event: threading.Event | None, duration: Any) -> bool:
@@ -403,53 +347,28 @@ class MouseController:
         action_name: str = "input",
     ) -> RelativeScreenPosition | None:
         try:
-            target_position = self._target_position_from_input(x, y, relative)
+            if relative:
+                (
+                    window_x_coordinate,
+                    window_y_coordinate,
+                    client_width,
+                    client_height,
+                ) = self.get_window_bounds()
+                relative_x_coordinate = int(x)
+                relative_y_coordinate = int(y)
+            else:
+                (
+                    relative_x_coordinate,
+                    relative_y_coordinate,
+                    window_x_coordinate,
+                    window_y_coordinate,
+                    client_width,
+                    client_height,
+                ) = self._relative_from_screen(x, y)
         except (RuntimeError, TypeError, ValueError) as exc:
             logger.error("Cannot validate %s position: %s", action_name, exc)
             return None
 
-        if self._target_position_is_rejected(target_position, check_forbidden, action_name):
-            return None
-        return target_position
-
-    def _target_position_from_input(
-        self,
-        x: Any,
-        y: Any,
-        relative: bool,
-    ) -> RelativeScreenPosition:
-        if not relative:
-            return self._relative_from_screen(x, y)
-
-        (
-            window_x_coordinate,
-            window_y_coordinate,
-            client_width,
-            client_height,
-        ) = self.get_window_bounds()
-        return (
-            int(x),
-            int(y),
-            window_x_coordinate,
-            window_y_coordinate,
-            client_width,
-            client_height,
-        )
-
-    def _target_position_is_rejected(
-        self,
-        target_position: RelativeScreenPosition,
-        check_forbidden: bool,
-        action_name: str,
-    ) -> bool:
-        (
-            relative_x_coordinate,
-            relative_y_coordinate,
-            _,
-            _,
-            client_width,
-            client_height,
-        ) = target_position
         if not _point_within_client_area(
             relative_x_coordinate,
             relative_y_coordinate,
@@ -464,7 +383,7 @@ class MouseController:
                 client_width,
                 client_height,
             )
-            return True
+            return None
 
         if check_forbidden:
             forbidden_zone_name = _matching_forbidden_zone_name(
@@ -480,8 +399,16 @@ class MouseController:
                     relative_x_coordinate,
                     relative_y_coordinate,
                 )
-                return True
-        return False
+                return None
+
+        return (
+            relative_x_coordinate,
+            relative_y_coordinate,
+            window_x_coordinate,
+            window_y_coordinate,
+            client_width,
+            client_height,
+        )
 
     def _validated_screen_input_position(
         self,
@@ -589,11 +516,23 @@ class MouseController:
     def _interruptible_delay(duration: Any, interrupt_check: Callable[[], bool] | None = None) -> bool:
         wait_time = MouseController._coerce_non_negative_float(duration, 0.0)
         deadline = time.perf_counter() + wait_time
-        return _wait_for_interruptible_deadline(deadline, interrupt_check)
+        while True:
+            if interrupt_check and interrupt_check():
+                return False
+            remaining = deadline - time.perf_counter()
+            if remaining <= 0:
+                return True
+            precise_sleep(min(remaining, 0.005))
 
     @staticmethod
     def _interruptible_sleep_until(deadline: float, interrupt_check: Callable[[], bool] | None = None) -> bool:
-        return _wait_for_interruptible_deadline(deadline, interrupt_check)
+        while True:
+            if interrupt_check and interrupt_check():
+                return False
+            remaining = float(deadline) - time.perf_counter()
+            if remaining <= 0:
+                return True
+            precise_sleep(min(remaining, 0.005))
 
     def _left_down_at_screen(
         self,
@@ -896,8 +835,7 @@ class MouseController:
             jitter,
         )
 
-        maximum_click_attempts = max(1, int(math.ceil(duration / click_delay)) + 1)
-        for _ in range(maximum_click_attempts):
+        while True:
             if interrupt_check and interrupt_check():
                 logger.debug("Spam-click interrupted after %s clicks", click_count)
                 return None
@@ -929,7 +867,6 @@ class MouseController:
 
             click_count += 1
             next_click_at = time.perf_counter() + click_delay
-        return click_count
 
     def spam_click_at(
         self,

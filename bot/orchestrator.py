@@ -149,17 +149,14 @@ class EatventureBot(
 
     def _next_pending_learned_behavior(self) -> dict[str, float] | None:
         latest_behavior = None
-        pending_count = self._pending_learned_behaviors.qsize()
-        for _ in range(pending_count):
+        while True:
             try:
                 latest_behavior = self._pending_learned_behaviors.get_nowait()
             except queue.Empty:
-                break
-        return latest_behavior
+                return latest_behavior
 
     def _discard_pending_learned_behavior_updates(self) -> None:
-        pending_count = self._pending_learned_behaviors.qsize()
-        for _ in range(pending_count):
+        while True:
             try:
                 self._pending_learned_behaviors.get_nowait()
             except queue.Empty:
@@ -330,14 +327,11 @@ class EatventureBot(
         if not self.start():
             return
         try:
-            for _ in range(int(config.BOT_RUN_LOOP_MAX_ITERATIONS)):
-                if not self.running:
-                    return
+            while self.running:
                 if not self.window_capture.is_window_active():
                     logger.error("Window '%s' is no longer active", config.WINDOW_TITLE)
                     break
                 self.step()
                 precise_sleep(0.1)
-            logger.warning("Bot run loop reached configured iteration limit")
         finally:
             self.stop()
