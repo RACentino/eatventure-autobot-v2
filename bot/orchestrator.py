@@ -26,6 +26,7 @@ from vision.capture import (
 from vision.scanner import VisionScannerMixin
 
 logger = logging.getLogger(__name__)
+PENDING_LEARNED_BEHAVIOR_DRAIN_LIMIT = 64
 
 
 
@@ -149,18 +150,27 @@ class EatventureBot(
 
     def _next_pending_learned_behavior(self) -> dict[str, float] | None:
         latest_behavior = None
-        while True:
+        for _ in range(PENDING_LEARNED_BEHAVIOR_DRAIN_LIMIT):
             try:
                 latest_behavior = self._pending_learned_behaviors.get_nowait()
             except queue.Empty:
                 return latest_behavior
+        logger.debug(
+            "Deferred learned-behavior drain after %s updates",
+            PENDING_LEARNED_BEHAVIOR_DRAIN_LIMIT,
+        )
+        return latest_behavior
 
     def _discard_pending_learned_behavior_updates(self) -> None:
-        while True:
+        for _ in range(PENDING_LEARNED_BEHAVIOR_DRAIN_LIMIT):
             try:
                 self._pending_learned_behaviors.get_nowait()
             except queue.Empty:
                 return
+        logger.debug(
+            "Stopped learned-behavior discard after %s updates",
+            PENDING_LEARNED_BEHAVIOR_DRAIN_LIMIT,
+        )
 
     def _apply_pending_learned_behavior_updates(self) -> None:
         learned_behavior = self._next_pending_learned_behavior()

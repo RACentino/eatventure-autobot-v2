@@ -645,46 +645,14 @@ class VisionScannerMixin:
         if not candidates:
             return None
 
-        template_height, template_width = template.shape[:2]
-        best_target_match = None
-        best_target_distance = None
-        maximum_distance_squared = None
-        if expected_position is not None and maximum_distance is not None:
-            maximum_distance_squared = max(0.0, float(maximum_distance)) ** 2
-
-        for confidence, x, y in candidates:
-            x = int(x)
-            y = int(y)
-            location = (x - template_width // 2, y - template_height // 2)
-
-            if not self._candidate_passes_template_gates(
-                limited_screenshot,
-                template,
-                mask,
-                location,
-                config.UPGRADE_STATION_COLOR_CHECK,
-                0.7,
-                config.UPGRADE_STATION_HSV_COLOR_GATE_ENABLED,
-                config.UPGRADE_STATION_HSV_RANGES,
-                config.UPGRADE_STATION_HSV_MIN_MATCH_RATIO,
-            ):
-                continue
-
-            if self.mouse_controller.is_in_forbidden_zone(x, y, relative=True):
-                continue
-
-            match = float(confidence), x, y
-            if expected_position is None:
-                return match
-
-            distance_squared = self._upgrade_station_distance_squared(match, expected_position)
-            if maximum_distance_squared is not None and distance_squared > maximum_distance_squared:
-                continue
-            if best_target_distance is None or distance_squared < best_target_distance:
-                best_target_match = match
-                best_target_distance = distance_squared
-
-        return best_target_match
+        return self._best_upgrade_station_match(
+            candidates,
+            limited_screenshot,
+            template,
+            mask,
+            expected_position,
+            maximum_distance,
+        )
 
     def _find_verified_upgrade_station_match(
         self,

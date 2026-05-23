@@ -16,6 +16,7 @@ bot_instance: EatventureBot | None = None
 log_listener: QueueListener | None = None
 exit_requested = threading.Event()
 bot_command_queue: queue.SimpleQueue["BotCommand"] = queue.SimpleQueue()
+BOT_COMMAND_DRAIN_LIMIT = 64
 
 
 class BotCommand(Enum):
@@ -89,12 +90,13 @@ def _process_bot_command(command: BotCommand, logger: logging.Logger) -> None:
 
 
 def _drain_bot_commands(logger: logging.Logger) -> None:
-    while True:
+    for _ in range(BOT_COMMAND_DRAIN_LIMIT):
         try:
             command = bot_command_queue.get_nowait()
         except queue.Empty:
             return
         _process_bot_command(command, logger)
+    logger.warning("Deferred bot command drain after %s commands", BOT_COMMAND_DRAIN_LIMIT)
 
 
 def on_press(key: Any) -> None:

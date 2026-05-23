@@ -15,6 +15,7 @@ Point = tuple[int, int]
 WindowBounds = tuple[int, int, int, int]
 RelativeScreenPosition = tuple[int, int, int, int, int, int]
 ForbiddenZone = tuple[str, int, int, int, int | None]
+MIN_DEADLINE_POLL_SLICE = 0.001
 
 
 def _point_within_client_area(
@@ -111,8 +112,14 @@ def _wait_until_next_deadline_slice(remaining: float, stop_event: threading.Even
     return True
 
 
+def _deadline_poll_iterations(deadline: float, poll_slice: float = MIN_DEADLINE_POLL_SLICE) -> int:
+    remaining = max(0.0, float(deadline) - time.perf_counter())
+    bounded_slice = max(MIN_DEADLINE_POLL_SLICE, float(poll_slice))
+    return max(1, int(math.ceil(remaining / bounded_slice)) + 3)
+
+
 def sleep_until(deadline: float, stop_event: threading.Event | None = None) -> bool:
-    while True:
+    for _ in range(_deadline_poll_iterations(deadline)):
         if stop_event is not None and stop_event.is_set():
             return False
         remaining = float(deadline) - time.perf_counter()
@@ -120,6 +127,7 @@ def sleep_until(deadline: float, stop_event: threading.Event | None = None) -> b
             return stop_event is None or not stop_event.is_set()
         if not _wait_until_next_deadline_slice(remaining, stop_event):
             return False
+    return stop_event is None or not stop_event.is_set()
 
 
 def wait_event(stop_event: threading.Event | None, duration: Any) -> bool:
@@ -217,6 +225,50 @@ class MouseController:
     @staticmethod
     def _within_client(x: Any, y: Any, width: Any, height: Any) -> bool:
         return _point_within_client_area(int(x), int(y), int(width), int(height))
+
+    def _target_position_components(
+        self,
+        x: Any,
+        y: Any,
+        relative: bool,
+    ) -> RelativeScreenPosition:
+        if relative:
+            (
+                window_x_coordinate,
+                window_y_coordinate,
+                client_width,
+                client_height,
+            ) = self.get_window_bounds()
+            return (
+                int(x),
+                int(y),
+                window_x_coordinate,
+                window_y_coordinate,
+                client_width,
+                client_height,
+            )
+        return self._relative_from_screen(x, y)
+
+    @staticmethod
+    def _position_within_client_bounds(position: RelativeScreenPosition) -> bool:
+        relative_x_coordinate, relative_y_coordinate, _, _, client_width, client_height = position
+        return _point_within_client_area(
+            relative_x_coordinate,
+            relative_y_coordinate,
+            client_width,
+            client_height,
+        )
+
+    def _matching_target_forbidden_zone(
+        self,
+        position: RelativeScreenPosition,
+    ) -> str | None:
+        relative_x_coordinate, relative_y_coordinate, _, _, _, _ = position
+        return _matching_forbidden_zone_name(
+            relative_x_coordinate,
+            relative_y_coordinate,
+            self._forbidden_zones,
+        )
 
     def _cursor_matches_position(self, screen_x: int, screen_y: int) -> tuple[bool, int, int]:
         current_x, current_y = self.get_cursor_position()
@@ -355,34 +407,20 @@ class MouseController:
         action_name: str = "input",
     ) -> RelativeScreenPosition | None:
         try:
-            if relative:
-                (
-                    window_x_coordinate,
-                    window_y_coordinate,
-                    client_width,
-                    client_height,
-                ) = self.get_window_bounds()
-                relative_x_coordinate = int(x)
-                relative_y_coordinate = int(y)
-            else:
-                (
-                    relative_x_coordinate,
-                    relative_y_coordinate,
-                    window_x_coordinate,
-                    window_y_coordinate,
-                    client_width,
-                    client_height,
-                ) = self._relative_from_screen(x, y)
+            position = self._target_position_components(x, y, relative)
         except (RuntimeError, TypeError, ValueError) as exc:
             logger.error("Cannot validate %s position: %s", action_name, exc)
             return None
 
-        if not _point_within_client_area(
+        (
             relative_x_coordinate,
             relative_y_coordinate,
+            window_x_coordinate,
+            window_y_coordinate,
             client_width,
             client_height,
-        ):
+        ) = position
+        if not self._position_within_client_bounds(position):
             logger.warning(
                 "Rejected %s outside target window: relative=(%s, %s), bounds=%sx%s",
                 action_name,
@@ -394,11 +432,7 @@ class MouseController:
             return None
 
         if check_forbidden:
-            forbidden_zone_name = _matching_forbidden_zone_name(
-                relative_x_coordinate,
-                relative_y_coordinate,
-                self._forbidden_zones,
-            )
+            forbidden_zone_name = self._matching_target_forbidden_zone(position)
             if forbidden_zone_name is not None:
                 logger.warning(
                     "Rejected %s inside forbidden zone %s: relative=(%s, %s)",
@@ -523,24 +557,21 @@ class MouseController:
     @staticmethod
     def _interruptible_delay(duration: Any, interrupt_check: Callable[[], bool] | None = None) -> bool:
         wait_time = MouseController._coerce_non_negative_float(duration, 0.0)
-        deadline = time.perf_counter() + wait_time
-        while True:
-            if interrupt_check and interrupt_check():
-                return False
-            remaining = deadline - time.perf_counter()
-            if remaining <= 0:
-                return True
-            precise_sleep(min(remaining, 0.005))
+        return MouseController._interruptible_sleep_until(
+            time.perf_counter() + wait_time,
+            interrupt_check,
+        )
 
     @staticmethod
     def _interruptible_sleep_until(deadline: float, interrupt_check: Callable[[], bool] | None = None) -> bool:
-        while True:
+        for _ in range(_deadline_poll_iterations(deadline)):
             if interrupt_check and interrupt_check():
                 return False
             remaining = float(deadline) - time.perf_counter()
             if remaining <= 0:
                 return True
             precise_sleep(min(remaining, 0.005))
+        return True
 
     def _left_down_at_screen(
         self,
@@ -843,7 +874,7 @@ class MouseController:
             jitter,
         )
 
-        while True:
+        for _ in range(_deadline_poll_iterations(end_time)):
             if interrupt_check and interrupt_check():
                 logger.debug("Spam-click interrupted after %s clicks", click_count)
                 return None
@@ -875,6 +906,7 @@ class MouseController:
 
             click_count += 1
             next_click_at = time.perf_counter() + click_delay
+        return click_count
 
     def spam_click_at(
         self,

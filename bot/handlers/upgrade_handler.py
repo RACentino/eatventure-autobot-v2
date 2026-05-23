@@ -71,6 +71,12 @@ class UpgradeHandlerMixin:
     def _hold_duration_reached(hold_max_duration: float, hold_elapsed: float) -> bool:
         return hold_max_duration > 0.0 and hold_elapsed >= hold_max_duration
 
+    @staticmethod
+    def _upgrade_hold_poll_limit(hold_max_duration: float, hold_check_interval: float) -> int:
+        bounded_interval = max(0.001, float(hold_check_interval))
+        bounded_duration = max(bounded_interval, float(hold_max_duration))
+        return max(1, int(math.ceil(bounded_duration / bounded_interval)) + 2)
+
     def _monitor_upgrade_station_hold(
         self,
         screen_position_holder: list[tuple[int, int]],
@@ -80,7 +86,7 @@ class UpgradeHandlerMixin:
         hold_max_duration: float,
         hold_started_at: float,
     ) -> tuple[bool, bool, float]:
-        while True:
+        for _ in range(self._upgrade_hold_poll_limit(hold_max_duration, hold_check_interval)):
             hold_elapsed = time.monotonic() - hold_started_at
             if self._stop_requested.is_set():
                 logger.warning("Upgrade station hold interrupted after %.2fs", hold_elapsed)
@@ -107,6 +113,9 @@ class UpgradeHandlerMixin:
             if next_position is None:
                 return False, False, time.monotonic() - hold_started_at
             screen_position_holder[0] = next_position
+        hold_elapsed = time.monotonic() - hold_started_at
+        logger.warning("Upgrade station hold poll limit reached after %.2fs; releasing hold", hold_elapsed)
+        return True, True, hold_elapsed
 
     def _hold_upgrade_station_until_complete(
         self,
@@ -147,6 +156,63 @@ class UpgradeHandlerMixin:
             if holding:
                 release_x, release_y = screen_position_holder[0]
                 self.mouse_controller._left_up_at_screen(release_x, release_y)
+
+    def _click_upgrade_station_for_verification(self, x: int, y: int) -> bool:
+        logger.info("Single-clicking upgrade station before verification at (%s, %s)", x, y)
+        clicked = self.mouse_controller.precise_click(x, y, relative=True)
+        self.tuner.record_click_result(clicked)
+        self._apply_tuning()
+        if clicked:
+            return True
+        logger.warning("Upgrade station verification click failed at (%s, %s)", x, y)
+        return False
+
+    def _record_missing_verified_upgrade_station(self) -> None:
+        logger.info("Upgrade station disappeared after verification click; continuing main flow")
+        self.upgrade_station_pos = None
+        self.upgrade_found_in_cycle = False
+        self.vision_optimizer.update_upgrade_station_miss()
+        self.tuner.record_search_result(False)
+        self._apply_tuning()
+
+    def _record_verified_upgrade_station(self, match: RedIcon) -> tuple[int, int]:
+        confidence, x, y = match
+        self.upgrade_station_pos = (x, y)
+        self.vision_optimizer.update_upgrade_station_confidence(confidence)
+        self.tuner.record_search_result(True)
+        self._apply_tuning()
+        logger.info("Upgrade station verified active at (%s, %s) [%.3f]", x, y, confidence)
+        if self.current_red_icon_index < len(self.red_icons):
+            _, _, red_y = self.red_icons[self.current_red_icon_index]
+            self._remember_successful_red_icon_position(red_y)
+        return x, y
+
+    @staticmethod
+    def _upgrade_hold_timing() -> tuple[float, float]:
+        hold_check_interval = max(0.05, min(0.20, float(config.UPGRADE_STATION_VERIFY_SEARCH_INTERVAL)))
+        return hold_check_interval, UpgradeHandlerMixin._hold_max_duration()
+
+    def _state_after_upgrade_hold(self, stopped_by_max_duration: bool, hold_elapsed: float) -> State:
+        self.upgrade_station_pos = None
+        if stopped_by_max_duration:
+            logger.warning(
+                "Upgrade station still detected after %.2fs hold; treating verification as failed",
+                hold_elapsed,
+            )
+            self.vision_optimizer.update_upgrade_station_miss()
+            self.tuner.record_search_result(False)
+            self._apply_tuning()
+            return State.SEARCH_UPGRADE_STATION
+
+        logger.info("Upgrade station no longer detected after %.2fs hold", hold_elapsed)
+        self._click_idle()
+        self._sleep(config.STATE_DELAY)
+        self.upgrade_station_counter += 1
+        if self.upgrade_station_counter < int(config.UPGRADE_STATION_STATS_THRESHOLD):
+            return State.OPEN_BOXES
+        self.upgrade_station_counter = 0
+        logger.info("Upgrade counter reached stats threshold")
+        return State.UPGRADE_STATS
 
     def handle_search_upgrade_station(self, current_state: State) -> StateResult:
         base_threshold = self._upgrade_station_threshold()
@@ -191,12 +257,7 @@ class UpgradeHandlerMixin:
             logger.warning("Upgrade station blocked by forbidden zone at (%s, %s)", x, y)
             return State.OPEN_BOXES
 
-        logger.info("Single-clicking upgrade station before verification at (%s, %s)", x, y)
-        clicked = self.mouse_controller.precise_click(x, y, relative=True)
-        self.tuner.record_click_result(clicked)
-        self._apply_tuning()
-        if not clicked:
-            logger.warning("Upgrade station verification click failed at (%s, %s)", x, y)
+        if not self._click_upgrade_station_for_verification(x, y):
             return State.OPEN_BOXES
 
         if not self._sleep(config.UPGRADE_STATION_VERIFY_SETTLE_DELAY):
@@ -213,26 +274,11 @@ class UpgradeHandlerMixin:
             return State.OPEN_BOXES
 
         if verified_match is None:
-            logger.info("Upgrade station disappeared after verification click; continuing main flow")
-            self.upgrade_station_pos = None
-            self.upgrade_found_in_cycle = False
-            self.vision_optimizer.update_upgrade_station_miss()
-            self.tuner.record_search_result(False)
-            self._apply_tuning()
+            self._record_missing_verified_upgrade_station()
             return State.OPEN_BOXES
 
-        confidence, x, y = verified_match
-        self.upgrade_station_pos = (x, y)
-        self.vision_optimizer.update_upgrade_station_confidence(confidence)
-        self.tuner.record_search_result(True)
-        self._apply_tuning()
-        logger.info("Upgrade station verified active at (%s, %s) [%.3f]", x, y, confidence)
-        if self.current_red_icon_index < len(self.red_icons):
-            _, _, red_y = self.red_icons[self.current_red_icon_index]
-            self._remember_successful_red_icon_position(red_y)
-
-        hold_check_interval = max(0.05, min(0.20, float(config.UPGRADE_STATION_VERIFY_SEARCH_INTERVAL)))
-        hold_max_duration = self._hold_max_duration()
+        x, y = self._record_verified_upgrade_station(verified_match)
+        hold_check_interval, hold_max_duration = self._upgrade_hold_timing()
         screen_position = self._position_cursor_for_upgrade_hold(x, y)
         if screen_position is None:
             return State.OPEN_BOXES
@@ -248,29 +294,7 @@ class UpgradeHandlerMixin:
         if not hold_completed:
             return State.OPEN_BOXES
 
-        if hold_stopped_by_max_duration:
-            logger.warning(
-                "Upgrade station still detected after %.2fs hold; treating verification as failed",
-                hold_elapsed,
-            )
-            self.upgrade_station_pos = None
-            self.vision_optimizer.update_upgrade_station_miss()
-            self.tuner.record_search_result(False)
-            self._apply_tuning()
-            return State.SEARCH_UPGRADE_STATION
-
-        logger.info("Upgrade station no longer detected after %.2fs hold", hold_elapsed)
-        self.upgrade_station_pos = None
-
-        self._click_idle()
-        self._sleep(config.STATE_DELAY)
-        self.upgrade_station_counter += 1
-        if self.upgrade_station_counter >= int(config.UPGRADE_STATION_STATS_THRESHOLD):
-            self.upgrade_station_counter = 0
-            logger.info("Upgrade counter reached stats threshold")
-            return State.UPGRADE_STATS
-
-        return State.OPEN_BOXES
+        return self._state_after_upgrade_hold(hold_stopped_by_max_duration, hold_elapsed)
 
     def handle_upgrade_stats(self, current_state: State) -> StateResult:
         self._click_idle()

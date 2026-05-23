@@ -41,7 +41,9 @@ class TelegramNotifier:
                 continue
 
             try:
-                self._send_message_now(message)
+                delivered = self._send_message_now(message)
+                if not delivered:
+                    logger.debug("Telegram notification was not delivered")
             except Exception:
                 logger.exception("Unexpected Telegram notification failure")
             finally:
@@ -98,12 +100,14 @@ class TelegramNotifier:
             return False
 
     def _discard_pending_messages(self) -> None:
-        while True:
+        for _ in range(self._queue.maxsize):
             try:
                 self._queue.get_nowait()
             except queue.Empty:
                 return
             self._queue.task_done()
+        if not self._queue.empty():
+            logger.warning("Telegram queue still has pending messages after bounded discard")
 
     def close(self) -> None:
         if not self.enabled and self._session is None:
@@ -127,11 +131,13 @@ class TelegramNotifier:
 
     def notify_bot_started(self) -> None:
         message = "Bot Started"
-        self.send_message(message)
+        if not self.send_message(message):
+            logger.debug("Bot-start notification was not queued")
 
     def notify_bot_stopped(self) -> None:
         message = "Bot Stopped"
-        self.send_message(message)
+        if not self.send_message(message):
+            logger.debug("Bot-stop notification was not queued")
 
     def notify_new_level(self, level_number: int, time_spent: float) -> None:
         minutes = int(time_spent // 60)
@@ -139,8 +145,10 @@ class TelegramNotifier:
         time_str = f"{minutes:02d}:{seconds:02d}"
 
         message = f"{level_number}. restaurant completed! Time spent: {time_str}"
-        self.send_message(message)
+        if not self.send_message(message):
+            logger.debug("New-level notification was not queued")
 
     def notify_level_milestone(self, total_levels: int) -> None:
         message = f"Milestone Reached\nTotal cities completed: {total_levels}"
-        self.send_message(message)
+        if not self.send_message(message):
+            logger.debug("Level-milestone notification was not queued")
