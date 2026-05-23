@@ -223,6 +223,14 @@ class MouseController:
         matches = abs(current_x - screen_x) <= 1 and abs(current_y - screen_y) <= 1
         return matches, current_x, current_y
 
+    def _cursor_matches_safe_position(self, screen_x: int, screen_y: int) -> tuple[bool, int, int]:
+        matches, current_x, current_y = self._cursor_matches_position(screen_x, screen_y)
+        if not matches:
+            return False, current_x, current_y
+        if self._validated_screen_input_position(current_x, current_y, "settled cursor") is None:
+            return False, current_x, current_y
+        return True, current_x, current_y
+
     def _sleep_before_input_retry(self, attempt: int) -> None:
         if attempt < self.input_retry_count:
             precise_sleep(self.input_retry_delay)
@@ -239,7 +247,7 @@ class MouseController:
                 if not verify_position:
                     return True
                 precise_sleep(0.001)
-                matches, current_x, current_y = self._cursor_matches_position(screen_x, screen_y)
+                matches, current_x, current_y = self._cursor_matches_safe_position(screen_x, screen_y)
                 if matches:
                     return True
                 last_exc = RuntimeError(f"cursor settled at ({current_x}, {current_y})")
@@ -648,7 +656,7 @@ class MouseController:
             logger.error("%s failed at (%s, %s)", action_name, screen_pos[0], screen_pos[1])
 
     def _perform_precise_click_at_screen(self, screen_x: int, screen_y: int) -> bool:
-        matches, _, _ = self._cursor_matches_position(screen_x, screen_y)
+        matches, _, _ = self._cursor_matches_safe_position(screen_x, screen_y)
         if not matches:
             if not self._set_cursor_pos(screen_x, screen_y):
                 return False
@@ -657,7 +665,7 @@ class MouseController:
             self._hover_before_click()
         if not self._left_down_at_screen(screen_x, screen_y):
             return False
-        matches, _, _ = self._cursor_matches_position(screen_x, screen_y)
+        matches, _, _ = self._cursor_matches_safe_position(screen_x, screen_y)
         if not matches:
             self._best_effort_left_up(screen_x, screen_y)
             return False
