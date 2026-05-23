@@ -172,13 +172,13 @@ UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.100
 UPGRADE_STATION_VERIFY_RADIUS = 36
 
 # Maximum duration for holding an upgrade station click.
-CLICK_HOLD_MAX_DURATION = 8.0
+CLICK_HOLD_MAX_DURATION = 8.5
 
 # Duration for stats upgrade spam-clicking.
-STATS_UPGRADE_CLICK_DURATION = 1.35
+STATS_UPGRADE_CLICK_DURATION = 1.50
 
 # Delay between stats upgrade spam-clicks.
-STATS_UPGRADE_CLICK_DELAY = 0.045
+STATS_UPGRADE_CLICK_DELAY = 0.016
 
 # Duration for generic spam-click loops.
 SPAM_CLICK_DURATION = 0.75
