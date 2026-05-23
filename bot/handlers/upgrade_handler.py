@@ -18,79 +18,6 @@ class UpgradeHandlerMixin:
             return 0.0
         return max(0.0, hold_max_duration)
 
-    def _upgrade_station_threshold_pair(self) -> tuple[float, float]:
-        base_threshold = self._upgrade_station_threshold()
-        return base_threshold, max(0.0, base_threshold - 0.05)
-
-    def _record_upgrade_station_match(self, match: RedIcon) -> RedIcon:
-        station_confidence, station_x, station_y = match
-        self.upgrade_station_pos = (station_x, station_y)
-        self.vision_optimizer.update_upgrade_station_confidence(station_confidence)
-        return match
-
-    def _record_upgrade_station_search_result(self, found: bool) -> None:
-        self.tuner.record_search_result(found)
-        self._apply_tuning()
-
-    def _record_upgrade_station_unavailable(self) -> None:
-        self.upgrade_station_pos = None
-        self.vision_optimizer.update_upgrade_station_miss()
-        self._record_upgrade_station_search_result(False)
-
-    def _settle_upgrade_station_click_target(
-        self,
-        expected_position: tuple[int, int],
-        base_threshold: float,
-        relaxed_threshold: float,
-    ) -> tuple[RedIcon | None, bool]:
-        settled_match, settle_completed = self._find_settled_upgrade_station_match(
-            expected_position,
-            base_threshold,
-            relaxed_threshold,
-        )
-        if not settle_completed or settled_match is None:
-            return settled_match, settle_completed
-
-        _, station_x, station_y = settled_match
-        if self.mouse_controller._resolve_screen_position(station_x, station_y, relative=True) is None:
-            logger.warning("Upgrade station settled target could not be resolved at (%s, %s)", station_x, station_y)
-            return None, True
-        return settled_match, True
-
-    def _find_settled_upgrade_station_match(
-        self,
-        expected_position: tuple[int, int],
-        base_threshold: float,
-        relaxed_threshold: float,
-    ) -> tuple[RedIcon | None, bool]:
-        if not self._sleep(config.UPGRADE_STATION_VERIFY_SETTLE_DELAY):
-            return None, False
-        return self._find_verified_upgrade_station_match(
-            base_threshold,
-            relaxed_threshold,
-            expected_position,
-        )
-
-    def _single_click_verify_upgrade_station(
-        self,
-        expected_position: tuple[int, int],
-        base_threshold: float,
-        relaxed_threshold: float,
-    ) -> tuple[RedIcon | None, bool]:
-        station_x, station_y = expected_position
-        logger.info("Single-clicking upgrade station before verification at (%s, %s)", station_x, station_y)
-        clicked = self.mouse_controller.precise_click(station_x, station_y, relative=True)
-        self.tuner.record_click_result(clicked)
-        self._apply_tuning()
-        if not clicked:
-            logger.warning("Upgrade station verification click failed at (%s, %s)", station_x, station_y)
-            return None, False
-        return self._find_settled_upgrade_station_match(
-            expected_position,
-            base_threshold,
-            relaxed_threshold,
-        )
-
     def _position_cursor_for_upgrade_hold(self, x: int, y: int) -> tuple[int, int] | None:
         screen_pos = self.mouse_controller._resolve_screen_position(x, y, relative=True)
         if screen_pos is None:
@@ -264,60 +191,53 @@ class UpgradeHandlerMixin:
             logger.warning("Upgrade station blocked by forbidden zone at (%s, %s)", x, y)
             return State.OPEN_BOXES
 
-        base_threshold, relaxed_threshold = self._upgrade_station_threshold_pair()
-        settled_match, settle_completed = self._settle_upgrade_station_click_target(
-            (x, y),
-            base_threshold,
-            relaxed_threshold,
-        )
-        if not settle_completed:
+        logger.info("Single-clicking upgrade station before verification at (%s, %s)", x, y)
+        clicked = self.mouse_controller.precise_click(x, y, relative=True)
+        self.tuner.record_click_result(clicked)
+        self._apply_tuning()
+        if not clicked:
+            logger.warning("Upgrade station verification click failed at (%s, %s)", x, y)
             return State.OPEN_BOXES
 
-        if settled_match is None:
-            logger.info("Upgrade station did not settle near (%s, %s); retrying search", x, y)
-            self._record_upgrade_station_unavailable()
-            return State.SEARCH_UPGRADE_STATION
+        if not self._sleep(config.UPGRADE_STATION_VERIFY_SETTLE_DELAY):
+            return State.OPEN_BOXES
 
-        station_confidence, station_x, station_y = self._record_upgrade_station_match(settled_match)
-        logger.info(
-            "Upgrade station settled at (%s, %s) [%.3f]",
-            station_x,
-            station_y,
-            station_confidence,
-        )
-
-        verified_match, verification_completed = self._single_click_verify_upgrade_station(
-            (station_x, station_y),
+        base_threshold = self._upgrade_station_threshold()
+        relaxed_threshold = max(0.0, base_threshold - 0.05)
+        verified_match, verification_completed = self._find_verified_upgrade_station_match(
             base_threshold,
             relaxed_threshold,
+            (x, y),
         )
         if not verification_completed:
             return State.OPEN_BOXES
 
         if verified_match is None:
-            logger.info("Upgrade station disappeared after single-click verification; retrying search")
-            self._record_upgrade_station_unavailable()
-            return State.SEARCH_UPGRADE_STATION
+            logger.info("Upgrade station disappeared after verification click; continuing main flow")
+            self.upgrade_station_pos = None
+            self.upgrade_found_in_cycle = False
+            self.vision_optimizer.update_upgrade_station_miss()
+            self.tuner.record_search_result(False)
+            self._apply_tuning()
+            return State.OPEN_BOXES
 
-        station_confidence, station_x, station_y = self._record_upgrade_station_match(verified_match)
-        self._record_upgrade_station_search_result(True)
-        logger.info(
-            "Upgrade station verified active at (%s, %s) [%.3f]",
-            station_x,
-            station_y,
-            station_confidence,
-        )
+        confidence, x, y = verified_match
+        self.upgrade_station_pos = (x, y)
+        self.vision_optimizer.update_upgrade_station_confidence(confidence)
+        self.tuner.record_search_result(True)
+        self._apply_tuning()
+        logger.info("Upgrade station verified active at (%s, %s) [%.3f]", x, y, confidence)
         if self.current_red_icon_index < len(self.red_icons):
             _, _, red_y = self.red_icons[self.current_red_icon_index]
             self._remember_successful_red_icon_position(red_y)
 
         hold_check_interval = max(0.05, min(0.20, float(config.UPGRADE_STATION_VERIFY_SEARCH_INTERVAL)))
         hold_max_duration = self._hold_max_duration()
-        screen_position = self._position_cursor_for_upgrade_hold(station_x, station_y)
+        screen_position = self._position_cursor_for_upgrade_hold(x, y)
         if screen_position is None:
             return State.OPEN_BOXES
 
-        logger.info("Press-and-holding upgrade station at (%s, %s)", station_x, station_y)
+        logger.info("Press-and-holding upgrade station at (%s, %s)", x, y)
         hold_completed, hold_stopped_by_max_duration, hold_elapsed = self._hold_upgrade_station_until_complete(
             screen_position,
             base_threshold,
