@@ -3,10 +3,19 @@ import math
 from pathlib import Path
 from typing import Any
 
+import cv2
+import numpy as np
+
 from core import config
 from bot.types import BoxCandidate, MatchCandidate, RedIcon, TemplatePair
 
 logger = logging.getLogger(__name__)
+RED_ICON_ASSET_MIN_RED_PIXELS = 10
+RED_ICON_ASSET_MIN_HIGHLIGHT_PIXELS = 8
+RED_ICON_ASSET_MIN_RED_SUPPORT_RATIO = 0.60
+RED_ICON_ASSET_MIN_HIGHLIGHT_SUPPORT_RATIO = 0.55
+RED_ICON_ASSET_HIGHLIGHT_SATURATION_MAX = 95
+RED_ICON_ASSET_HIGHLIGHT_VALUE_MIN = 165
 
 
 class VisionScannerMixin:
@@ -283,6 +292,140 @@ class VisionScannerMixin:
                 confidence,
             )
 
+    @staticmethod
+    def _candidate_region(
+        screenshot: Any,
+        template: Any,
+        center_x: int,
+        center_y: int,
+    ) -> Any | None:
+        template_height, template_width = template.shape[:2]
+        left = int(center_x) - template_width // 2
+        top = int(center_y) - template_height // 2
+        if left < 0 or top < 0:
+            return None
+        region = screenshot[top : top + template_height, left : left + template_width]
+        if region.shape[:2] != template.shape[:2]:
+            return None
+        return region
+
+    @staticmethod
+    def _active_template_mask(template: Any, mask: Any) -> np.ndarray:
+        template_height, template_width = template.shape[:2]
+        if mask is None:
+            return np.ones((template_height, template_width), dtype=bool)
+        if mask.shape[:2] != template.shape[:2]:
+            return np.ones((template_height, template_width), dtype=bool)
+        return mask > 0
+
+    def _red_icon_red_mask(self, image: Any, active_mask: np.ndarray) -> np.ndarray | None:
+        color_mask = self.image_matcher.red_hsv_mask(image)
+        if color_mask is None or color_mask.shape[:2] != active_mask.shape[:2]:
+            return None
+        return (color_mask > 0) & active_mask
+
+    @staticmethod
+    def _red_icon_highlight_mask(image: Any, active_mask: np.ndarray) -> np.ndarray | None:
+        try:
+            hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        except cv2.error:
+            return None
+        if hsv_image.shape[:2] != active_mask.shape[:2]:
+            return None
+        return (
+            (hsv_image[:, :, 1] <= RED_ICON_ASSET_HIGHLIGHT_SATURATION_MAX)
+            & (hsv_image[:, :, 2] >= RED_ICON_ASSET_HIGHLIGHT_VALUE_MIN)
+            & active_mask
+        )
+
+    @staticmethod
+    def _mask_support_ratio(candidate_mask: np.ndarray, required_mask: np.ndarray) -> float:
+        required_count = int(np.count_nonzero(required_mask))
+        if required_count <= 0:
+            return 0.0
+        matched_count = int(np.count_nonzero(candidate_mask & required_mask))
+        return matched_count / required_count
+
+    def _red_icon_color_support_matches_template(
+        self,
+        region: Any,
+        template: Any,
+        active_mask: np.ndarray,
+    ) -> bool:
+        template_red_mask = self._red_icon_red_mask(template, active_mask)
+        region_red_mask = self._red_icon_red_mask(region, active_mask)
+        if template_red_mask is None or region_red_mask is None:
+            return False
+        if int(np.count_nonzero(template_red_mask)) < RED_ICON_ASSET_MIN_RED_PIXELS:
+            return False
+        return (
+            self._mask_support_ratio(region_red_mask, template_red_mask)
+            >= RED_ICON_ASSET_MIN_RED_SUPPORT_RATIO
+        )
+
+    def _red_icon_highlight_matches_template(
+        self,
+        region: Any,
+        template: Any,
+        active_mask: np.ndarray,
+    ) -> bool:
+        template_highlight_mask = self._red_icon_highlight_mask(template, active_mask)
+        region_highlight_mask = self._red_icon_highlight_mask(region, active_mask)
+        if template_highlight_mask is None or region_highlight_mask is None:
+            return False
+        if int(np.count_nonzero(template_highlight_mask)) < RED_ICON_ASSET_MIN_HIGHLIGHT_PIXELS:
+            return False
+        return (
+            self._mask_support_ratio(region_highlight_mask, template_highlight_mask)
+            >= RED_ICON_ASSET_MIN_HIGHLIGHT_SUPPORT_RATIO
+        )
+
+    def _red_icon_candidate_matches_asset_texture(
+        self,
+        screenshot: Any,
+        template: Any,
+        mask: Any,
+        center_x: int,
+        center_y: int,
+    ) -> bool:
+        region = self._candidate_region(screenshot, template, center_x, center_y)
+        if region is None:
+            return False
+        active_mask = self._active_template_mask(template, mask)
+        return self._red_icon_color_support_matches_template(
+            region,
+            template,
+            active_mask,
+        ) and self._red_icon_highlight_matches_template(region, template, active_mask)
+
+    def _verified_red_icon_matches(
+        self,
+        screenshot: Any,
+        template: Any,
+        mask: Any,
+        template_name: str,
+        matches: list[tuple[float, int, int]],
+    ) -> list[tuple[float, int, int]]:
+        verified_matches = []
+        for confidence, center_x, center_y in matches:
+            if self._red_icon_candidate_matches_asset_texture(
+                screenshot,
+                template,
+                mask,
+                center_x,
+                center_y,
+            ):
+                verified_matches.append((confidence, center_x, center_y))
+                continue
+            logger.debug(
+                "[%s] Rejected red-icon texture candidate at (%s, %s) [%.3f]",
+                template_name,
+                center_x,
+                center_y,
+                confidence,
+            )
+        return verified_matches
+
     def _collect_template_red_icon_detections(
         self,
         detections: dict[tuple[int, int], list[tuple[str, float]]],
@@ -309,7 +452,14 @@ class VisionScannerMixin:
                 supervision_iou_threshold=config.SUPERVISION_RED_ICON_NMS_IOU_THRESHOLD,
                 supervision_class_agnostic=config.SUPERVISION_CLASS_AGNOSTIC_NMS,
             )
-            self._merge_red_icon_matches(detections, template_name, matches, offset_x, offset_y)
+            verified_matches = self._verified_red_icon_matches(
+                screenshot,
+                template,
+                mask,
+                template_name,
+                matches,
+            )
+            self._merge_red_icon_matches(detections, template_name, verified_matches, offset_x, offset_y)
 
     def _collect_hsv_red_icon_detections(
         self,
@@ -342,7 +492,14 @@ class VisionScannerMixin:
                 supervision_iou_threshold=config.SUPERVISION_RED_ICON_NMS_IOU_THRESHOLD,
                 supervision_class_agnostic=config.SUPERVISION_CLASS_AGNOSTIC_NMS,
             )
-            self._merge_red_icon_matches(detections, template_name, matches, offset_x, offset_y)
+            verified_matches = self._verified_red_icon_matches(
+                screenshot,
+                template,
+                mask,
+                template_name,
+                matches,
+            )
+            self._merge_red_icon_matches(detections, template_name, verified_matches, offset_x, offset_y)
 
     def _collect_red_icon_detections(
         self,
