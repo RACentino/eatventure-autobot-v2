@@ -151,7 +151,7 @@ MOUSE_UP_DURATION = 0.030
 HOVER_ENABLED = True
 
 # Duration for hover movement before click actions.
-HOVER_DURATION = 0.015
+HOVER_DURATION = 0.075
 
 # Delay between upgrade station search attempts.
 UPGRADE_SEARCH_INTERVAL = 0.060
@@ -160,19 +160,19 @@ UPGRADE_SEARCH_INTERVAL = 0.060
 STATE_DELAY = 0.075
 
 # Settling delay before verifying an upgrade station hold target.
-UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.160
+UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.200
 
 # Maximum attempts for upgrade station verification.
 UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 1
 
 # Delay between upgrade station verification attempts.
-UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.075
+UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.100
 
 # Maximum pixel radius for accepting a verified upgrade station match.
 UPGRADE_STATION_VERIFY_RADIUS = 36
 
 # Maximum duration for holding an upgrade station click.
-CLICK_HOLD_MAX_DURATION = 8.0
+CLICK_HOLD_MAX_DURATION = 8.5
 
 # Duration for stats upgrade spam-clicking.
 STATS_UPGRADE_CLICK_DURATION = 1.35
@@ -337,7 +337,7 @@ MAX_SCROLL_CYCLES = 5
 SCROLL_INCREMENT_STEP = 2
 
 # Delay between scroll intervals.
-SCROLL_INTERVAL_PAUSE = 0.050
+SCROLL_INTERVAL_PAUSE = 0.125
 
 # Settling delay after a scroll gesture.
 POST_SCROLL_SETTLE = 0.125
