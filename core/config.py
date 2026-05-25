@@ -142,16 +142,16 @@ CLICK_DELAY = 0.08
 MOUSE_MOVE_DELAY = 0.025
 
 # Duration to hold the mouse button down during click actions.
-MOUSE_DOWN_DURATION = 0.035
+MOUSE_DOWN_DURATION = 0.075
 
 # Delay after releasing the mouse button.
-MOUSE_UP_DURATION = 0.025
+MOUSE_UP_DURATION = 0.075
 
 # Enables hover movement before click actions.
 HOVER_ENABLED = True
 
 # Duration for hover movement before click actions.
-HOVER_DURATION = 0.025
+HOVER_DURATION = 0.100
 
 # Delay between upgrade station search attempts.
 UPGRADE_SEARCH_INTERVAL = 0.08
@@ -160,25 +160,25 @@ UPGRADE_SEARCH_INTERVAL = 0.08
 STATE_DELAY = 0.16
 
 # Settling delay before verifying an upgrade station hold target.
-UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.18
+UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.180
 
 # Maximum attempts for upgrade station verification.
 UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 1
 
 # Delay between upgrade station verification attempts.
-UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.10
+UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.100
 
 # Maximum pixel radius for accepting a verified upgrade station match.
 UPGRADE_STATION_VERIFY_RADIUS = 36
 
 # Maximum duration for holding an upgrade station click.
-CLICK_HOLD_MAX_DURATION = 4.0
+CLICK_HOLD_MAX_DURATION = 9.0
 
 # Duration for stats upgrade spam-clicking.
 STATS_UPGRADE_CLICK_DURATION = 1.20
 
 # Delay between stats upgrade spam-clicks.
-STATS_UPGRADE_CLICK_DELAY = 0.09
+STATS_UPGRADE_CLICK_DELAY = 0.016
 
 # Duration for generic spam-click loops.
 SPAM_CLICK_DURATION = 1.00
