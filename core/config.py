@@ -1,4 +1,78 @@
+import math
+import os
 from pathlib import Path
+
+
+def env_text(name: str, default: str = "") -> str:
+    return os.environ.get(name, default).strip()
+
+
+def env_bool(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return bool(default)
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return bool(default)
+
+
+def bounded_float(
+    value: object,
+    default: float,
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        number = float(default)
+    if not math.isfinite(number):
+        number = float(default)
+    if minimum is not None:
+        try:
+            minimum_value = float(minimum)
+        except (TypeError, ValueError, OverflowError):
+            minimum_value = None
+        if minimum_value is not None and math.isfinite(minimum_value):
+            number = max(minimum_value, number)
+    if maximum is not None:
+        try:
+            maximum_value = float(maximum)
+        except (TypeError, ValueError, OverflowError):
+            maximum_value = None
+        if maximum_value is not None and math.isfinite(maximum_value):
+            number = min(maximum_value, number)
+    return number
+
+
+def bounded_int(
+    value: object,
+    default: int,
+    minimum: int | None = None,
+    maximum: int | None = None,
+) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError, OverflowError):
+        number = int(default)
+    if minimum is not None:
+        try:
+            minimum_value = int(minimum)
+        except (TypeError, ValueError, OverflowError):
+            minimum_value = None
+        if minimum_value is not None:
+            number = max(minimum_value, number)
+    if maximum is not None:
+        try:
+            maximum_value = int(maximum)
+        except (TypeError, ValueError, OverflowError):
+            maximum_value = None
+        if maximum_value is not None:
+            number = min(maximum_value, number)
+    return number
 
 
 # Paths
@@ -211,13 +285,13 @@ INPUT_RETRY_DELAY = 0.08
 # Telegram Notifications
 
 # Enables Telegram notifications.
-TELEGRAM_ENABLED = False
+TELEGRAM_ENABLED = env_bool("EATVENTURE_TELEGRAM_ENABLED", False)
 
 # Telegram bot token used for notification delivery.
-TELEGRAM_BOT_TOKEN = ""
+TELEGRAM_BOT_TOKEN = env_text("EATVENTURE_TELEGRAM_BOT_TOKEN")
 
 # Telegram chat identifier that receives notifications.
-TELEGRAM_CHAT_ID = ""
+TELEGRAM_CHAT_ID = env_text("EATVENTURE_TELEGRAM_CHAT_ID")
 
 # Maximum queued Telegram messages before new messages are dropped.
 TELEGRAM_QUEUE_MAXSIZE = 100

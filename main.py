@@ -15,7 +15,8 @@ from interaction.mouse import precise_sleep
 bot_instance: EatventureBot | None = None
 log_listener: QueueListener | None = None
 exit_requested = threading.Event()
-bot_command_queue: queue.SimpleQueue["BotCommand"] = queue.SimpleQueue()
+BOT_COMMAND_QUEUE_MAXSIZE = 64
+bot_command_queue: queue.Queue["BotCommand"] = queue.Queue(maxsize=BOT_COMMAND_QUEUE_MAXSIZE)
 BOT_COMMAND_DRAIN_LIMIT = 64
 BOT_EVENT_LOOP_ITERATION_LIMIT = 2_147_483_647
 
@@ -72,10 +73,35 @@ def _request_program_exit(logger: logging.Logger) -> None:
     exit_requested.set()
 
 
+def _put_bot_command(command: BotCommand) -> bool:
+    try:
+        bot_command_queue.put_nowait(command)
+        return True
+    except queue.Full:
+        return False
+
+
+def _discard_oldest_bot_command() -> bool:
+    try:
+        bot_command_queue.get_nowait()
+    except queue.Empty:
+        return False
+    bot_command_queue.task_done()
+    return True
+
+
 def _enqueue_bot_command(command: BotCommand) -> None:
     if command in {BotCommand.TOGGLE_RUNNING, BotCommand.EXIT_PROGRAM} and bot_instance is not None:
         bot_instance.request_stop()
-    bot_command_queue.put(command)
+    if _put_bot_command(command):
+        return
+    if command not in {BotCommand.TOGGLE_RUNNING, BotCommand.EXIT_PROGRAM}:
+        logging.getLogger(__name__).warning("Bot command queue full; dropping %s", command.name)
+        return
+    if _discard_oldest_bot_command() and _put_bot_command(command):
+        logging.getLogger(__name__).warning("Bot command queue full; discarded oldest command for %s", command.name)
+        return
+    logging.getLogger(__name__).error("Bot command queue full; failed to enqueue %s", command.name)
 
 
 def _process_bot_command(command: BotCommand, logger: logging.Logger) -> None:
@@ -86,8 +112,13 @@ def _process_bot_command(command: BotCommand, logger: logging.Logger) -> None:
         BotCommand.EXIT_PROGRAM: _request_program_exit,
     }
     handler = command_handlers.get(command)
-    if handler is not None:
+    if handler is None:
+        logger.warning("Unknown bot command ignored: %r", command)
+        return
+    try:
         handler(logger)
+    except Exception:
+        logger.exception("Bot command failed: %s", command.name)
 
 
 def _drain_bot_commands(logger: logging.Logger) -> None:
@@ -96,7 +127,10 @@ def _drain_bot_commands(logger: logging.Logger) -> None:
             command = bot_command_queue.get_nowait()
         except queue.Empty:
             return
-        _process_bot_command(command, logger)
+        try:
+            _process_bot_command(command, logger)
+        finally:
+            bot_command_queue.task_done()
     logger.warning("Deferred bot command drain after %s commands", BOT_COMMAND_DRAIN_LIMIT)
 
 

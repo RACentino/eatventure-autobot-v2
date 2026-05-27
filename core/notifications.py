@@ -19,10 +19,7 @@ class TelegramNotifier:
         self.base_url = f"https://api.telegram.org/bot{self.bot_token}"
         self.timeout = 5
         self.enabled = bool(enabled and self.bot_token and self.chat_id)
-        try:
-            queue_size = int(config.TELEGRAM_QUEUE_MAXSIZE)
-        except (TypeError, ValueError):
-            queue_size = 100
+        queue_size = config.bounded_int(config.TELEGRAM_QUEUE_MAXSIZE, 100, minimum=1)
         self._queue = queue.Queue(maxsize=min(TELEGRAM_QUEUE_MAXSIZE_LIMIT, max(1, queue_size)))
         self._stop = threading.Event()
         self._thread = None
@@ -121,10 +118,7 @@ class TelegramNotifier:
         self.enabled = False
         self._discard_pending_messages()
         if self._thread is not None and self._thread.is_alive():
-            try:
-                close_timeout = float(config.TELEGRAM_CLOSE_TIMEOUT)
-            except (TypeError, ValueError):
-                close_timeout = 2.0
+            close_timeout = config.bounded_float(config.TELEGRAM_CLOSE_TIMEOUT, 2.0, minimum=0.0)
             close_timeout = max(0.0, close_timeout, float(self.timeout) + 0.5)
             self._thread.join(timeout=close_timeout)
             if self._thread.is_alive():

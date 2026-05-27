@@ -78,7 +78,12 @@ class TransitionHandlerMixin:
     def handle_transition_level(self, current_state: State) -> StateResult:
         self._click_idle()
 
-        max_attempts = min(MAX_TRANSITION_LEVEL_ATTEMPTS, max(1, int(config.TRANSITION_LEVEL_MAX_ATTEMPTS)))
+        max_attempts = config.bounded_int(
+            config.TRANSITION_LEVEL_MAX_ATTEMPTS,
+            1,
+            minimum=1,
+            maximum=MAX_TRANSITION_LEVEL_ATTEMPTS,
+        )
         for attempt in range(max_attempts):
             limited_screenshot = self.window_capture.capture(max_y=config.MAX_SEARCH_Y)
 

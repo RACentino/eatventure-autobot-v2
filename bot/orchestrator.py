@@ -26,6 +26,7 @@ from vision.capture import (
 from vision.scanner import VisionScannerMixin
 
 logger = logging.getLogger(__name__)
+PENDING_LEARNED_BEHAVIOR_QUEUE_MAXSIZE = 16
 PENDING_LEARNED_BEHAVIOR_DRAIN_LIMIT = 64
 BOT_RUN_LOOP_ITERATION_LIMIT = 2_147_483_647
 
@@ -52,7 +53,9 @@ class EatventureBot(
         logger.info("Initializing Eatventure Bot")
         self._stop_requested = threading.Event()
         self._step_active = threading.Event()
-        self._pending_learned_behaviors: queue.SimpleQueue[dict[str, float]] = queue.SimpleQueue()
+        self._pending_learned_behaviors: queue.Queue[dict[str, float]] = queue.Queue(
+            maxsize=PENDING_LEARNED_BEHAVIOR_QUEUE_MAXSIZE
+        )
         self._applied_runtime_behavior: tuple[float, float, float] | None = None
 
         self._initialize_runtime_services()
@@ -156,6 +159,7 @@ class EatventureBot(
                 latest_behavior = self._pending_learned_behaviors.get_nowait()
             except queue.Empty:
                 return latest_behavior
+            self._pending_learned_behaviors.task_done()
         logger.debug(
             "Deferred learned-behavior drain after %s updates",
             PENDING_LEARNED_BEHAVIOR_DRAIN_LIMIT,
@@ -168,6 +172,7 @@ class EatventureBot(
                 self._pending_learned_behaviors.get_nowait()
             except queue.Empty:
                 return
+            self._pending_learned_behaviors.task_done()
         logger.debug(
             "Stopped learned-behavior discard after %s updates",
             PENDING_LEARNED_BEHAVIOR_DRAIN_LIMIT,
@@ -211,7 +216,16 @@ class EatventureBot(
             learned = self.historical_learner._sanitize_behavior(learned)
         if not learned:
             return
-        self._pending_learned_behaviors.put(dict(learned))
+        learned_behavior = dict(learned)
+        try:
+            self._pending_learned_behaviors.put_nowait(learned_behavior)
+            return
+        except queue.Full:
+            self._discard_pending_learned_behavior_updates()
+        try:
+            self._pending_learned_behaviors.put_nowait(learned_behavior)
+        except queue.Full:
+            logger.warning("Dropping learned behavior update because the queue is full")
 
     def wipe_memory(self) -> None:
         self._discard_pending_learned_behavior_updates()

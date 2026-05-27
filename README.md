@@ -110,7 +110,7 @@ scrcpy --window-title "EatventureAuto"
 1. Start a chat with your new bot and send any message.
 2. Visit `https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates` in your browser.
 3. Look for the `"chat":{"id":...}` field and copy the number.
-4. Set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, and `TELEGRAM_ENABLED` directly in `core/config.py` before starting the bot.
+4. Set `EATVENTURE_TELEGRAM_BOT_TOKEN`, `EATVENTURE_TELEGRAM_CHAT_ID`, and `EATVENTURE_TELEGRAM_ENABLED=true` in your shell environment before starting the bot.
 
 ## Disclaimer
 

@@ -38,7 +38,7 @@ class VisionScannerMixin:
         available = self._available_red_icon_template_count()
         if available <= 0:
             return 1
-        configured = max(1, int(config.RED_ICON_MIN_MATCHES))
+        configured = config.bounded_int(config.RED_ICON_MIN_MATCHES, 1, minimum=1)
         return min(configured, available)
 
     def _validate_required_templates(self) -> bool:
@@ -49,11 +49,12 @@ class VisionScannerMixin:
         if missing:
             logger.error("Missing required templates: %s", ", ".join(missing))
             return False
-        if red_icon_count < int(config.RED_ICON_MIN_MATCHES):
+        configured_min_matches = config.bounded_int(config.RED_ICON_MIN_MATCHES, 1, minimum=1)
+        if red_icon_count < configured_min_matches:
             logger.warning(
                 "Only %s red-icon templates are available; consensus requirement reduced from %s",
                 red_icon_count,
-                config.RED_ICON_MIN_MATCHES,
+                configured_min_matches,
             )
         return True
 
@@ -265,7 +266,8 @@ class VisionScannerMixin:
         ]
         if not fast_template_names:
             return template_names, min_distance
-        return fast_template_names, int(config.RED_ICON_FAST_MIN_DISTANCE)
+        min_distance = config.bounded_int(config.RED_ICON_FAST_MIN_DISTANCE, min_distance, minimum=1)
+        return fast_template_names, min_distance
 
     def _merge_red_icon_matches(
         self,
@@ -593,7 +595,7 @@ class VisionScannerMixin:
     def _maximum_distance_squared(maximum_distance: float | None) -> float | None:
         if maximum_distance is None:
             return None
-        return max(0.0, float(maximum_distance)) ** 2
+        return config.bounded_float(maximum_distance, 0.0, minimum=0.0) ** 2
 
     def _best_upgrade_station_match(
         self,
@@ -661,11 +663,13 @@ class VisionScannerMixin:
         relaxed_threshold: float,
         expected_position: tuple[int, int],
     ) -> tuple[RedIcon | None, bool]:
-        verify_attempts = min(
-            MAX_UPGRADE_VERIFICATION_ATTEMPTS,
-            max(1, int(config.UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS)),
+        verify_attempts = config.bounded_int(
+            config.UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS,
+            1,
+            minimum=1,
+            maximum=MAX_UPGRADE_VERIFICATION_ATTEMPTS,
         )
-        verify_radius = float(config.UPGRADE_STATION_VERIFY_RADIUS)
+        verify_radius = config.bounded_float(config.UPGRADE_STATION_VERIFY_RADIUS, 0.0, minimum=0.0)
         for attempt in range(verify_attempts):
             current_threshold = base_threshold if attempt == 0 else relaxed_threshold
             verified_match = self._find_upgrade_station_match(

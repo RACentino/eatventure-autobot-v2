@@ -161,11 +161,11 @@ class MouseController:
         self._window_bounds_source = window_bounds_source
         self.click_delay = self._coerce_non_negative_float(
             config.CLICK_DELAY if click_delay is None else click_delay,
-            float(config.CLICK_DELAY),
+            0.08,
         )
         self.move_delay = self._coerce_non_negative_float(
             config.MOUSE_MOVE_DELAY if move_delay is None else move_delay,
-            float(config.MOUSE_MOVE_DELAY),
+            0.025,
         )
         self.hover_enabled = bool(config.HOVER_ENABLED if hover_enabled is None else hover_enabled)
         self.hover_duration = self._coerce_non_negative_float(
@@ -176,7 +176,7 @@ class MouseController:
             MAX_INPUT_RETRY_COUNT,
             max(1, self._coerce_non_negative_int(config.INPUT_RETRY_COUNT, 1)),
         )
-        self.input_retry_delay = max(0.0, float(config.INPUT_RETRY_DELAY))
+        self.input_retry_delay = self._coerce_non_negative_float(config.INPUT_RETRY_DELAY, 0.0)
         self._input_lock = threading.RLock()
         self._forbidden_zones = self._configured_forbidden_zones()
         self._left_button_is_down = False

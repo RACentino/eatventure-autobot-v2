@@ -17,7 +17,9 @@ class ScrollHandlerMixin:
         self._new_level_red_icon_verified = False
 
     def _advance_oscillation_progress(self) -> None:
-        target_steps = max(1, int(self._oscillation_cycle_index) * int(config.SCROLL_INCREMENT_STEP))
+        increment_step = config.bounded_int(config.SCROLL_INCREMENT_STEP, 1, minimum=1)
+        max_scroll_cycles = config.bounded_int(config.MAX_SCROLL_CYCLES, 1, minimum=1)
+        target_steps = max(1, int(self._oscillation_cycle_index) * increment_step)
         self._oscillation_leg_progress += 1
         if self._oscillation_leg_progress < target_steps:
             return
@@ -27,11 +29,13 @@ class ScrollHandlerMixin:
             return
         self._oscillation_leg_direction = 1
         self._oscillation_cycle_index += 1
-        if self._oscillation_cycle_index > int(config.MAX_SCROLL_CYCLES):
+        if self._oscillation_cycle_index > max_scroll_cycles:
             self._oscillation_cycle_index = 1
 
     def _perform_oscillating_scroll_step(self) -> bool:
-        distance = int(round(float(config.SCROLL_PIXEL_STEP) * float(config.SCROLL_DISTANCE_RATIO)))
+        pixel_step = config.bounded_float(config.SCROLL_PIXEL_STEP, 90.0, minimum=1.0)
+        distance_ratio = config.bounded_float(config.SCROLL_DISTANCE_RATIO, 1.0, minimum=0.1)
+        distance = int(round(pixel_step * distance_ratio))
         start_x, start_y = config.SCROLL_START_POS
         direction = 1 if self._oscillation_leg_direction > 0 else -1
         target_y = start_y - distance if direction > 0 else start_y + distance
@@ -57,7 +61,9 @@ class ScrollHandlerMixin:
         return bool(moved)
 
     def _perform_single_down_scroll(self) -> bool:
-        distance = int(round(float(config.SCROLL_PIXEL_STEP) * float(config.SCROLL_DISTANCE_RATIO)))
+        pixel_step = config.bounded_float(config.SCROLL_PIXEL_STEP, 90.0, minimum=1.0)
+        distance_ratio = config.bounded_float(config.SCROLL_DISTANCE_RATIO, 1.0, minimum=0.1)
+        distance = int(round(pixel_step * distance_ratio))
         start_x, start_y = config.SCROLL_START_POS
         target_y = start_y - distance
         logger.info("Verification scroll down before confirming new level red icon")

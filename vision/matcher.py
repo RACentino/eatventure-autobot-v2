@@ -489,12 +489,18 @@ class ImageMatcher:
         return average_correlation >= self._normalize_threshold(color_threshold, 0.7)
 
     @staticmethod
-    def _normalize_hsv_component(values: np.ndarray) -> np.ndarray:
+    def _normalize_hsv_component(values: np.ndarray) -> np.ndarray | None:
+        try:
+            hue = int(values[0])
+            saturation = int(values[1])
+            value = int(values[2])
+        except (TypeError, ValueError, OverflowError, IndexError):
+            return None
         return np.array(
             [
-                max(0, min(179, int(values[0]))),
-                max(0, min(255, int(values[1]))),
-                max(0, min(255, int(values[2]))),
+                max(0, min(179, hue)),
+                max(0, min(255, saturation)),
+                max(0, min(255, value)),
             ],
             dtype=np.uint8,
         )
@@ -509,7 +515,11 @@ class ImageMatcher:
             return None
         if lower.shape != (3,) or upper.shape != (3,):
             return None
-        return cls._normalize_hsv_component(lower), cls._normalize_hsv_component(upper)
+        lower_component = cls._normalize_hsv_component(lower)
+        upper_component = cls._normalize_hsv_component(upper)
+        if lower_component is None or upper_component is None:
+            return None
+        return lower_component, upper_component
 
     @staticmethod
     def _hsv_range_cache_key(
@@ -523,7 +533,7 @@ class ImageMatcher:
                 )
                 for lower, upper in hsv_ranges
             )
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return None
 
     def _normalize_hsv_ranges(self, hsv_ranges: Any) -> list[HsvRange]:

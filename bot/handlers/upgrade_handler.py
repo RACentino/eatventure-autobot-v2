@@ -79,8 +79,11 @@ class UpgradeHandlerMixin:
 
     @staticmethod
     def _upgrade_hold_poll_limit(hold_max_duration: float, hold_check_interval: float) -> int:
-        bounded_interval = max(0.001, float(hold_check_interval))
-        bounded_duration = max(bounded_interval, float(hold_max_duration))
+        bounded_interval = config.bounded_float(hold_check_interval, 0.05, minimum=0.001)
+        bounded_duration = max(
+            bounded_interval,
+            config.bounded_float(hold_max_duration, DEFAULT_CLICK_HOLD_MAX_DURATION, minimum=bounded_interval),
+        )
         return min(MAX_UPGRADE_HOLD_POLLS, max(1, int(math.ceil(bounded_duration / bounded_interval)) + 2))
 
     def _monitor_upgrade_station_hold(
@@ -195,7 +198,12 @@ class UpgradeHandlerMixin:
 
     @staticmethod
     def _upgrade_hold_timing() -> tuple[float, float]:
-        hold_check_interval = max(0.05, min(0.20, float(config.UPGRADE_STATION_VERIFY_SEARCH_INTERVAL)))
+        hold_check_interval = config.bounded_float(
+            config.UPGRADE_STATION_VERIFY_SEARCH_INTERVAL,
+            0.10,
+            minimum=0.05,
+            maximum=0.20,
+        )
         return hold_check_interval, UpgradeHandlerMixin._hold_max_duration()
 
     def _state_after_upgrade_hold(self, stopped_by_max_duration: bool, hold_elapsed: float) -> State:
@@ -214,7 +222,8 @@ class UpgradeHandlerMixin:
         self._click_idle()
         self._sleep(config.STATE_DELAY)
         self.upgrade_station_counter += 1
-        if self.upgrade_station_counter < int(config.UPGRADE_STATION_STATS_THRESHOLD):
+        stats_threshold = config.bounded_int(config.UPGRADE_STATION_STATS_THRESHOLD, 2, minimum=1)
+        if self.upgrade_station_counter < stats_threshold:
             return State.OPEN_BOXES
         self.upgrade_station_counter = 0
         logger.info("Upgrade counter reached stats threshold")
@@ -223,7 +232,12 @@ class UpgradeHandlerMixin:
     def handle_search_upgrade_station(self, current_state: State) -> StateResult:
         base_threshold = self._upgrade_station_threshold()
         relaxed_threshold = max(0.0, base_threshold - 0.05)
-        max_attempts = min(MAX_UPGRADE_STATION_SEARCH_ATTEMPTS, max(1, int(config.UPGRADE_STATION_SEARCH_MAX_ATTEMPTS)))
+        max_attempts = config.bounded_int(
+            config.UPGRADE_STATION_SEARCH_MAX_ATTEMPTS,
+            1,
+            minimum=1,
+            maximum=MAX_UPGRADE_STATION_SEARCH_ATTEMPTS,
+        )
 
         for attempt in range(max_attempts):
             if "upgradeStation" not in self.templates:
