@@ -656,6 +656,35 @@ class VisionScannerMixin:
             maximum_distance,
         )
 
+    def _find_resilient_verified_match(
+        self,
+        base_threshold: float,
+        relaxed_threshold: float,
+        expected_position: tuple[int, int],
+        verify_radius: float,
+    ) -> RedIcon | None:
+        base_match = self._find_upgrade_station_match(
+            base_threshold,
+            expected_position=expected_position,
+            maximum_distance=verify_radius,
+        )
+        if base_match is not None:
+            return base_match
+        relaxed_match = self._find_upgrade_station_match(
+            relaxed_threshold,
+            expected_position=expected_position,
+            maximum_distance=verify_radius,
+        )
+        if relaxed_match is not None:
+            return relaxed_match
+        if self._scrcpy_miss_recovery_sleep(config.SCRCPY_UPGRADE_MISS_RECOVERY_DELAY):
+            return self._find_upgrade_station_match(
+                relaxed_threshold,
+                expected_position=expected_position,
+                maximum_distance=verify_radius,
+            )
+        return None
+
     def _find_verified_upgrade_station_match(
         self,
         base_threshold: float,
@@ -670,11 +699,11 @@ class VisionScannerMixin:
         )
         verify_radius = bounded_float(config.UPGRADE_STATION_VERIFY_RADIUS, 0.0, minimum=0.0)
         for attempt in range(verify_attempts):
-            current_threshold = base_threshold if attempt == 0 else relaxed_threshold
-            verified_match = self._find_upgrade_station_match(
-                current_threshold,
-                expected_position=expected_position,
-                maximum_distance=verify_radius,
+            verified_match = self._find_resilient_verified_match(
+                base_threshold,
+                relaxed_threshold,
+                expected_position,
+                verify_radius,
             )
             if verified_match is not None:
                 return verified_match, True
