@@ -7,6 +7,7 @@ from core import config
 from bot.types import BoxCandidate, MatchCandidate, RedIcon, TemplatePair
 
 logger = logging.getLogger(__name__)
+MAX_UPGRADE_VERIFICATION_ATTEMPTS = 5
 
 
 class VisionScannerMixin:
@@ -660,7 +661,10 @@ class VisionScannerMixin:
         relaxed_threshold: float,
         expected_position: tuple[int, int],
     ) -> tuple[RedIcon | None, bool]:
-        verify_attempts = max(1, int(config.UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS))
+        verify_attempts = min(
+            MAX_UPGRADE_VERIFICATION_ATTEMPTS,
+            max(1, int(config.UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS)),
+        )
         verify_radius = float(config.UPGRADE_STATION_VERIFY_RADIUS)
         for attempt in range(verify_attempts):
             current_threshold = base_threshold if attempt == 0 else relaxed_threshold

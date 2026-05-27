@@ -6,6 +6,7 @@ from bot.state_machine import State
 from bot.types import StateResult
 
 logger = logging.getLogger(__name__)
+MAX_TRANSITION_LEVEL_ATTEMPTS = 10
 
 
 class TransitionHandlerMixin:
@@ -77,7 +78,7 @@ class TransitionHandlerMixin:
     def handle_transition_level(self, current_state: State) -> StateResult:
         self._click_idle()
 
-        max_attempts = int(config.TRANSITION_LEVEL_MAX_ATTEMPTS)
+        max_attempts = min(MAX_TRANSITION_LEVEL_ATTEMPTS, max(1, int(config.TRANSITION_LEVEL_MAX_ATTEMPTS)))
         for attempt in range(max_attempts):
             limited_screenshot = self.window_capture.capture(max_y=config.MAX_SEARCH_Y)
 

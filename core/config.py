@@ -174,17 +174,11 @@ UPGRADE_STATION_VERIFY_RADIUS = 36
 # Maximum duration for holding an upgrade station click.
 CLICK_HOLD_MAX_DURATION = 9.0
 
-# Duration for stats upgrade spam-clicking.
+# Duration for stats upgrade click bursts.
 STATS_UPGRADE_CLICK_DURATION = 1.20
 
-# Delay between stats upgrade spam-clicks.
+# Delay between stats upgrade click actions.
 STATS_UPGRADE_CLICK_DELAY = 0.016
-
-# Duration for generic spam-click loops.
-SPAM_CLICK_DURATION = 1.00
-
-# Delay between generic spam-click actions.
-SPAM_CLICK_DELAY = 0.09
 
 # Settling delay before scan actions in transition handlers.
 IDLE_SETTLE_DELAY = 0.14
@@ -206,9 +200,6 @@ WAIT_FOR_UNLOCK_RETRY_INTERVAL = 0.45
 
 # Settling delay after clicking the unlock button.
 WAIT_FOR_UNLOCK_SETTLE_DELAY = 0.35
-
-# Delay between clicks in a double-click action.
-DOUBLE_CLICK_INTER_DELAY = 0.11
 
 # Maximum input retry attempts for cursor positioning and mouse actions.
 INPUT_RETRY_COUNT = 2

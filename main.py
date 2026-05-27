@@ -17,6 +17,7 @@ log_listener: QueueListener | None = None
 exit_requested = threading.Event()
 bot_command_queue: queue.SimpleQueue["BotCommand"] = queue.SimpleQueue()
 BOT_COMMAND_DRAIN_LIMIT = 64
+BOT_EVENT_LOOP_ITERATION_LIMIT = 2_147_483_647
 
 
 class BotCommand(Enum):
@@ -178,12 +179,16 @@ def _print_startup_banner() -> None:
 
 def _run_bot_event_loop() -> None:
     logger = logging.getLogger(__name__)
-    while not exit_requested.is_set():
+    for _ in range(BOT_EVENT_LOOP_ITERATION_LIMIT):
+        if exit_requested.is_set():
+            return
         _drain_bot_commands(logger)
         if bot_instance is not None and bot_instance.running:
             bot_instance.step()
         _drain_bot_commands(logger)
         precise_sleep(0.1)
+    logger.error("Bot event loop reached iteration limit")
+    exit_requested.set()
 
 
 def _cleanup_runtime(listener: Any | None) -> None:

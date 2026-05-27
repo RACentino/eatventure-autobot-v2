@@ -1,9 +1,14 @@
 import importlib
 import os
-import platform
+import sys
 from types import ModuleType
 
-SYSTEM_NAME = platform.system()
+SYSTEM_NAME_BY_PLATFORM = {
+    "linux": "Linux",
+    "win32": "Windows",
+    "cygwin": "Windows",
+}
+SYSTEM_NAME = SYSTEM_NAME_BY_PLATFORM.get(sys.platform, sys.platform)
 IS_WINDOWS = SYSTEM_NAME == "Windows"
 IS_LINUX = SYSTEM_NAME == "Linux"
 SUPPORTED_SYSTEMS = {"Windows", "Linux"}

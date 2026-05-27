@@ -25,6 +25,7 @@ RED_HSV_RANGES = (
     ((160, 80, 80), (179, 255, 255)),
 )
 TemplateMatchMatrix = tuple[np.ndarray, float, Point]
+MAX_LOCAL_MINIMA_COMPONENTS = 2_048
 
 
 class ImageMatcher:
@@ -910,7 +911,7 @@ class ImageMatcher:
         mask = candidate_mask.astype(np.uint8)
         count, _, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
         candidates = []
-        for index in range(1, count):
+        for index in range(1, min(count, MAX_LOCAL_MINIMA_COMPONENTS + 1)):
             component_x, component_y, component_width, component_height, component_area = stats[index]
             if component_area <= 0:
                 continue

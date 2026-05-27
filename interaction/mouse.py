@@ -1,6 +1,5 @@
 import logging
 import math
-import random
 import threading
 import time
 from collections.abc import Callable
@@ -16,6 +15,9 @@ WindowBounds = tuple[int, int, int, int]
 RelativeScreenPosition = tuple[int, int, int, int, int, int]
 ForbiddenZone = tuple[str, int, int, int, int | None]
 MIN_DEADLINE_POLL_SLICE = 0.001
+MAX_DEADLINE_POLL_ITERATIONS = 120_000
+MAX_INPUT_RETRY_COUNT = 10
+MAX_DRAG_STEPS = 60
 
 
 def _point_within_client_area(
@@ -115,7 +117,7 @@ def _wait_until_next_deadline_slice(remaining: float, stop_event: threading.Even
 def _deadline_poll_iterations(deadline: float, poll_slice: float = MIN_DEADLINE_POLL_SLICE) -> int:
     remaining = max(0.0, float(deadline) - time.perf_counter())
     bounded_slice = max(MIN_DEADLINE_POLL_SLICE, float(poll_slice))
-    return max(1, int(math.ceil(remaining / bounded_slice)) + 3)
+    return min(MAX_DEADLINE_POLL_ITERATIONS, max(1, int(math.ceil(remaining / bounded_slice)) + 3))
 
 
 def sleep_until(deadline: float, stop_event: threading.Event | None = None) -> bool:
@@ -170,7 +172,10 @@ class MouseController:
             config.HOVER_DURATION if hover_duration is None else hover_duration,
             0.0,
         )
-        self.input_retry_count = max(1, int(config.INPUT_RETRY_COUNT))
+        self.input_retry_count = min(
+            MAX_INPUT_RETRY_COUNT,
+            max(1, self._coerce_non_negative_int(config.INPUT_RETRY_COUNT, 1)),
+        )
         self.input_retry_delay = max(0.0, float(config.INPUT_RETRY_DELAY))
         self._input_lock = threading.RLock()
         self._forbidden_zones = self._configured_forbidden_zones()
@@ -750,11 +755,6 @@ class MouseController:
             self._log_failed_click_attempt("Precise click", last_screen_pos)
             return False
 
-    def double_click(self, x: Any, y: Any, relative: bool = True) -> bool:
-        if not self.click(x, y, relative=relative, delay=config.DOUBLE_CLICK_INTER_DELAY):
-            return False
-        return self.click(x, y, relative=relative)
-
     def hold_at(
         self,
         x: Any,
@@ -794,70 +794,12 @@ class MouseController:
                 precise_sleep(self.click_delay)
             return True
 
-    def click_sequence(
+    def _run_stats_upgrade_click_loop(
         self,
-        x: Any,
-        y: Any,
-        count: Any,
-        interval: Any,
-        relative: bool = True,
-        interrupt_check: Callable[[], bool] | None = None,
-    ) -> bool:
-        with self._input_lock:
-            count = self._coerce_non_negative_int(count)
-            interval = max(0.0, self._coerce_non_negative_float(interval, 0.0))
-            if count <= 0:
-                return True
-
-            screen_pos = self._resolve_screen_position(x, y, relative=relative)
-            if screen_pos is None:
-                return False
-
-            screen_x, screen_y = screen_pos
-            if not self._set_cursor_pos(screen_x, screen_y):
-                return False
-            if self.move_delay > 0:
-                precise_sleep(self.move_delay)
-            self._hover_before_click()
-
-            first_click_at = time.perf_counter()
-            for index in range(count):
-                if not self._interruptible_sleep_until(first_click_at + (index * interval), interrupt_check):
-                    return False
-                if not self._left_click_at_screen(
-                    screen_x,
-                    screen_y,
-                    interrupt_check=interrupt_check,
-                ):
-                    return False
-
-            logger.debug("Click sequence complete at (%s, %s): %s clicks", screen_x, screen_y, count)
-            return True
-
-    def _resolve_jittered_screen_position(
-        self,
-        base_x: int,
-        base_y: int,
-        jitter: int,
-    ) -> Point | None:
-        if jitter <= 0:
-            return self._validated_screen_input_position(base_x, base_y, "spam click target")
-        target_x = base_x + random.randint(-jitter, jitter)
-        target_y = base_y + random.randint(-jitter, jitter)
-        jittered_position = self._resolve_screen_position(target_x, target_y, relative=False)
-        if jittered_position is None:
-            return None
-        if not self._set_cursor_pos(jittered_position[0], jittered_position[1]):
-            return None
-        return jittered_position
-
-    def _run_spam_click_loop(
-        self,
-        base_x: int,
-        base_y: int,
+        screen_x: int,
+        screen_y: int,
         duration: float,
         click_delay: float,
-        jitter: int,
         interrupt_check: Callable[[], bool] | None,
     ) -> int | None:
         start_time = time.perf_counter()
@@ -866,17 +808,16 @@ class MouseController:
         click_count = 0
 
         logger.debug(
-            "Spam-clicking at (%s, %s) for %.2fs (delay=%.3fs, jitter=%s)",
-            base_x,
-            base_y,
+            "Stats upgrade clicking at (%s, %s) for %.2fs (delay=%.3fs)",
+            screen_x,
+            screen_y,
             duration,
             click_delay,
-            jitter,
         )
 
         for _ in range(_deadline_poll_iterations(end_time)):
             if interrupt_check and interrupt_check():
-                logger.debug("Spam-click interrupted after %s clicks", click_count)
+                logger.debug("Stats upgrade clicking interrupted after %s clicks", click_count)
                 return None
 
             now = time.perf_counter()
@@ -890,14 +831,9 @@ class MouseController:
                     return None
                 continue
 
-            target_position = self._resolve_jittered_screen_position(base_x, base_y, jitter)
-            if target_position is None:
-                return None
-            target_x, target_y = target_position
-
             if not self._left_click_at_screen(
-                target_x,
-                target_y,
+                screen_x,
+                screen_y,
                 down_duration=0.0,
                 up_duration=0.0,
                 interrupt_check=interrupt_check,
@@ -908,25 +844,21 @@ class MouseController:
             next_click_at = time.perf_counter() + click_delay
         return click_count
 
-    def spam_click_at(
+    def click_stats_upgrade_at(
         self,
         x: Any,
         y: Any,
-        duration: Any = None,
-        click_delay: Any = None,
-        jitter: Any = 0,
+        duration: Any,
+        click_delay: Any,
         relative: bool = True,
         interrupt_check: Callable[[], bool] | None = None,
     ) -> bool:
         with self._input_lock:
-            if duration is None:
-                duration = config.SPAM_CLICK_DURATION
-            if click_delay is None:
-                click_delay = config.SPAM_CLICK_DELAY
-
-            duration = self._coerce_non_negative_float(duration, config.SPAM_CLICK_DURATION)
-            click_delay = max(0.001, self._coerce_non_negative_float(click_delay, config.SPAM_CLICK_DELAY))
-            jitter = self._coerce_non_negative_int(jitter)
+            duration = self._coerce_non_negative_float(duration, 0.0)
+            click_delay = max(0.001, self._coerce_non_negative_float(click_delay, 0.0))
+            if duration <= 0:
+                logger.warning("Rejected stats upgrade click with non-positive duration: %.3f", duration)
+                return False
 
             screen_pos = self._resolve_screen_position(x, y, relative=relative)
             if screen_pos is None:
@@ -939,19 +871,18 @@ class MouseController:
                 precise_sleep(self.move_delay)
             self._hover_before_click()
 
-            click_count = self._run_spam_click_loop(
+            click_count = self._run_stats_upgrade_click_loop(
                 base_x,
                 base_y,
                 duration,
                 click_delay,
-                jitter,
                 interrupt_check,
             )
             if click_count is None:
                 return False
 
-            logger.debug("Spam-click complete: %s clicks", click_count)
-            return True
+            logger.debug("Stats upgrade clicking complete: %s clicks", click_count)
+            return click_count > 0
 
     def _validated_drag_path(
         self,
@@ -961,6 +892,7 @@ class MouseController:
         screen_to_y: int,
         steps: int,
     ) -> list[Point] | None:
+        steps = min(MAX_DRAG_STEPS, max(1, int(steps)))
         drag_path = []
         for index in range(steps + 1):
             position_ratio = index / steps

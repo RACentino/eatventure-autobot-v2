@@ -27,6 +27,7 @@ from vision.scanner import VisionScannerMixin
 
 logger = logging.getLogger(__name__)
 PENDING_LEARNED_BEHAVIOR_DRAIN_LIMIT = 64
+BOT_RUN_LOOP_ITERATION_LIMIT = 2_147_483_647
 
 
 
@@ -337,11 +338,15 @@ class EatventureBot(
         if not self.start():
             return
         try:
-            while self.running:
+            for _ in range(BOT_RUN_LOOP_ITERATION_LIMIT):
+                if not self.running:
+                    return
                 if not self.window_capture.is_window_active():
                     logger.error("Window '%s' is no longer active", config.WINDOW_TITLE)
                     break
                 self.step()
                 precise_sleep(0.1)
+            else:
+                logger.error("Bot run loop reached iteration limit")
         finally:
             self.stop()

@@ -8,6 +8,8 @@ import requests
 from core import config
 
 logger = logging.getLogger(__name__)
+TELEGRAM_WORKER_LOOP_LIMIT = 2_147_483_647
+TELEGRAM_QUEUE_MAXSIZE_LIMIT = 1_000
 
 
 class TelegramNotifier:
@@ -21,7 +23,7 @@ class TelegramNotifier:
             queue_size = int(config.TELEGRAM_QUEUE_MAXSIZE)
         except (TypeError, ValueError):
             queue_size = 100
-        self._queue = queue.Queue(maxsize=max(1, queue_size))
+        self._queue = queue.Queue(maxsize=min(TELEGRAM_QUEUE_MAXSIZE_LIMIT, max(1, queue_size)))
         self._stop = threading.Event()
         self._thread = None
         self._session = requests.Session() if self.enabled else None
@@ -34,7 +36,9 @@ class TelegramNotifier:
             logger.info("Telegram notifier disabled")
 
     def _worker_loop(self) -> None:
-        while not self._stop.is_set() or not self._queue.empty():
+        for _ in range(TELEGRAM_WORKER_LOOP_LIMIT):
+            if self._stop.is_set() and self._queue.empty():
+                return
             try:
                 message = self._queue.get(timeout=0.2)
             except queue.Empty:
@@ -48,6 +52,7 @@ class TelegramNotifier:
                 logger.exception("Unexpected Telegram notification failure")
             finally:
                 self._queue.task_done()
+        logger.warning("Telegram notifier worker reached iteration limit")
 
     def _send_message_now(self, message: str) -> bool:
         if not self.enabled or self._session is None:

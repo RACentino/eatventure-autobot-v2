@@ -12,6 +12,9 @@ from typing import Any
 from core import config
 
 logger = logging.getLogger(__name__)
+LEARNING_LOOP_ITERATION_LIMIT = 2_147_483_647
+MIN_LEARNING_LOOP_INTERVAL = 0.1
+MIN_LEARNING_JOIN_TIMEOUT = 0.1
 
 
 @dataclass(frozen=True)
@@ -142,7 +145,13 @@ class AdaptiveTuner:
 class VisionPersistence:
     def __init__(self, path: str | Path, save_interval: float) -> None:
         self.path = Path(path) if path else None
-        self.save_interval = float(save_interval)
+        try:
+            normalized_interval = float(save_interval)
+        except (TypeError, ValueError):
+            normalized_interval = 0.0
+        if not math.isfinite(normalized_interval):
+            normalized_interval = 0.0
+        self.save_interval = max(0.0, normalized_interval)
         self._last_save_time = 0.0
         self._lock = threading.RLock()
 
@@ -458,7 +467,18 @@ class HistoricalLearner:
         self.bot = bot
         self.persistence = persistence
         self.enabled = bool(config.AI_LEARNING_ENABLED)
-        self.interval = max(config.LEARNING_LOOP_MIN_SLEEP, float(config.AI_LEARNING_THREAD_INTERVAL))
+        configured_interval = self._safe_float(config.AI_LEARNING_THREAD_INTERVAL)
+        minimum_interval = self._safe_float(config.LEARNING_LOOP_MIN_SLEEP)
+        self.interval = max(
+            MIN_LEARNING_LOOP_INTERVAL,
+            configured_interval if configured_interval is not None else MIN_LEARNING_LOOP_INTERVAL,
+            minimum_interval if minimum_interval is not None else MIN_LEARNING_LOOP_INTERVAL,
+        )
+        configured_join_timeout = self._safe_float(config.AI_LEARNING_THREAD_JOIN_TIMEOUT)
+        self.join_timeout = max(
+            MIN_LEARNING_JOIN_TIMEOUT,
+            configured_join_timeout if configured_join_timeout is not None else MIN_LEARNING_JOIN_TIMEOUT,
+        )
         self.pair_window = max(2, int(config.AI_LEARNING_PAIR_WINDOW))
         self.batch_window = max(2, int(config.AI_LEARNING_BATCH_WINDOW))
         self.ema_alpha = max(0.01, min(0.8, float(config.AI_LEARNING_EMA_ALPHA)))
@@ -541,7 +561,7 @@ class HistoricalLearner:
     def stop(self) -> None:
         self._stop.set()
         if self._thread is not None and self._thread.is_alive():
-            self._thread.join(timeout=config.AI_LEARNING_THREAD_JOIN_TIMEOUT)
+            self._thread.join(timeout=self.join_timeout)
         if self.enabled:
             self._persist(force=True)
 
@@ -571,12 +591,15 @@ class HistoricalLearner:
         self._persist(force=True)
 
     def _loop(self) -> None:
-        while not self._stop.is_set():
+        for _ in range(LEARNING_LOOP_ITERATION_LIMIT):
+            if self._stop.is_set():
+                return
             try:
                 self._run_cycle()
             except Exception:
                 logger.exception("Historical learner cycle failed")
             self._stop.wait(self.interval)
+        logger.warning("Historical learner loop reached iteration limit")
 
     def _run_cycle(self) -> None:
         with self._lock:

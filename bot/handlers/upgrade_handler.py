@@ -8,15 +8,21 @@ from bot.state_machine import State
 from bot.types import RedIcon, StateResult
 
 logger = logging.getLogger(__name__)
+DEFAULT_CLICK_HOLD_MAX_DURATION = 9.0
+MAX_UPGRADE_HOLD_POLLS = 240
+MAX_UPGRADE_STATION_SEARCH_ATTEMPTS = 10
 
 
 class UpgradeHandlerMixin:
     @staticmethod
     def _hold_max_duration() -> float:
-        hold_max_duration = float(config.CLICK_HOLD_MAX_DURATION)
-        if not math.isfinite(hold_max_duration):
-            return 0.0
-        return max(0.0, hold_max_duration)
+        try:
+            hold_max_duration = float(config.CLICK_HOLD_MAX_DURATION)
+        except (TypeError, ValueError):
+            return DEFAULT_CLICK_HOLD_MAX_DURATION
+        if not math.isfinite(hold_max_duration) or hold_max_duration <= 0:
+            return DEFAULT_CLICK_HOLD_MAX_DURATION
+        return hold_max_duration
 
     def _position_cursor_for_upgrade_hold(self, x: int, y: int) -> tuple[int, int] | None:
         screen_pos = self.mouse_controller._resolve_screen_position(x, y, relative=True)
@@ -75,7 +81,7 @@ class UpgradeHandlerMixin:
     def _upgrade_hold_poll_limit(hold_max_duration: float, hold_check_interval: float) -> int:
         bounded_interval = max(0.001, float(hold_check_interval))
         bounded_duration = max(bounded_interval, float(hold_max_duration))
-        return max(1, int(math.ceil(bounded_duration / bounded_interval)) + 2)
+        return min(MAX_UPGRADE_HOLD_POLLS, max(1, int(math.ceil(bounded_duration / bounded_interval)) + 2))
 
     def _monitor_upgrade_station_hold(
         self,
@@ -217,7 +223,7 @@ class UpgradeHandlerMixin:
     def handle_search_upgrade_station(self, current_state: State) -> StateResult:
         base_threshold = self._upgrade_station_threshold()
         relaxed_threshold = max(0.0, base_threshold - 0.05)
-        max_attempts = int(config.UPGRADE_STATION_SEARCH_MAX_ATTEMPTS)
+        max_attempts = min(MAX_UPGRADE_STATION_SEARCH_ATTEMPTS, max(1, int(config.UPGRADE_STATION_SEARCH_MAX_ATTEMPTS)))
 
         for attempt in range(max_attempts):
             if "upgradeStation" not in self.templates:
@@ -335,7 +341,7 @@ class UpgradeHandlerMixin:
             return State.OPEN_BOXES
 
         self._sleep(config.STATE_DELAY)
-        clicked = self.mouse_controller.spam_click_at(
+        clicked = self.mouse_controller.click_stats_upgrade_at(
             config.STATS_UPGRADE_POS[0],
             config.STATS_UPGRADE_POS[1],
             duration=config.STATS_UPGRADE_CLICK_DURATION,
@@ -344,7 +350,7 @@ class UpgradeHandlerMixin:
             interrupt_check=self._stop_requested.is_set,
         )
         if not clicked:
-            logger.warning("Stats upgrade spam-click failed at %s", config.STATS_UPGRADE_POS)
+            logger.warning("Stats upgrade clicking failed at %s", config.STATS_UPGRADE_POS)
             return State.OPEN_BOXES
 
         self._click_idle()
