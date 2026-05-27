@@ -258,6 +258,15 @@ class UpgradeHandlerMixin:
         logger.info("Upgrade station not found, returning to OPEN_BOXES")
         return State.OPEN_BOXES
 
+    def _perform_upgrade_station_verification_click(self, x: int, y: int) -> bool:
+        logger.info("Performing single verification click on upgrade station at (%s, %s)", x, y)
+        click_succeeded = self.mouse_controller.click(x, y, relative=True)
+        self.tuner.record_click_result(click_succeeded)
+        self._apply_tuning()
+        if not click_succeeded:
+            logger.warning("Upgrade station verification click failed at (%s, %s)", x, y)
+        return click_succeeded
+
     def handle_hold_upgrade_station(self, current_state: State) -> StateResult:
         if not self.upgrade_station_pos:
             return State.OPEN_BOXES
@@ -267,7 +276,9 @@ class UpgradeHandlerMixin:
             logger.warning("Upgrade station blocked by forbidden zone at (%s, %s)", x, y)
             return State.OPEN_BOXES
 
-        logger.info("Verifying upgrade station before hold at (%s, %s)", x, y)
+        if not self._perform_upgrade_station_verification_click(x, y):
+            return State.OPEN_BOXES
+
         if not self._sleep(config.UPGRADE_STATION_VERIFY_SETTLE_DELAY):
             return State.OPEN_BOXES
 
