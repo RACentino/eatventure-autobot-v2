@@ -312,10 +312,10 @@ SCROLL_PIXEL_STEP = 90
 SCROLL_DISTANCE_RATIO = 1.0
 
 # Maximum oscillating scroll cycles before reset.
-MAX_SCROLL_CYCLES = 5
+MAX_SCROLL_CYCLES = 10
 
 # Step increment applied to each oscillating scroll cycle.
-SCROLL_INCREMENT_STEP = 2
+SCROLL_INCREMENT_STEP = 1
 
 # Delay between scroll intervals.
 SCROLL_INTERVAL_PAUSE = 0.070
@@ -324,7 +324,7 @@ SCROLL_INTERVAL_PAUSE = 0.070
 POST_SCROLL_SETTLE = 0.240
 
 # Duration of each scroll drag gesture.
-SCROLL_DURATION = 0.300
+SCROLL_DURATION = 0.150
 
 
 # Handler Limits
