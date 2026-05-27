@@ -133,10 +133,10 @@ RED_ICON_FAST_MIN_DISTANCE = 30
 # Mouse and Action Timing
 
 # Delay after normal click actions.
-CLICK_DELAY = 0.050
+CLICK_DELAY = 0.040
 
 # Delay after cursor movement.
-MOUSE_MOVE_DELAY = 0.75
+MOUSE_MOVE_DELAY = 0.050
 
 # Duration to hold the mouse button down during click actions.
 MOUSE_DOWN_DURATION = 0.110
@@ -148,7 +148,7 @@ MOUSE_UP_DURATION = 0.070
 HOVER_ENABLED = True
 
 # Duration for hover movement before click actions.
-HOVER_DURATION = 0.075
+HOVER_DURATION = 0.100
 
 # Delay between upgrade station search attempts.
 UPGRADE_SEARCH_INTERVAL = 0.020
@@ -178,7 +178,7 @@ STATS_UPGRADE_CLICK_DURATION = 1.60
 STATS_UPGRADE_CLICK_DELAY = 0.016
 
 # Settling delay before scan actions in transition handlers.
-IDLE_SETTLE_DELAY = 0.045
+IDLE_SETTLE_DELAY = 0.075
 
 # Delay after clicking the new-level button.
 NEW_LEVEL_CLICK_SETTLE_DELAY = 0.180
