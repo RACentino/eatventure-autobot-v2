@@ -1,87 +1,10 @@
-import math
-import os
-from pathlib import Path
-
-
-def env_text(name: str, default: str = "") -> str:
-    return os.environ.get(name, default).strip()
-
-
-def env_bool(name: str, default: bool = False) -> bool:
-    value = os.environ.get(name)
-    if value is None:
-        return bool(default)
-    normalized = value.strip().lower()
-    if normalized in {"1", "true", "yes", "on"}:
-        return True
-    if normalized in {"0", "false", "no", "off"}:
-        return False
-    return bool(default)
-
-
-def bounded_float(
-    value: object,
-    default: float,
-    minimum: float | None = None,
-    maximum: float | None = None,
-) -> float:
-    try:
-        number = float(value)
-    except (TypeError, ValueError, OverflowError):
-        number = float(default)
-    if not math.isfinite(number):
-        number = float(default)
-    if minimum is not None:
-        try:
-            minimum_value = float(minimum)
-        except (TypeError, ValueError, OverflowError):
-            minimum_value = None
-        if minimum_value is not None and math.isfinite(minimum_value):
-            number = max(minimum_value, number)
-    if maximum is not None:
-        try:
-            maximum_value = float(maximum)
-        except (TypeError, ValueError, OverflowError):
-            maximum_value = None
-        if maximum_value is not None and math.isfinite(maximum_value):
-            number = min(maximum_value, number)
-    return number
-
-
-def bounded_int(
-    value: object,
-    default: int,
-    minimum: int | None = None,
-    maximum: int | None = None,
-) -> int:
-    try:
-        number = int(value)
-    except (TypeError, ValueError, OverflowError):
-        number = int(default)
-    if minimum is not None:
-        try:
-            minimum_value = int(minimum)
-        except (TypeError, ValueError, OverflowError):
-            minimum_value = None
-        if minimum_value is not None:
-            number = max(minimum_value, number)
-    if maximum is not None:
-        try:
-            maximum_value = int(maximum)
-        except (TypeError, ValueError, OverflowError):
-            maximum_value = None
-        if maximum_value is not None:
-            number = min(maximum_value, number)
-    return number
-
-
 # Paths
 
-# Absolute path to the image template assets directory.
-ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
+# Project-relative path to the image template assets directory.
+ASSETS_DIR = "assets"
 
-# Absolute path to the runtime log output directory.
-LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
+# Project-relative path to the runtime log output directory.
+LOGS_DIR = "logs"
 
 
 # Window and Logging
@@ -275,23 +198,16 @@ WAIT_FOR_UNLOCK_RETRY_INTERVAL = 0.45
 # Settling delay after clicking the unlock button.
 WAIT_FOR_UNLOCK_SETTLE_DELAY = 0.35
 
-# Maximum input retry attempts for cursor positioning and mouse actions.
-INPUT_RETRY_COUNT = 2
-
-# Delay between input retry attempts.
-INPUT_RETRY_DELAY = 0.08
-
-
 # Telegram Notifications
 
 # Enables Telegram notifications.
-TELEGRAM_ENABLED = env_bool("EATVENTURE_TELEGRAM_ENABLED", False)
+TELEGRAM_ENABLED = False
 
 # Telegram bot token used for notification delivery.
-TELEGRAM_BOT_TOKEN = env_text("EATVENTURE_TELEGRAM_BOT_TOKEN")
+TELEGRAM_BOT_TOKEN = ""
 
 # Telegram chat identifier that receives notifications.
-TELEGRAM_CHAT_ID = env_text("EATVENTURE_TELEGRAM_CHAT_ID")
+TELEGRAM_CHAT_ID = ""
 
 # Maximum queued Telegram messages before new messages are dropped.
 TELEGRAM_QUEUE_MAXSIZE = 100
@@ -578,8 +494,8 @@ AI_STATS_UPGRADE_MISS_WINDOW = 3
 # Amount to lower the stats upgrade threshold after miss window exhaustion.
 AI_STATS_UPGRADE_MISS_STEP = 0.001
 
-# File path for persisted adaptive vision state.
-AI_VISION_STATE_FILE = Path(__file__).resolve().parent.parent / "memory" / "vision_state.json"
+# Project-relative file path for persisted adaptive vision state.
+AI_VISION_STATE_FILE = "memory/vision_state.json"
 
 # Minimum interval between adaptive vision state saves.
 AI_VISION_SAVE_INTERVAL = 2.0
@@ -590,8 +506,8 @@ AI_VISION_SAVE_INTERVAL = 2.0
 # Enables historical learning from completed levels.
 AI_LEARNING_ENABLED = False
 
-# File path for persisted historical learning state.
-AI_LEARNING_STATE_FILE = Path(__file__).resolve().parent.parent / "memory" / "learning_state_stable.json"
+# Project-relative file path for persisted historical learning state.
+AI_LEARNING_STATE_FILE = "memory/learning_state_stable.json"
 
 # Minimum interval between historical learning state saves.
 AI_LEARNING_SAVE_INTERVAL = 5.0
@@ -716,17 +632,10 @@ FORBIDDEN_ZONE_5_Y_MIN = 660
 # Maximum y-coordinate for forbidden zone 5.
 FORBIDDEN_ZONE_5_Y_MAX = 725
 
-
-def numbered_forbidden_zone_bounds() -> list[tuple[int, int, int, int]]:
-    return [
-        (FORBIDDEN_ZONE_1_X_MIN, FORBIDDEN_ZONE_1_X_MAX,
-         FORBIDDEN_ZONE_1_Y_MIN, FORBIDDEN_ZONE_1_Y_MAX),
-        (FORBIDDEN_ZONE_2_X_MIN, FORBIDDEN_ZONE_2_X_MAX,
-         FORBIDDEN_ZONE_2_Y_MIN, FORBIDDEN_ZONE_2_Y_MAX),
-        (FORBIDDEN_ZONE_3_X_MIN, FORBIDDEN_ZONE_3_X_MAX,
-         FORBIDDEN_ZONE_3_Y_MIN, FORBIDDEN_ZONE_3_Y_MAX),
-        (FORBIDDEN_ZONE_4_X_MIN, FORBIDDEN_ZONE_4_X_MAX,
-         FORBIDDEN_ZONE_4_Y_MIN, FORBIDDEN_ZONE_4_Y_MAX),
-        (FORBIDDEN_ZONE_5_X_MIN, FORBIDDEN_ZONE_5_X_MAX,
-         FORBIDDEN_ZONE_5_Y_MIN, FORBIDDEN_ZONE_5_Y_MAX),
-    ]
+NUMBERED_FORBIDDEN_ZONE_BOUNDS = (
+    (290, 350, 93, 320),
+    (0, 60, 50, 280),
+    (0, 60, 600, 667),
+    (145, 200, 65, 110),
+    (55, 260, 660, 725),
+)

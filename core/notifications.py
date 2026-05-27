@@ -5,7 +5,7 @@ from typing import Any
 
 import requests
 
-from core import config
+from core import bounded_float, bounded_int, config
 
 logger = logging.getLogger(__name__)
 TELEGRAM_WORKER_LOOP_LIMIT = 2_147_483_647
@@ -19,7 +19,7 @@ class TelegramNotifier:
         self.base_url = f"https://api.telegram.org/bot{self.bot_token}"
         self.timeout = 5
         self.enabled = bool(enabled and self.bot_token and self.chat_id)
-        queue_size = config.bounded_int(config.TELEGRAM_QUEUE_MAXSIZE, 100, minimum=1)
+        queue_size = bounded_int(config.TELEGRAM_QUEUE_MAXSIZE, 100, minimum=1)
         self._queue = queue.Queue(maxsize=min(TELEGRAM_QUEUE_MAXSIZE_LIMIT, max(1, queue_size)))
         self._stop = threading.Event()
         self._thread = None
@@ -118,7 +118,7 @@ class TelegramNotifier:
         self.enabled = False
         self._discard_pending_messages()
         if self._thread is not None and self._thread.is_alive():
-            close_timeout = config.bounded_float(config.TELEGRAM_CLOSE_TIMEOUT, 2.0, minimum=0.0)
+            close_timeout = bounded_float(config.TELEGRAM_CLOSE_TIMEOUT, 2.0, minimum=0.0)
             close_timeout = max(0.0, close_timeout, float(self.timeout) + 0.5)
             self._thread.join(timeout=close_timeout)
             if self._thread.is_alive():

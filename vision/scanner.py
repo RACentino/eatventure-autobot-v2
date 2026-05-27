@@ -1,9 +1,8 @@
 import logging
 import math
-from pathlib import Path
 from typing import Any
 
-from core import config
+from core import bounded_float, bounded_int, config, project_path
 from bot.types import BoxCandidate, MatchCandidate, RedIcon, TemplatePair
 
 logger = logging.getLogger(__name__)
@@ -13,7 +12,7 @@ MAX_UPGRADE_VERIFICATION_ATTEMPTS = 5
 class VisionScannerMixin:
     def load_templates(self) -> dict[str, TemplatePair]:
         templates: dict[str, TemplatePair] = {}
-        templates_path = Path(config.ASSETS_DIR)
+        templates_path = project_path(config.ASSETS_DIR)
         if not templates_path.exists():
             logger.error("Assets directory not found: %s", templates_path)
             return templates
@@ -38,7 +37,7 @@ class VisionScannerMixin:
         available = self._available_red_icon_template_count()
         if available <= 0:
             return 1
-        configured = config.bounded_int(config.RED_ICON_MIN_MATCHES, 1, minimum=1)
+        configured = bounded_int(config.RED_ICON_MIN_MATCHES, 1, minimum=1)
         return min(configured, available)
 
     def _validate_required_templates(self) -> bool:
@@ -49,7 +48,7 @@ class VisionScannerMixin:
         if missing:
             logger.error("Missing required templates: %s", ", ".join(missing))
             return False
-        configured_min_matches = config.bounded_int(config.RED_ICON_MIN_MATCHES, 1, minimum=1)
+        configured_min_matches = bounded_int(config.RED_ICON_MIN_MATCHES, 1, minimum=1)
         if red_icon_count < configured_min_matches:
             logger.warning(
                 "Only %s red-icon templates are available; consensus requirement reduced from %s",
@@ -266,7 +265,7 @@ class VisionScannerMixin:
         ]
         if not fast_template_names:
             return template_names, min_distance
-        min_distance = config.bounded_int(config.RED_ICON_FAST_MIN_DISTANCE, min_distance, minimum=1)
+        min_distance = bounded_int(config.RED_ICON_FAST_MIN_DISTANCE, min_distance, minimum=1)
         return fast_template_names, min_distance
 
     def _merge_red_icon_matches(
@@ -595,7 +594,7 @@ class VisionScannerMixin:
     def _maximum_distance_squared(maximum_distance: float | None) -> float | None:
         if maximum_distance is None:
             return None
-        return config.bounded_float(maximum_distance, 0.0, minimum=0.0) ** 2
+        return bounded_float(maximum_distance, 0.0, minimum=0.0) ** 2
 
     def _best_upgrade_station_match(
         self,
@@ -663,13 +662,13 @@ class VisionScannerMixin:
         relaxed_threshold: float,
         expected_position: tuple[int, int],
     ) -> tuple[RedIcon | None, bool]:
-        verify_attempts = config.bounded_int(
+        verify_attempts = bounded_int(
             config.UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS,
             1,
             minimum=1,
             maximum=MAX_UPGRADE_VERIFICATION_ATTEMPTS,
         )
-        verify_radius = config.bounded_float(config.UPGRADE_STATION_VERIFY_RADIUS, 0.0, minimum=0.0)
+        verify_radius = bounded_float(config.UPGRADE_STATION_VERIFY_RADIUS, 0.0, minimum=0.0)
         for attempt in range(verify_attempts):
             current_threshold = base_threshold if attempt == 0 else relaxed_threshold
             verified_match = self._find_upgrade_station_match(

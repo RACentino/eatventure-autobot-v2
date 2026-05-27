@@ -2,7 +2,7 @@ import logging
 import math
 import time
 
-from core import config
+from core import bounded_float, bounded_int, config
 from interaction.mouse import precise_sleep
 from bot.state_machine import State
 from bot.types import RedIcon, StateResult
@@ -79,10 +79,10 @@ class UpgradeHandlerMixin:
 
     @staticmethod
     def _upgrade_hold_poll_limit(hold_max_duration: float, hold_check_interval: float) -> int:
-        bounded_interval = config.bounded_float(hold_check_interval, 0.05, minimum=0.001)
+        bounded_interval = bounded_float(hold_check_interval, 0.05, minimum=0.001)
         bounded_duration = max(
             bounded_interval,
-            config.bounded_float(hold_max_duration, DEFAULT_CLICK_HOLD_MAX_DURATION, minimum=bounded_interval),
+            bounded_float(hold_max_duration, DEFAULT_CLICK_HOLD_MAX_DURATION, minimum=bounded_interval),
         )
         return min(MAX_UPGRADE_HOLD_POLLS, max(1, int(math.ceil(bounded_duration / bounded_interval)) + 2))
 
@@ -166,18 +166,8 @@ class UpgradeHandlerMixin:
                 release_x, release_y = screen_position_holder[0]
                 self.mouse_controller._left_up_at_screen(release_x, release_y)
 
-    def _click_upgrade_station_for_verification(self, x: int, y: int) -> bool:
-        logger.info("Single-clicking upgrade station before verification at (%s, %s)", x, y)
-        clicked = self.mouse_controller.precise_click(x, y, relative=True)
-        self.tuner.record_click_result(clicked)
-        self._apply_tuning()
-        if clicked:
-            return True
-        logger.warning("Upgrade station verification click failed at (%s, %s)", x, y)
-        return False
-
     def _record_missing_verified_upgrade_station(self) -> None:
-        logger.info("Upgrade station disappeared after verification click; continuing main flow")
+        logger.info("Upgrade station disappeared during verification; continuing main flow")
         self.upgrade_station_pos = None
         self.upgrade_found_in_cycle = False
         self.vision_optimizer.update_upgrade_station_miss()
@@ -198,7 +188,7 @@ class UpgradeHandlerMixin:
 
     @staticmethod
     def _upgrade_hold_timing() -> tuple[float, float]:
-        hold_check_interval = config.bounded_float(
+        hold_check_interval = bounded_float(
             config.UPGRADE_STATION_VERIFY_SEARCH_INTERVAL,
             0.10,
             minimum=0.05,
@@ -222,7 +212,7 @@ class UpgradeHandlerMixin:
         self._click_idle()
         self._sleep(config.STATE_DELAY)
         self.upgrade_station_counter += 1
-        stats_threshold = config.bounded_int(config.UPGRADE_STATION_STATS_THRESHOLD, 2, minimum=1)
+        stats_threshold = bounded_int(config.UPGRADE_STATION_STATS_THRESHOLD, 2, minimum=1)
         if self.upgrade_station_counter < stats_threshold:
             return State.OPEN_BOXES
         self.upgrade_station_counter = 0
@@ -232,7 +222,7 @@ class UpgradeHandlerMixin:
     def handle_search_upgrade_station(self, current_state: State) -> StateResult:
         base_threshold = self._upgrade_station_threshold()
         relaxed_threshold = max(0.0, base_threshold - 0.05)
-        max_attempts = config.bounded_int(
+        max_attempts = bounded_int(
             config.UPGRADE_STATION_SEARCH_MAX_ATTEMPTS,
             1,
             minimum=1,
@@ -277,9 +267,7 @@ class UpgradeHandlerMixin:
             logger.warning("Upgrade station blocked by forbidden zone at (%s, %s)", x, y)
             return State.OPEN_BOXES
 
-        if not self._click_upgrade_station_for_verification(x, y):
-            return State.OPEN_BOXES
-
+        logger.info("Verifying upgrade station before hold at (%s, %s)", x, y)
         if not self._sleep(config.UPGRADE_STATION_VERIFY_SETTLE_DELAY):
             return State.OPEN_BOXES
 

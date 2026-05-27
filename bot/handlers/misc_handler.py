@@ -1,6 +1,6 @@
 import logging
 
-from core import config
+from core import bounded_int, config
 from bot.state_machine import State
 from bot.types import BoxCandidate, StateResult
 
@@ -21,7 +21,7 @@ class MiscHandlerMixin:
         return boxes_found, best_box_confidence
 
     def _next_state_after_box_cycle(self) -> State:
-        failed_cycle_threshold = config.bounded_int(config.CONSECUTIVE_FAILED_CYCLES_THRESHOLD, 3, minimum=1)
+        failed_cycle_threshold = bounded_int(config.CONSECUTIVE_FAILED_CYCLES_THRESHOLD, 3, minimum=1)
         if self.consecutive_failed_cycles >= failed_cycle_threshold:
             self.consecutive_failed_cycles = 0
             self.cycle_counter = 0
@@ -40,7 +40,7 @@ class MiscHandlerMixin:
             return State.FIND_RED_ICONS
 
         self.cycle_counter += 1
-        scroll_threshold = config.bounded_int(config.IDLE_PASS_SCROLL_THRESHOLD, 2, minimum=1)
+        scroll_threshold = bounded_int(config.IDLE_PASS_SCROLL_THRESHOLD, 2, minimum=1)
         logger.info("No work detected in current area (idle pass %s/%s)", self.cycle_counter, scroll_threshold)
         if self.cycle_counter >= scroll_threshold:
             self.cycle_counter = 0

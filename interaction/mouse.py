@@ -16,7 +16,8 @@ RelativeScreenPosition = tuple[int, int, int, int, int, int]
 ForbiddenZone = tuple[str, int, int, int, int | None]
 MIN_DEADLINE_POLL_SLICE = 0.001
 MAX_DEADLINE_POLL_ITERATIONS = 120_000
-MAX_INPUT_RETRY_COUNT = 10
+CURSOR_POSITION_ATTEMPTS = 2
+CURSOR_POSITION_RETRY_DELAY = 0.08
 MAX_DRAG_STEPS = 60
 
 
@@ -172,11 +173,6 @@ class MouseController:
             config.HOVER_DURATION if hover_duration is None else hover_duration,
             0.0,
         )
-        self.input_retry_count = min(
-            MAX_INPUT_RETRY_COUNT,
-            max(1, self._coerce_non_negative_int(config.INPUT_RETRY_COUNT, 1)),
-        )
-        self.input_retry_delay = self._coerce_non_negative_float(config.INPUT_RETRY_DELAY, 0.0)
         self._input_lock = threading.RLock()
         self._forbidden_zones = self._configured_forbidden_zones()
         self._left_button_is_down = False
@@ -190,17 +186,6 @@ class MouseController:
         if not math.isfinite(number):
             return max(0.0, float(default))
         return max(0.0, number)
-
-    @staticmethod
-    def _coerce_non_negative_int(value: Any, default: int = 0) -> int:
-        try:
-            number = int(value)
-        except (TypeError, ValueError):
-            try:
-                number = int(default)
-            except (TypeError, ValueError):
-                number = 0
-        return max(0, number)
 
     def get_cursor_position(self) -> Point:
         current_x, current_y = self._mouse.position
@@ -288,9 +273,10 @@ class MouseController:
             return False, current_x, current_y
         return True, current_x, current_y
 
-    def _sleep_before_input_retry(self, attempt: int) -> None:
-        if attempt < self.input_retry_count:
-            precise_sleep(self.input_retry_delay)
+    @staticmethod
+    def _sleep_before_cursor_retry(attempt: int) -> None:
+        if attempt < CURSOR_POSITION_ATTEMPTS:
+            precise_sleep(CURSOR_POSITION_RETRY_DELAY)
 
     def _set_cursor_pos(self, x: Any, y: Any, verify_position: bool = True) -> bool:
         validated_screen_position = self._validated_screen_input_position(x, y, "cursor move")
@@ -298,7 +284,7 @@ class MouseController:
             return False
         screen_x, screen_y = validated_screen_position
         last_exc = None
-        for attempt in range(1, self.input_retry_count + 1):
+        for attempt in range(1, CURSOR_POSITION_ATTEMPTS + 1):
             try:
                 self._mouse.position = (screen_x, screen_y)
                 if not verify_position:
@@ -315,36 +301,22 @@ class MouseController:
                     screen_x,
                     screen_y,
                     attempt,
-                    self.input_retry_count,
+                    CURSOR_POSITION_ATTEMPTS,
                     exc,
                 )
-            self._sleep_before_input_retry(attempt)
+            self._sleep_before_cursor_retry(attempt)
         logger.error("Cursor positioning failed at (%s, %s): %s", screen_x, screen_y, last_exc)
         return False
 
     def _mouse_button_action(self, action_name: str, action: Callable[[], Any], x: Any, y: Any) -> bool:
         screen_x = int(x)
         screen_y = int(y)
-        last_exc = None
-        for attempt in range(1, self.input_retry_count + 1):
-            try:
-                action()
-                return True
-            except Exception as exc:
-                last_exc = exc
-                logger.warning(
-                    "%s failed at (%s, %s) on attempt %s/%s: %s",
-                    action_name,
-                    screen_x,
-                    screen_y,
-                    attempt,
-                    self.input_retry_count,
-                    exc,
-                )
-                if attempt < self.input_retry_count:
-                    precise_sleep(self.input_retry_delay)
-        logger.error("%s failed at (%s, %s): %s", action_name, screen_x, screen_y, last_exc)
-        return False
+        try:
+            action()
+            return True
+        except Exception as exc:
+            logger.error("%s failed at (%s, %s): %s", action_name, screen_x, screen_y, exc)
+            return False
 
     def _best_effort_left_up(self, x: Any, y: Any) -> bool:
         if not self._left_button_is_down:
@@ -368,7 +340,7 @@ class MouseController:
             ),
         ]
         for index, (x_min, x_max, y_min, y_max) in enumerate(
-            config.numbered_forbidden_zone_bounds(), start=1,
+            config.NUMBERED_FORBIDDEN_ZONE_BOUNDS, start=1,
         ):
             zones.append((f"FORBIDDEN_ZONE_{index}", x_min, x_max, y_min, y_max))
         return zones
@@ -712,48 +684,39 @@ class MouseController:
 
     def click(self, x: Any, y: Any, relative: bool = True, delay: Any = None) -> bool:
         with self._input_lock:
-            last_screen_pos = None
-            for _ in range(self.input_retry_count):
-                screen_pos, cursor_positioned = self._position_cursor_for_click_attempt(x, y, relative)
-                if screen_pos is None:
-                    return False
+            screen_pos, cursor_positioned = self._position_cursor_for_click_attempt(x, y, relative)
+            if screen_pos is None:
+                return False
+            if not cursor_positioned:
+                self._log_failed_click_attempt("Click", screen_pos)
+                return False
 
-                screen_x, screen_y = screen_pos
-                last_screen_pos = (screen_x, screen_y)
-                if not cursor_positioned:
-                    continue
+            screen_x, screen_y = screen_pos
+            if not self._left_click_at_screen(screen_x, screen_y):
+                self._log_failed_click_attempt("Click", screen_pos)
+                return False
 
-                if not self._left_click_at_screen(screen_x, screen_y):
-                    continue
-
-                logger.debug("Clicked at (%s, %s)", screen_x, screen_y)
-                self._wait_after_click(delay)
-                return True
-
-            self._log_failed_click_attempt("Click", last_screen_pos)
-            return False
+            logger.debug("Clicked at (%s, %s)", screen_x, screen_y)
+            self._wait_after_click(delay)
+            return True
 
     def precise_click(self, x: Any, y: Any, relative: bool = True, delay: Any = None) -> bool:
         with self._input_lock:
-            last_screen_pos = None
-            for _ in range(self.input_retry_count):
-                screen_pos, cursor_positioned = self._position_cursor_for_click_attempt(x, y, relative)
-                if screen_pos is None:
-                    return False
+            screen_pos, cursor_positioned = self._position_cursor_for_click_attempt(x, y, relative)
+            if screen_pos is None:
+                return False
+            if not cursor_positioned:
+                self._log_failed_click_attempt("Precise click", screen_pos)
+                return False
 
-                screen_x, screen_y = screen_pos
-                last_screen_pos = (screen_x, screen_y)
-                if not cursor_positioned:
-                    continue
-                if not self._perform_precise_click_at_screen(screen_x, screen_y):
-                    continue
+            screen_x, screen_y = screen_pos
+            if not self._perform_precise_click_at_screen(screen_x, screen_y):
+                self._log_failed_click_attempt("Precise click", screen_pos)
+                return False
 
-                logger.debug("Precise-clicked at (%s, %s)", screen_x, screen_y)
-                self._wait_after_click(delay)
-                return True
-
-            self._log_failed_click_attempt("Precise click", last_screen_pos)
-            return False
+            logger.debug("Precise-clicked at (%s, %s)", screen_x, screen_y)
+            self._wait_after_click(delay)
+            return True
 
     def hold_at(
         self,
@@ -804,7 +767,6 @@ class MouseController:
     ) -> int | None:
         start_time = time.perf_counter()
         end_time = start_time + duration
-        next_click_at = start_time
         click_count = 0
 
         logger.debug(
@@ -815,21 +777,19 @@ class MouseController:
             click_delay,
         )
 
-        for _ in range(_deadline_poll_iterations(end_time)):
+        for click_index in range(self._stats_upgrade_click_limit(duration, click_delay)):
             if interrupt_check and interrupt_check():
                 logger.debug("Stats upgrade clicking interrupted after %s clicks", click_count)
                 return None
 
-            now = time.perf_counter()
-            if now >= end_time:
+            next_click_at = start_time + (click_index * click_delay)
+            if next_click_at >= end_time:
                 return click_count
-
-            if now < next_click_at:
-                if next_click_at >= end_time:
-                    return click_count
+            if time.perf_counter() < next_click_at:
                 if not self._interruptible_sleep_until(next_click_at, interrupt_check):
                     return None
-                continue
+            if time.perf_counter() >= end_time:
+                return click_count
 
             if not self._left_click_at_screen(
                 screen_x,
@@ -841,8 +801,11 @@ class MouseController:
                 return None
 
             click_count += 1
-            next_click_at = time.perf_counter() + click_delay
         return click_count
+
+    @staticmethod
+    def _stats_upgrade_click_limit(duration: float, click_delay: float) -> int:
+        return max(1, int(math.ceil(duration / click_delay)))
 
     def click_stats_upgrade_at(
         self,
@@ -855,9 +818,12 @@ class MouseController:
     ) -> bool:
         with self._input_lock:
             duration = self._coerce_non_negative_float(duration, 0.0)
-            click_delay = max(0.001, self._coerce_non_negative_float(click_delay, 0.0))
+            click_delay = self._coerce_non_negative_float(click_delay, 0.0)
             if duration <= 0:
                 logger.warning("Rejected stats upgrade click with non-positive duration: %.3f", duration)
+                return False
+            if click_delay <= 0:
+                logger.warning("Rejected stats upgrade click with non-positive delay: %.3f", click_delay)
                 return False
 
             screen_pos = self._resolve_screen_position(x, y, relative=relative)

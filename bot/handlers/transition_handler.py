@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime
 
-from core import config
+from core import bounded_int, config
 from bot.state_machine import State
 from bot.types import StateResult
 
@@ -78,7 +78,7 @@ class TransitionHandlerMixin:
     def handle_transition_level(self, current_state: State) -> StateResult:
         self._click_idle()
 
-        max_attempts = config.bounded_int(
+        max_attempts = bounded_int(
             config.TRANSITION_LEVEL_MAX_ATTEMPTS,
             1,
             minimum=1,

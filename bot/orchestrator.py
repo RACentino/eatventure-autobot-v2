@@ -5,7 +5,7 @@ from collections import deque
 from datetime import datetime
 from typing import Any
 
-from core import config
+from core import config, project_path
 from vision.matcher import ImageMatcher
 from interaction.mouse import MouseController, precise_sleep, wait_event
 from bot.handlers.base import StateRegistrationMixin
@@ -83,11 +83,14 @@ class EatventureBot(
     def _initialize_learning_services(self) -> None:
         self.tuner = AdaptiveTuner()
         self._runtime_behavior_snapshot = self._runtime_behavior_from_tuner()
-        self.vision_persistence = VisionPersistence(config.AI_VISION_STATE_FILE, config.AI_VISION_SAVE_INTERVAL)
+        self.vision_persistence = VisionPersistence(
+            project_path(config.AI_VISION_STATE_FILE),
+            config.AI_VISION_SAVE_INTERVAL,
+        )
         self.vision_optimizer = VisionOptimizer(self.vision_persistence)
         self.vision_optimizer.apply_persisted_state(self.vision_persistence.load())
         self.learning_persistence = VisionPersistence(
-            config.AI_LEARNING_STATE_FILE,
+            project_path(config.AI_LEARNING_STATE_FILE),
             config.AI_LEARNING_SAVE_INTERVAL,
         )
         self.historical_learner = HistoricalLearner(self, self.learning_persistence)
@@ -126,7 +129,7 @@ class EatventureBot(
 
     @staticmethod
     def _configured_forbidden_zones() -> list[tuple[int, int, int, int]]:
-        return config.numbered_forbidden_zone_bounds()
+        return list(config.NUMBERED_FORBIDDEN_ZONE_BOUNDS)
 
     def _sleep(self, duration: Any) -> bool:
         return wait_event(self._stop_requested, duration)

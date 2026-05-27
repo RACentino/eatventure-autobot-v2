@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from core import config
+from core import bounded_float, bounded_int, config
 
 logger = logging.getLogger(__name__)
 LEARNING_LOOP_ITERATION_LIMIT = 2_147_483_647
@@ -29,7 +29,7 @@ class AdaptiveTunerState:
 class AdaptiveTuner:
     def __init__(self) -> None:
         self.enabled = bool(config.ADAPTIVE_TUNER_ENABLED)
-        self.alpha = config.bounded_float(config.ADAPTIVE_TUNER_ALPHA, 0.18, minimum=0.0, maximum=1.0)
+        self.alpha = bounded_float(config.ADAPTIVE_TUNER_ALPHA, 0.18, minimum=0.0, maximum=1.0)
         self._state = self._default_state()
 
     @staticmethod
@@ -37,9 +37,9 @@ class AdaptiveTuner:
         return AdaptiveTunerState(
             click_success_rate=1.0,
             search_success_rate=1.0,
-            click_delay=config.bounded_float(config.CLICK_DELAY, 0.08, minimum=0.0),
-            move_delay=config.bounded_float(config.MOUSE_MOVE_DELAY, 0.025, minimum=0.0),
-            search_interval=config.bounded_float(config.UPGRADE_SEARCH_INTERVAL, 0.08, minimum=0.0),
+            click_delay=bounded_float(config.CLICK_DELAY, 0.08, minimum=0.0),
+            move_delay=bounded_float(config.MOUSE_MOVE_DELAY, 0.025, minimum=0.0),
+            search_interval=bounded_float(config.UPGRADE_SEARCH_INTERVAL, 0.08, minimum=0.0),
         )
 
     @property
@@ -126,19 +126,19 @@ class AdaptiveTuner:
         state = self._state
         self._state = replace(
             state,
-            click_delay=config.bounded_float(
+            click_delay=bounded_float(
                 behavior.get("click_delay"),
                 state.click_delay,
                 minimum=config.ADAPTIVE_TUNER_MIN_CLICK_DELAY,
                 maximum=config.ADAPTIVE_TUNER_MAX_CLICK_DELAY,
             ),
-            move_delay=config.bounded_float(
+            move_delay=bounded_float(
                 behavior.get("move_delay"),
                 state.move_delay,
                 minimum=config.ADAPTIVE_TUNER_MIN_MOVE_DELAY,
                 maximum=config.ADAPTIVE_TUNER_MAX_MOVE_DELAY,
             ),
-            search_interval=config.bounded_float(
+            search_interval=bounded_float(
                 behavior.get("search_interval"),
                 state.search_interval,
                 minimum=config.ADAPTIVE_TUNER_MIN_SEARCH_INTERVAL,
@@ -221,30 +221,30 @@ class VisionPersistence:
 class VisionOptimizer:
     def __init__(self, persistence: VisionPersistence | None = None) -> None:
         self.enabled = bool(config.AI_VISION_ENABLED)
-        self.alpha = config.bounded_float(config.AI_VISION_ALPHA, 0.18, minimum=0.0, maximum=1.0)
-        self.alpha_max = config.bounded_float(config.AI_VISION_ALPHA_MAX, 0.35, minimum=self.alpha, maximum=1.0)
-        self.confidence_boost = config.bounded_float(config.AI_VISION_CONFIDENCE_BOOST, 0.10, minimum=0.0)
-        self.red_icon_threshold = config.bounded_float(config.RED_ICON_THRESHOLD, 0.92, minimum=0.0, maximum=1.0)
-        self.new_level_threshold = config.bounded_float(config.NEW_LEVEL_THRESHOLD, 0.965, minimum=0.0, maximum=1.0)
-        self.new_level_red_icon_threshold = config.bounded_float(
+        self.alpha = bounded_float(config.AI_VISION_ALPHA, 0.18, minimum=0.0, maximum=1.0)
+        self.alpha_max = bounded_float(config.AI_VISION_ALPHA_MAX, 0.35, minimum=self.alpha, maximum=1.0)
+        self.confidence_boost = bounded_float(config.AI_VISION_CONFIDENCE_BOOST, 0.10, minimum=0.0)
+        self.red_icon_threshold = bounded_float(config.RED_ICON_THRESHOLD, 0.92, minimum=0.0, maximum=1.0)
+        self.new_level_threshold = bounded_float(config.NEW_LEVEL_THRESHOLD, 0.965, minimum=0.0, maximum=1.0)
+        self.new_level_red_icon_threshold = bounded_float(
             config.NEW_LEVEL_RED_ICON_THRESHOLD,
             0.942,
             minimum=0.0,
             maximum=1.0,
         )
-        self.upgrade_station_threshold = config.bounded_float(
+        self.upgrade_station_threshold = bounded_float(
             config.UPGRADE_STATION_THRESHOLD,
             0.91,
             minimum=0.0,
             maximum=1.0,
         )
-        self.stats_upgrade_threshold = config.bounded_float(
+        self.stats_upgrade_threshold = bounded_float(
             config.STATS_RED_ICON_THRESHOLD,
             0.943,
             minimum=0.0,
             maximum=1.0,
         )
-        self.box_threshold = config.bounded_float(config.BOX_THRESHOLD, 0.93, minimum=0.0, maximum=1.0)
+        self.box_threshold = bounded_float(config.BOX_THRESHOLD, 0.93, minimum=0.0, maximum=1.0)
         self.persistence = persistence
         self._miss_counts = {
             "red_icon": 0,
@@ -458,27 +458,27 @@ class VisionOptimizer:
             self._apply_persisted_threshold(state, key, minimum, maximum)
 
     def reset(self) -> None:
-        self.red_icon_threshold = config.bounded_float(config.RED_ICON_THRESHOLD, 0.92, minimum=0.0, maximum=1.0)
-        self.new_level_threshold = config.bounded_float(config.NEW_LEVEL_THRESHOLD, 0.965, minimum=0.0, maximum=1.0)
-        self.new_level_red_icon_threshold = config.bounded_float(
+        self.red_icon_threshold = bounded_float(config.RED_ICON_THRESHOLD, 0.92, minimum=0.0, maximum=1.0)
+        self.new_level_threshold = bounded_float(config.NEW_LEVEL_THRESHOLD, 0.965, minimum=0.0, maximum=1.0)
+        self.new_level_red_icon_threshold = bounded_float(
             config.NEW_LEVEL_RED_ICON_THRESHOLD,
             0.942,
             minimum=0.0,
             maximum=1.0,
         )
-        self.upgrade_station_threshold = config.bounded_float(
+        self.upgrade_station_threshold = bounded_float(
             config.UPGRADE_STATION_THRESHOLD,
             0.91,
             minimum=0.0,
             maximum=1.0,
         )
-        self.stats_upgrade_threshold = config.bounded_float(
+        self.stats_upgrade_threshold = bounded_float(
             config.STATS_RED_ICON_THRESHOLD,
             0.943,
             minimum=0.0,
             maximum=1.0,
         )
-        self.box_threshold = config.bounded_float(config.BOX_THRESHOLD, 0.93, minimum=0.0, maximum=1.0)
+        self.box_threshold = bounded_float(config.BOX_THRESHOLD, 0.93, minimum=0.0, maximum=1.0)
         for key in self._miss_counts:
             self._miss_counts[key] = 0
         self._persist(force=True)
@@ -514,18 +514,18 @@ class HistoricalLearner:
             MIN_LEARNING_JOIN_TIMEOUT,
             configured_join_timeout if configured_join_timeout is not None else MIN_LEARNING_JOIN_TIMEOUT,
         )
-        self.records_limit = config.bounded_int(config.AI_LEARNING_RECORDS_LIMIT, 256, minimum=1, maximum=10_000)
-        self.pair_window = config.bounded_int(config.AI_LEARNING_PAIR_WINDOW, 5, minimum=2, maximum=self.records_limit)
-        self.batch_window = config.bounded_int(config.AI_LEARNING_BATCH_WINDOW, 12, minimum=2, maximum=self.records_limit)
-        self.ema_alpha = config.bounded_float(config.AI_LEARNING_EMA_ALPHA, 0.14, minimum=0.01, maximum=0.8)
-        self.top_k = config.bounded_int(config.AI_LEARNING_PROFILE_BLEND_TOP_K, 3, minimum=1, maximum=self.records_limit)
-        self.min_improvement_ratio = config.bounded_float(
+        self.records_limit = bounded_int(config.AI_LEARNING_RECORDS_LIMIT, 256, minimum=1, maximum=10_000)
+        self.pair_window = bounded_int(config.AI_LEARNING_PAIR_WINDOW, 5, minimum=2, maximum=self.records_limit)
+        self.batch_window = bounded_int(config.AI_LEARNING_BATCH_WINDOW, 12, minimum=2, maximum=self.records_limit)
+        self.ema_alpha = bounded_float(config.AI_LEARNING_EMA_ALPHA, 0.14, minimum=0.01, maximum=0.8)
+        self.top_k = bounded_int(config.AI_LEARNING_PROFILE_BLEND_TOP_K, 3, minimum=1, maximum=self.records_limit)
+        self.min_improvement_ratio = bounded_float(
             config.AI_LEARNING_MIN_IMPROVEMENT_RATIO,
             0.05,
             minimum=0.0,
             maximum=1.0,
         )
-        self.apply_cooldown = config.bounded_float(config.AI_LEARNING_APPLY_COOLDOWN, 60.0, minimum=0.0)
+        self.apply_cooldown = bounded_float(config.AI_LEARNING_APPLY_COOLDOWN, 60.0, minimum=0.0)
         self._last_apply_time = 0.0
         self._lock = threading.RLock()
         self._stop = threading.Event()

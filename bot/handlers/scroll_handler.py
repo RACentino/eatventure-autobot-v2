@@ -1,6 +1,6 @@
 import logging
 
-from core import config
+from core import bounded_float, bounded_int, config
 from bot.state_machine import State
 from bot.types import StateResult
 
@@ -17,8 +17,8 @@ class ScrollHandlerMixin:
         self._new_level_red_icon_verified = False
 
     def _advance_oscillation_progress(self) -> None:
-        increment_step = config.bounded_int(config.SCROLL_INCREMENT_STEP, 1, minimum=1)
-        max_scroll_cycles = config.bounded_int(config.MAX_SCROLL_CYCLES, 1, minimum=1)
+        increment_step = bounded_int(config.SCROLL_INCREMENT_STEP, 1, minimum=1)
+        max_scroll_cycles = bounded_int(config.MAX_SCROLL_CYCLES, 1, minimum=1)
         target_steps = max(1, int(self._oscillation_cycle_index) * increment_step)
         self._oscillation_leg_progress += 1
         if self._oscillation_leg_progress < target_steps:
@@ -33,8 +33,8 @@ class ScrollHandlerMixin:
             self._oscillation_cycle_index = 1
 
     def _perform_oscillating_scroll_step(self) -> bool:
-        pixel_step = config.bounded_float(config.SCROLL_PIXEL_STEP, 90.0, minimum=1.0)
-        distance_ratio = config.bounded_float(config.SCROLL_DISTANCE_RATIO, 1.0, minimum=0.1)
+        pixel_step = bounded_float(config.SCROLL_PIXEL_STEP, 90.0, minimum=1.0)
+        distance_ratio = bounded_float(config.SCROLL_DISTANCE_RATIO, 1.0, minimum=0.1)
         distance = int(round(pixel_step * distance_ratio))
         start_x, start_y = config.SCROLL_START_POS
         direction = 1 if self._oscillation_leg_direction > 0 else -1
@@ -61,8 +61,8 @@ class ScrollHandlerMixin:
         return bool(moved)
 
     def _perform_single_down_scroll(self) -> bool:
-        pixel_step = config.bounded_float(config.SCROLL_PIXEL_STEP, 90.0, minimum=1.0)
-        distance_ratio = config.bounded_float(config.SCROLL_DISTANCE_RATIO, 1.0, minimum=0.1)
+        pixel_step = bounded_float(config.SCROLL_PIXEL_STEP, 90.0, minimum=1.0)
+        distance_ratio = bounded_float(config.SCROLL_DISTANCE_RATIO, 1.0, minimum=0.1)
         distance = int(round(pixel_step * distance_ratio))
         start_x, start_y = config.SCROLL_START_POS
         target_y = start_y - distance

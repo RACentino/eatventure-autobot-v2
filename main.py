@@ -4,10 +4,9 @@ import sys
 import threading
 from enum import Enum, auto
 from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
-from pathlib import Path
 from typing import Any
 
-from core import config
+from core import config, project_path
 from core.platform import BackendDependencyError, pynput_keyboard, require_keyboard_backend
 from bot import EatventureBot
 from interaction.mouse import precise_sleep
@@ -162,7 +161,7 @@ def _create_keyboard_listener() -> Any:
 
 def setup_logging() -> None:
     global log_listener
-    logs_dir = Path(config.LOGS_DIR)
+    logs_dir = project_path(config.LOGS_DIR)
     logs_dir.mkdir(parents=True, exist_ok=True)
 
     log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -207,7 +206,7 @@ def _print_startup_banner() -> None:
     print("=" * 60)
     print(f"Window Title: {config.WINDOW_TITLE}")
     print(f"Match Threshold: {config.MATCH_THRESHOLD * 100}%")
-    print(f"Assets Directory: {config.ASSETS_DIR}")
+    print(f"Assets Directory: {project_path(config.ASSETS_DIR)}")
     print("=" * 60)
 
 
