@@ -172,7 +172,7 @@ UPGRADE_STATION_VERIFY_RADIUS = 36
 CLICK_HOLD_MAX_DURATION = 9.0
 
 # Duration for stats upgrade click bursts.
-STATS_UPGRADE_CLICK_DURATION = 1.50
+STATS_UPGRADE_CLICK_DURATION = 3
 
 # Delay between stats upgrade click actions.
 STATS_UPGRADE_CLICK_DELAY = 0.016
