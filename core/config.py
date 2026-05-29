@@ -151,31 +151,31 @@ HOVER_ENABLED = True
 HOVER_DURATION = 0.075
 
 # Delay between upgrade station search attempts.
-UPGRADE_SEARCH_INTERVAL = 0.0
+UPGRADE_SEARCH_INTERVAL = 0.025
 
 # Delay between state-machine actions.
 STATE_DELAY = 0.0
 
 # Settling delay before verifying an upgrade station hold target.
-UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.0
+UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.200
 
 # Maximum attempts for upgrade station verification.
 UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 1
 
 # Delay between upgrade station verification attempts.
-UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.0
+UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.025
 
 # Maximum pixel radius for accepting a verified upgrade station match.
 UPGRADE_STATION_VERIFY_RADIUS = 36
 
 # Maximum duration for holding an upgrade station click.
-CLICK_HOLD_MAX_DURATION = 4.0
+CLICK_HOLD_MAX_DURATION = 8.25
 
 # Duration for stats upgrade click bursts.
 STATS_UPGRADE_CLICK_DURATION = 1.2
 
 # Delay between stats upgrade click actions.
-STATS_UPGRADE_CLICK_DELAY = 0.050
+STATS_UPGRADE_CLICK_DELAY = 0.016
 
 # Settling delay before scan actions in transition handlers.
 IDLE_SETTLE_DELAY = 0.0
@@ -307,7 +307,7 @@ UPGRADE_RED_ICON_Y_MAX = 680
 # Scrolling
 
 # Pixel distance for each scroll drag.
-SCROLL_PIXEL_STEP = 90
+SCROLL_PIXEL_STEP = 120
 
 # Multiplier applied to scroll pixel distance.
 SCROLL_DISTANCE_RATIO = 1.0
@@ -319,13 +319,13 @@ MAX_SCROLL_CYCLES = 10
 SCROLL_INCREMENT_STEP = 1
 
 # Delay between scroll intervals.
-SCROLL_INTERVAL_PAUSE = 0.0
+SCROLL_INTERVAL_PAUSE = 0.250
 
 # Settling delay after a scroll gesture.
-POST_SCROLL_SETTLE = 0.0
+POST_SCROLL_SETTLE = 0.250
 
 # Duration of each scroll drag gesture.
-SCROLL_DURATION = 0.4
+SCROLL_DURATION = 0.150
 
 
 # Handler Limits
