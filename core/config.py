@@ -118,7 +118,7 @@ UNLOCK_THRESHOLD = 0.905
 NEW_LEVEL_THRESHOLD = 0.965
 
 # Minimum red icon templates that must agree outside fast mode.
-RED_ICON_MIN_MATCHES = 2
+RED_ICON_MIN_MATCHES = 1
 
 # Enables single-template red icon_scan mode for faster passes.
 RED_ICON_FAST_MODE_ENABLED = False
@@ -172,10 +172,10 @@ UPGRADE_STATION_VERIFY_RADIUS = 36
 CLICK_HOLD_MAX_DURATION = 9.0
 
 # Duration for stats upgrade click bursts.
-STATS_UPGRADE_CLICK_DURATION = 1.80
+STATS_UPGRADE_CLICK_DURATION = 3
 
 # Delay between stats upgrade click actions.
-STATS_UPGRADE_CLICK_DELAY = 0.18
+STATS_UPGRADE_CLICK_DELAY = 0.16
 
 # Settling delay before scan actions in transition handlers.
 IDLE_SETTLE_DELAY = 0.18
