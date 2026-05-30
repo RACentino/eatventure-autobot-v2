@@ -118,7 +118,7 @@ UNLOCK_THRESHOLD = 0.905
 NEW_LEVEL_THRESHOLD = 0.965
 
 # Minimum red icon templates that must agree outside fast mode.
-RED_ICON_MIN_MATCHES = 1
+RED_ICON_MIN_MATCHES = 2
 
 # Enables single-template red icon_scan mode for faster passes.
 RED_ICON_FAST_MODE_ENABLED = False
@@ -325,7 +325,7 @@ SCROLL_INTERVAL_PAUSE = 0.12
 POST_SCROLL_SETTLE = 0.35
 
 # Duration of each scroll drag gesture.
-SCROLL_DURATION = 0.30
+SCROLL_DURATION = 0.150
 
 
 # Handler Limits
