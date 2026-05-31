@@ -17,7 +17,7 @@ RED_ICON_ASSET_MIN_HIGHLIGHT_SUPPORT_RATIO = 0.55
 RED_ICON_ASSET_HIGHLIGHT_SATURATION_MAX = 95
 RED_ICON_ASSET_HIGHLIGHT_VALUE_MIN = 165
 RED_ICON_ASSET_MAX_RED_COMPONENT_AREA = 6_000
-RED_ICON_ASSET_MAX_RED_COMPONENT_SPAN = 96
+RED_ICON_ASSET_MAX_RED_COMPONENT_SPAN = config.RED_ICON_ASSET_MAX_RED_COMPONENT_SPAN
 RED_ICON_ASSET_COMPONENT_SEARCH_RADIUS = 72
 
 
@@ -315,6 +315,30 @@ class VisionScannerMixin:
         return region
 
     @staticmethod
+    def _candidate_template_pair(
+        template: Any,
+        mask: Any,
+        template_width: int,
+        template_height: int,
+    ) -> TemplatePair:
+        if template.shape[1] == template_width and template.shape[0] == template_height:
+            return template, mask
+        scaled_template = cv2.resize(
+            template,
+            (int(template_width), int(template_height)),
+            interpolation=cv2.INTER_AREA,
+        )
+        if mask is None:
+            return scaled_template, None
+        scaled_mask = cv2.resize(
+            mask,
+            (int(template_width), int(template_height)),
+            interpolation=cv2.INTER_NEAREST,
+        )
+        scaled_mask[scaled_mask > 0] = 255
+        return scaled_template, scaled_mask
+
+    @staticmethod
     def _active_template_mask(template: Any, mask: Any) -> np.ndarray:
         template_height, template_width = template.shape[:2]
         if mask is None:
@@ -322,6 +346,26 @@ class VisionScannerMixin:
         if mask.shape[:2] != template.shape[:2]:
             return np.ones((template_height, template_width), dtype=bool)
         return mask > 0
+
+    def _red_icon_candidate_passes_hsv_gate(
+        self,
+        screenshot: Any,
+        template: Any,
+        mask: Any,
+        center_x: int,
+        center_y: int,
+    ) -> bool:
+        template_height, template_width = template.shape[:2]
+        location = (int(center_x) - template_width // 2, int(center_y) - template_height // 2)
+        return self._candidate_passes_template_gates(
+            screenshot,
+            template,
+            mask,
+            location,
+            config.RED_ICON_HSV_COLOR_GATE_ENABLED,
+            config.RED_ICON_HSV_RANGES,
+            config.RED_ICON_HSV_MIN_MATCH_RATIO,
+        )
 
     def _red_icon_red_mask(self, image: Any, active_mask: np.ndarray) -> np.ndarray | None:
         color_mask = self.image_matcher.red_hsv_mask(image)
@@ -477,6 +521,8 @@ class VisionScannerMixin:
         center_x: int,
         center_y: int,
     ) -> bool:
+        if not self._red_icon_candidate_passes_hsv_gate(screenshot, template, mask, center_x, center_y):
+            return False
         region = self._candidate_region(screenshot, template, center_x, center_y)
         if region is None:
             return False
@@ -503,14 +549,20 @@ class VisionScannerMixin:
         template: Any,
         mask: Any,
         template_name: str,
-        matches: list[tuple[float, int, int]],
+        matches: list[MatchCandidate],
     ) -> list[tuple[float, int, int]]:
         verified_matches = []
-        for confidence, center_x, center_y in matches:
-            if self._red_icon_candidate_matches_asset_texture(
-                screenshot,
+        for confidence, center_x, center_y, template_width, template_height in matches:
+            candidate_template, candidate_mask = self._candidate_template_pair(
                 template,
                 mask,
+                template_width,
+                template_height,
+            )
+            if self._red_icon_candidate_matches_asset_texture(
+                screenshot,
+                candidate_template,
+                candidate_mask,
                 center_x,
                 center_y,
             ):
@@ -540,16 +592,21 @@ class VisionScannerMixin:
             if template_pair is None:
                 continue
             template, mask = template_pair
-            matches = self.image_matcher.find_all_templates(
+            matches = self.image_matcher.find_template_candidates(
                 screenshot,
                 template,
                 mask=mask,
                 threshold=threshold,
                 min_distance=min_distance,
+                scales=config.RED_ICON_TEMPLATE_SCALES,
                 template_name=template_name,
-                use_supervision_nms=self._supervision_nms_enabled("red_icon"),
-                supervision_iou_threshold=config.SUPERVISION_RED_ICON_NMS_IOU_THRESHOLD,
-                supervision_class_agnostic=config.SUPERVISION_CLASS_AGNOSTIC_NMS,
+            )
+            matches = self.image_matcher._finalize_template_matches(
+                matches,
+                min_distance,
+                self._supervision_nms_enabled("red_icon"),
+                config.SUPERVISION_RED_ICON_NMS_IOU_THRESHOLD,
+                config.SUPERVISION_CLASS_AGNOSTIC_NMS,
             )
             verified_matches = self._verified_red_icon_matches(
                 screenshot,
@@ -579,17 +636,22 @@ class VisionScannerMixin:
             if template_pair is None:
                 continue
             template, mask = template_pair
-            matches = self.image_matcher.find_all_hsv_mask_templates(
+            matches = self.image_matcher.find_hsv_mask_template_candidates(
                 screenshot,
                 template,
                 mask=mask,
                 threshold=threshold,
                 min_distance=min_distance,
+                scales=config.RED_ICON_TEMPLATE_SCALES,
                 template_name=template_name,
                 screenshot_color_mask=screenshot_color_mask,
-                use_supervision_nms=self._supervision_nms_enabled("red_icon"),
-                supervision_iou_threshold=config.SUPERVISION_RED_ICON_NMS_IOU_THRESHOLD,
-                supervision_class_agnostic=config.SUPERVISION_CLASS_AGNOSTIC_NMS,
+            )
+            matches = self.image_matcher._finalize_template_matches(
+                matches,
+                min_distance,
+                self._supervision_nms_enabled("red_icon"),
+                config.SUPERVISION_RED_ICON_NMS_IOU_THRESHOLD,
+                config.SUPERVISION_CLASS_AGNOSTIC_NMS,
             )
             verified_matches = self._verified_red_icon_matches(
                 screenshot,
@@ -613,7 +675,7 @@ class VisionScannerMixin:
             return detections
 
         template_match_names, template_match_min_distance = self._red_icon_template_match_plan(min_distance)
-        hsv_match_names = self._red_icon_template_names()
+        hsv_match_names = template_match_names if bool(config.RED_ICON_FAST_MODE_ENABLED) else self._red_icon_template_names()
         self._collect_template_red_icon_detections(
             detections,
             screenshot,
@@ -771,20 +833,10 @@ class VisionScannerMixin:
         template: Any,
         mask: Any,
         location: tuple[int, int],
-        color_check_enabled: bool,
-        color_threshold: float,
         hsv_gate_enabled: bool,
         hsv_ranges: Any,
         hsv_min_match_ratio: float,
     ) -> bool:
-        if color_check_enabled and not self.image_matcher._check_color_similarity(
-            screenshot,
-            template,
-            location,
-            mask,
-            color_threshold=color_threshold,
-        ):
-            return False
         if not hsv_gate_enabled:
             return True
         return self.image_matcher._check_hsv_gate(
@@ -833,8 +885,6 @@ class VisionScannerMixin:
             template,
             mask,
             location,
-            config.UPGRADE_STATION_COLOR_CHECK,
-            0.7,
             config.UPGRADE_STATION_HSV_COLOR_GATE_ENABLED,
             config.UPGRADE_STATION_HSV_RANGES,
             config.UPGRADE_STATION_HSV_MIN_MATCH_RATIO,
@@ -988,8 +1038,6 @@ class VisionScannerMixin:
             template,
             mask,
             location,
-            config.BOX_COLOR_CHECK,
-            config.BOX_COLOR_THRESHOLD,
             config.BOX_HSV_COLOR_GATE_ENABLED,
             config.BOX_HSV_RANGES,
             config.BOX_HSV_MIN_MATCH_RATIO,

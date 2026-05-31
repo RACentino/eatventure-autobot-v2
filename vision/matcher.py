@@ -335,27 +335,9 @@ class ImageMatcher:
         center_x: int,
         center_y: int,
         confidence: float,
-        check_color: bool,
-        color_threshold: float,
         hsv_ranges: Any,
         hsv_match_threshold: float,
     ) -> bool:
-        if check_color and not self._check_color_similarity(
-            screenshot,
-            template,
-            location,
-            mask,
-            color_threshold=color_threshold,
-        ):
-            logger.debug(
-                "[%s] Color check failed at (%s, %s), confidence: %.2f%%",
-                template_name,
-                center_x,
-                center_y,
-                confidence * 100,
-            )
-            return False
-
         if not hsv_ranges:
             return True
 
@@ -385,8 +367,6 @@ class ImageMatcher:
         mask: np.ndarray | None = None,
         threshold: float | None = None,
         template_name: str = "Unknown",
-        check_color: bool = False,
-        color_threshold: float = 0.7,
         hsv_ranges: Any = None,
         hsv_match_threshold: float = 0.9,
     ) -> MatchResult:
@@ -424,69 +404,11 @@ class ImageMatcher:
             center_x,
             center_y,
             confidence,
-            check_color,
-            color_threshold,
             hsv_ranges,
             hsv_match_threshold,
         ):
             return self._failed_match(confidence)
         return True, confidence, center_x, center_y
-
-    def _check_color_similarity(
-        self,
-        screenshot: np.ndarray,
-        template: np.ndarray,
-        location: Point,
-        mask: np.ndarray | None = None,
-        color_threshold: float = 0.7,
-    ) -> bool:
-        x, y = location
-        template_height, template_width = template.shape[:2]
-        
-        region_of_interest = screenshot[y : y + template_height, x : x + template_width]
-        
-        if region_of_interest.shape[:2] != template.shape[:2]:
-            return False
-
-        if mask is not None and not np.any(mask):
-            return False
-
-        try:
-            hist_template_b = cv2.calcHist([template], [0], mask, [32], [0, 256])
-            hist_template_g = cv2.calcHist([template], [1], mask, [32], [0, 256])
-            hist_template_r = cv2.calcHist([template], [2], mask, [32], [0, 256])
-
-            hist_region_b = cv2.calcHist([region_of_interest], [0], mask, [32], [0, 256])
-            hist_region_g = cv2.calcHist([region_of_interest], [1], mask, [32], [0, 256])
-            hist_region_r = cv2.calcHist([region_of_interest], [2], mask, [32], [0, 256])
-
-            histograms = (
-                hist_template_b,
-                hist_template_g,
-                hist_template_r,
-                hist_region_b,
-                hist_region_g,
-                hist_region_r,
-            )
-            if any(not np.any(hist) for hist in histograms):
-                return False
-
-            for hist in histograms:
-                cv2.normalize(hist, hist, 0, 1, cv2.NORM_MINMAX)
-
-            correlation_blue = cv2.compareHist(hist_template_b, hist_region_b, cv2.HISTCMP_CORREL)
-            correlation_green = cv2.compareHist(hist_template_g, hist_region_g, cv2.HISTCMP_CORREL)
-            correlation_red = cv2.compareHist(hist_template_r, hist_region_r, cv2.HISTCMP_CORREL)
-        except cv2.error as exc:
-            logger.debug("Color similarity check failed: %s", exc)
-            return False
-        
-        correlations = (correlation_blue, correlation_green, correlation_red)
-        if not all(np.isfinite(value) for value in correlations):
-            return False
-
-        average_correlation = sum(correlations) / 3
-        return average_correlation >= self._normalize_threshold(color_threshold, 0.7)
 
     @staticmethod
     def _normalize_hsv_component(values: np.ndarray) -> np.ndarray | None:

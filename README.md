@@ -31,7 +31,7 @@ The vision system is built around masked OpenCV template matching with a few pra
 
 * **Masked Template Matching**: Uses transparent PNG masks so icon shape matching stays stable.
 * **Multi-Template Consensus**: Red icons are only trusted after enough template variants agree on roughly the same location.
-* **Optional Color Verification**: Upgrade-station matching can apply an additional color-histogram check when needed.
+* **HSV Gate Validation**: Red icons, upgrade stations, and boxes use HSV range gates to reject color-inconsistent candidates.
 * **Adaptive Thresholds**: Detection thresholds can tighten or relax over time based on observed confidence.
 
 ### Adaptive and Historical Learning

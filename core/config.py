@@ -129,11 +129,11 @@ RED_ICON_TEMPLATE_SCALES = (1.0, 2.0, 2.5)
 RED_ICON_HSV_COLOR_GATE_ENABLED = True
 
 RED_ICON_HSV_RANGES = (
-    ((0, 80, 80), (10, 255, 255)),
-    ((160, 80, 80), (179, 255, 255)),
+    ((0, 110, 190), (8, 255, 255)),
+    ((176, 110, 190), (179, 255, 255)),
 )
 
-RED_ICON_HSV_MIN_MATCH_RATIO = 0.35
+RED_ICON_HSV_MIN_MATCH_RATIO = 0.66
 
 # Maximum red component span accepted during red icon texture validation.
 RED_ICON_ASSET_MAX_RED_COMPONENT_SPAN = 112
