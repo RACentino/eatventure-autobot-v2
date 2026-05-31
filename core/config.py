@@ -112,13 +112,13 @@ UNLOCK_THRESHOLD = 0.905
 NEW_LEVEL_THRESHOLD = 0.965
 
 # Minimum red icon templates that must agree outside fast mode.
-RED_ICON_MIN_MATCHES = 6
+RED_ICON_MIN_MATCHES = 3
 
 # Enables single-template red icon_scan mode for faster passes.
 RED_ICON_FAST_MODE_ENABLED = True
 
 # Red icon template names used when fast mode is enabled.
-RED_ICON_FAST_TEMPLATE_NAMES = ("RedIcon6",)
+RED_ICON_FAST_TEMPLATE_NAMES = ("RedIcon6","RedIcon15", "RedIcon12",)
 
 # Minimum pixel distance between fast-mode red icon matches.
 RED_ICON_FAST_MIN_DISTANCE = 64
