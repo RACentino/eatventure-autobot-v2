@@ -73,7 +73,7 @@ SCRCPY_UPGRADE_MISS_RECOVERY_DELAY = 0.200
 MATCH_THRESHOLD = 0.98
 
 # Template confidence threshold for red icon scans.
-RED_ICON_THRESHOLD = 0.920
+RED_ICON_THRESHOLD = 0.910
 
 # Template confidence threshold for new-level red icon validation.
 NEW_LEVEL_RED_ICON_THRESHOLD = 0.942
@@ -313,7 +313,7 @@ UPGRADE_RED_ICON_Y_MAX = 680
 # Scrolling
 
 # Pixel distance for each scroll drag.
-SCROLL_PIXEL_STEP = 120
+SCROLL_PIXEL_STEP = 90
 
 # Multiplier applied to scroll pixel distance.
 SCROLL_DISTANCE_RATIO = 1.0
