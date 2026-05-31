@@ -73,7 +73,7 @@ SCRCPY_UPGRADE_MISS_RECOVERY_DELAY = 0.200
 MATCH_THRESHOLD = 0.98
 
 # Template confidence threshold for red icon scans.
-RED_ICON_THRESHOLD = 0.940
+RED_ICON_THRESHOLD = 0.920
 
 # Template confidence threshold for new-level red icon validation.
 NEW_LEVEL_RED_ICON_THRESHOLD = 0.942
@@ -112,10 +112,10 @@ UNLOCK_THRESHOLD = 0.905
 NEW_LEVEL_THRESHOLD = 0.965
 
 # Minimum red icon templates that must agree outside fast mode.
-RED_ICON_MIN_MATCHES = 1
+RED_ICON_MIN_MATCHES = 6
 
 # Enables single-template red icon_scan mode for faster passes.
-RED_ICON_FAST_MODE_ENABLED = False
+RED_ICON_FAST_MODE_ENABLED = True
 
 # Red icon template names used when fast mode is enabled.
 RED_ICON_FAST_TEMPLATE_NAMES = ("RedIcon6",)
@@ -142,16 +142,16 @@ RED_ICON_ASSET_MAX_RED_COMPONENT_SPAN = 112
 # Mouse and Action Timing
 
 # Delay after normal click actions.
-CLICK_DELAY = 0.095
+CLICK_DELAY = 0.110
 
 # Delay after cursor movement.
-MOUSE_MOVE_DELAY = 0.040
+MOUSE_MOVE_DELAY = 0.020
 
 # Duration to hold the mouse button down during click actions.
-MOUSE_DOWN_DURATION = 0.025
+MOUSE_DOWN_DURATION = 0.055
 
 # Delay after releasing the mouse button.
-MOUSE_UP_DURATION = 0.090
+MOUSE_UP_DURATION = 0.045
 
 # Enables hover movement before click actions.
 HOVER_ENABLED = True
@@ -160,19 +160,19 @@ HOVER_ENABLED = True
 HOVER_DURATION = 0.030
 
 # Delay between upgrade station search attempts.
-UPGRADE_SEARCH_INTERVAL = 0.100
+UPGRADE_SEARCH_INTERVAL = 0.75
 
 # Delay between state-machine actions.
-STATE_DELAY = 0.125
+STATE_DELAY = 0.75
 
 # Settling delay before verifying an upgrade station hold target.
-UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.240
+UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.150
 
 # Maximum attempts for upgrade station verification.
-UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 1
+UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 2
 
 # Delay between upgrade station verification attempts.
-UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.125
+UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.75
 
 # Maximum pixel radius for accepting a verified upgrade station match.
 UPGRADE_STATION_VERIFY_RADIUS = 36
@@ -184,7 +184,7 @@ CLICK_HOLD_MAX_DURATION = 9.0
 STATS_UPGRADE_CLICK_DURATION = 1.50
 
 # Delay between stats upgrade click actions.
-STATS_UPGRADE_CLICK_DELAY = 0.030
+STATS_UPGRADE_CLICK_DELAY = 0.016
 
 # Settling delay before scan actions in transition handlers.
 IDLE_SETTLE_DELAY = 0.160
