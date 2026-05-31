@@ -22,7 +22,7 @@ WINDOW_HEIGHT = 780
 DEBUG = False
 
 # Shows the forbidden click area overlay while the bot is running.
-SHOW_FORBIDDEN_AREA = True
+SHOW_FORBIDDEN_AREA = False
 
 
 # Supervision NMS
