@@ -22,7 +22,7 @@ WINDOW_HEIGHT = 780
 DEBUG = False
 
 # Shows the forbidden click area overlay while the bot is running.
-SHOW_FORBIDDEN_AREA = False
+SHOW_FORBIDDEN_AREA = True
 
 
 # Supervision NMS
@@ -73,7 +73,7 @@ SCRCPY_UPGRADE_MISS_RECOVERY_DELAY = 0.200
 MATCH_THRESHOLD = 0.98
 
 # Template confidence threshold for red icon scans.
-RED_ICON_THRESHOLD = 0.920
+RED_ICON_THRESHOLD = 0.940
 
 # Template confidence threshold for new-level red icon validation.
 NEW_LEVEL_RED_ICON_THRESHOLD = 0.942
@@ -118,16 +118,22 @@ UNLOCK_THRESHOLD = 0.905
 NEW_LEVEL_THRESHOLD = 0.965
 
 # Minimum red icon templates that must agree outside fast mode.
-RED_ICON_MIN_MATCHES = 2
+RED_ICON_MIN_MATCHES = 1
 
 # Enables single-template red icon_scan mode for faster passes.
-RED_ICON_FAST_MODE_ENABLED = False
+RED_ICON_FAST_MODE_ENABLED = True
 
 # Red icon template names used when fast mode is enabled.
-RED_ICON_FAST_TEMPLATE_NAMES = ("RedIcon6",)
+RED_ICON_FAST_TEMPLATE_NAMES = ("RedIcon4", "RedIcon13", "RedIcon14")
 
 # Minimum pixel distance between fast-mode red icon matches.
-RED_ICON_FAST_MIN_DISTANCE = 30
+RED_ICON_FAST_MIN_DISTANCE = 64
+
+# Red icon template scales used for multi-resolution screenshots.
+RED_ICON_TEMPLATE_SCALES = (1.0, 2.0, 2.5)
+
+# Maximum red component span accepted during red icon texture validation.
+RED_ICON_ASSET_MAX_RED_COMPONENT_SPAN = 112
 
 
 # Mouse and Action Timing
@@ -633,10 +639,62 @@ FORBIDDEN_ZONE_5_Y_MIN = 660
 # Maximum y-coordinate for forbidden zone 5.
 FORBIDDEN_ZONE_5_Y_MAX = 725
 
+# Minimum x-coordinate for forbidden zone 6.
+FORBIDDEN_ZONE_6_X_MIN = 80
+
+# Maximum x-coordinate for forbidden zone 6.
+FORBIDDEN_ZONE_6_X_MAX = 170
+
+# Minimum y-coordinate for forbidden zone 6.
+FORBIDDEN_ZONE_6_Y_MIN = 280
+
+# Maximum y-coordinate for forbidden zone 6.
+FORBIDDEN_ZONE_6_Y_MAX = 550
+
+# Minimum x-coordinate for forbidden zone 7.
+FORBIDDEN_ZONE_7_X_MIN = 960
+
+# Maximum x-coordinate for forbidden zone 7.
+FORBIDDEN_ZONE_7_X_MAX = 1045
+
+# Minimum y-coordinate for forbidden zone 7.
+FORBIDDEN_ZONE_7_Y_MIN = 320
+
+# Maximum y-coordinate for forbidden zone 7.
+FORBIDDEN_ZONE_7_Y_MAX = 405
+
+# Minimum x-coordinate for forbidden zone 8.
+FORBIDDEN_ZONE_8_X_MIN = 680
+
+# Maximum x-coordinate for forbidden zone 8.
+FORBIDDEN_ZONE_8_X_MAX = 980
+
+# Minimum y-coordinate for forbidden zone 8.
+FORBIDDEN_ZONE_8_Y_MIN = 2130
+
+# Maximum y-coordinate for forbidden zone 8.
+FORBIDDEN_ZONE_8_Y_MAX = 2240
+
+# Minimum x-coordinate for forbidden zone 9.
+FORBIDDEN_ZONE_9_X_MIN = 350
+
+# Maximum x-coordinate for forbidden zone 9.
+FORBIDDEN_ZONE_9_X_MAX = 750
+
+# Minimum y-coordinate for forbidden zone 9.
+FORBIDDEN_ZONE_9_Y_MIN = 850
+
+# Maximum y-coordinate for forbidden zone 9.
+FORBIDDEN_ZONE_9_Y_MAX = 1120
+
 NUMBERED_FORBIDDEN_ZONE_BOUNDS = (
     (290, 350, 93, 320),
     (0, 60, 50, 280),
     (0, 60, 600, 667),
     (145, 200, 65, 110),
     (55, 260, 660, 725),
+    (80, 170, 280, 550),
+    (960, 1045, 320, 405),
+    (680, 980, 2130, 2240),
+    (350, 750, 850, 1120),
 )
