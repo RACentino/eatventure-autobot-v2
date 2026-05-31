@@ -87,12 +87,6 @@ UPGRADE_STATION_THRESHOLD = 0.910
 # Template confidence threshold for box scans.
 BOX_THRESHOLD = 0.930
 
-# Enables RGB similarity checking for box candidates.
-BOX_COLOR_CHECK = False
-
-# Minimum RGB similarity ratio for box candidates.
-BOX_COLOR_THRESHOLD = 0.5
-
 # Enables HSV range gating for box candidates.
 BOX_HSV_COLOR_GATE_ENABLED = True
 
@@ -131,6 +125,15 @@ RED_ICON_FAST_MIN_DISTANCE = 64
 
 # Red icon template scales used for multi-resolution screenshots.
 RED_ICON_TEMPLATE_SCALES = (1.0, 2.0, 2.5)
+
+RED_ICON_HSV_COLOR_GATE_ENABLED = True
+
+RED_ICON_HSV_RANGES = (
+    ((0, 80, 80), (10, 255, 255)),
+    ((160, 80, 80), (179, 255, 255)),
+)
+
+RED_ICON_HSV_MIN_MATCH_RATIO = 0.35
 
 # Maximum red component span accepted during red icon texture validation.
 RED_ICON_ASSET_MAX_RED_COMPONENT_SPAN = 112
@@ -259,10 +262,7 @@ NEW_LEVEL_BUTTON_POS = (30, 692)
 LEVEL_TRANSITION_POS = (174, 520)
 
 
-# Upgrade Station Color Gates
-
-# Enables RGB similarity checking for upgrade station candidates.
-UPGRADE_STATION_COLOR_CHECK = False
+# Upgrade Station HSV Gate
 
 # Enables HSV range gating for upgrade station candidates.
 UPGRADE_STATION_HSV_COLOR_GATE_ENABLED = True
