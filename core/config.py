@@ -157,22 +157,22 @@ MOUSE_UP_DURATION = 0.04
 HOVER_ENABLED = True
 
 # Duration for hover movement before click actions.
-HOVER_DURATION = 0.028
+HOVER_DURATION = 0.150
 
 # Delay between upgrade station search attempts.
-UPGRADE_SEARCH_INTERVAL = 0.525
+UPGRADE_SEARCH_INTERVAL = 0.125
 
 # Delay between state-machine actions.
-STATE_DELAY = 0.525
+STATE_DELAY = 0.125
 
 # Settling delay before verifying an upgrade station hold target.
-UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.105
+UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.150
 
 # Maximum attempts for upgrade station verification.
 UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 2
 
 # Delay between upgrade station verification attempts.
-UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.525
+UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.150
 
 # Maximum pixel radius for accepting a verified upgrade station match.
 UPGRADE_STATION_VERIFY_RADIUS = 36
@@ -190,22 +190,22 @@ STATS_UPGRADE_CLICK_DELAY = 0.016
 IDLE_SETTLE_DELAY = 0.112
 
 # Delay after clicking the new-level button.
-NEW_LEVEL_CLICK_SETTLE_DELAY = 0.224
+NEW_LEVEL_CLICK_SETTLE_DELAY = 0.150
 
 # Delay after clicking the level transition confirmation.
-LEVEL_TRANSITION_CONFIRM_DELAY = 0.455
+LEVEL_TRANSITION_CONFIRM_DELAY = 0.150
 
 # Delay after the level transition animation completes.
-LEVEL_TRANSITION_COMPLETE_DELAY = 0.560
+LEVEL_TRANSITION_COMPLETE_DELAY = 0.150
 
 # Retry interval during level transition attempts.
-LEVEL_TRANSITION_RETRY_INTERVAL = 0.280
+LEVEL_TRANSITION_RETRY_INTERVAL = 0.150
 
 # Retry interval when waiting for the unlock button to appear.
-WAIT_FOR_UNLOCK_RETRY_INTERVAL = 0.280
+WAIT_FOR_UNLOCK_RETRY_INTERVAL = 0.150
 
 # Settling delay after clicking the unlock button.
-WAIT_FOR_UNLOCK_SETTLE_DELAY = 0.280
+WAIT_FOR_UNLOCK_SETTLE_DELAY = 0.150
 
 
 # Telegram Notifications
