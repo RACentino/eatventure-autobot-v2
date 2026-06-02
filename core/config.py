@@ -142,16 +142,16 @@ RED_ICON_ASSET_MAX_RED_COMPONENT_SPAN = 112
 # Mouse and Action Timing
 
 # Delay after normal click actions.
-CLICK_DELAY = 0.128
+CLICK_DELAY = 0.120
 
 # Delay after cursor movement.
 MOUSE_MOVE_DELAY = 0.075
 
 # Duration to hold the mouse button down during click actions.
-MOUSE_DOWN_DURATION = 0.0100
+MOUSE_DOWN_DURATION = 0.150
 
 # Delay after releasing the mouse button.
-MOUSE_UP_DURATION = 0.075
+MOUSE_UP_DURATION = 0.100
 
 # Enables hover movement before click actions.
 HOVER_ENABLED = True
@@ -343,7 +343,7 @@ UPGRADE_STATION_SEARCH_MAX_ATTEMPTS = 2
 UPGRADE_STATION_STATS_THRESHOLD = 1
 
 # Maximum retry attempts during level transition.
-TRANSITION_LEVEL_MAX_ATTEMPTS = 1
+TRANSITION_LEVEL_MAX_ATTEMPTS = 11
 
 # Consecutive failed scan cycles before triggering idle recovery.
 CONSECUTIVE_FAILED_CYCLES_THRESHOLD = 3
