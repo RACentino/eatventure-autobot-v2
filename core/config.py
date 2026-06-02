@@ -160,7 +160,7 @@ HOVER_ENABLED = True
 HOVER_DURATION = 0.012
 
 # Delay between upgrade station search attempts.
-UPGRADE_SEARCH_INTERVAL = 0.6
+UPGRADE_SEARCH_INTERVAL = 0.075
 
 # Delay between state-machine actions.
 STATE_DELAY = 0.300
@@ -187,7 +187,7 @@ STATS_UPGRADE_CLICK_DURATION = 1.5
 STATS_UPGRADE_CLICK_DELAY = 0.0128
 
 # Settling delay before scan actions in transition handlers.
-IDLE_SETTLE_DELAY = 0.0896
+IDLE_SETTLE_DELAY = 0.050
 
 # Delay after clicking the new-level button.
 NEW_LEVEL_CLICK_SETTLE_DELAY = 0.12
@@ -343,13 +343,13 @@ UPGRADE_STATION_SEARCH_MAX_ATTEMPTS = 2
 UPGRADE_STATION_STATS_THRESHOLD = 1
 
 # Maximum retry attempts during level transition.
-TRANSITION_LEVEL_MAX_ATTEMPTS = 5
+TRANSITION_LEVEL_MAX_ATTEMPTS = 2
 
 # Consecutive failed scan cycles before triggering idle recovery.
-CONSECUTIVE_FAILED_CYCLES_THRESHOLD = 3
+CONSECUTIVE_FAILED_CYCLES_THRESHOLD = 2
 
 # Idle passes without progress before triggering a scroll search.
-IDLE_PASS_SCROLL_THRESHOLD = 1
+IDLE_PASS_SCROLL_THRESHOLD = 2
 
 
 # Adaptive Runtime Tuning
