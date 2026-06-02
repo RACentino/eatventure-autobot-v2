@@ -151,7 +151,7 @@ MOUSE_MOVE_DELAY = 0.016
 MOUSE_DOWN_DURATION = 0.100
 
 # Delay after releasing the mouse button.
-MOUSE_UP_DURATION = 0.036
+MOUSE_UP_DURATION = 0.050
 
 # Enables hover movement before click actions.
 HOVER_ENABLED = True
@@ -163,7 +163,7 @@ HOVER_DURATION = 0.012
 UPGRADE_SEARCH_INTERVAL = 0.6
 
 # Delay between state-machine actions.
-STATE_DELAY = 0.200
+STATE_DELAY = 0.300
 
 # Settling delay before verifying an upgrade station hold target.
 UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.150
