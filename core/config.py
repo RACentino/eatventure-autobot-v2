@@ -337,7 +337,7 @@ SCROLL_DURATION = 0.175
 # Handler Limits
 
 # Maximum attempts when searching for an upgrade station.
-UPGRADE_STATION_SEARCH_MAX_ATTEMPTS = 1
+UPGRADE_STATION_SEARCH_MAX_ATTEMPTS = 3
 
 # Minimum upgrade counter before opening the stats panel.
 UPGRADE_STATION_STATS_THRESHOLD = 1
