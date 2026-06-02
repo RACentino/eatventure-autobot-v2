@@ -155,31 +155,27 @@ class EatventureBot(
             "search_interval": float(self.tuner.search_interval),
         }
 
-    def _next_pending_learned_behavior(self) -> dict[str, float] | None:
+    def _drain_pending_learned_behaviors(self, capture: bool) -> dict[str, float] | None:
         latest_behavior = None
         for _ in range(PENDING_LEARNED_BEHAVIOR_DRAIN_LIMIT):
             try:
-                latest_behavior = self._pending_learned_behaviors.get_nowait()
+                item = self._pending_learned_behaviors.get_nowait()
             except queue.Empty:
                 return latest_behavior
             self._pending_learned_behaviors.task_done()
+            if capture:
+                latest_behavior = item
         logger.debug(
-            "Deferred learned-behavior drain after %s updates",
+            "Learned-behavior drain stopped after %s updates",
             PENDING_LEARNED_BEHAVIOR_DRAIN_LIMIT,
         )
         return latest_behavior
 
+    def _next_pending_learned_behavior(self) -> dict[str, float] | None:
+        return self._drain_pending_learned_behaviors(capture=True)
+
     def _discard_pending_learned_behavior_updates(self) -> None:
-        for _ in range(PENDING_LEARNED_BEHAVIOR_DRAIN_LIMIT):
-            try:
-                self._pending_learned_behaviors.get_nowait()
-            except queue.Empty:
-                return
-            self._pending_learned_behaviors.task_done()
-        logger.debug(
-            "Stopped learned-behavior discard after %s updates",
-            PENDING_LEARNED_BEHAVIOR_DRAIN_LIMIT,
-        )
+        self._drain_pending_learned_behaviors(capture=False)
 
     def _apply_pending_learned_behavior_updates(self) -> None:
         learned_behavior = self._next_pending_learned_behavior()

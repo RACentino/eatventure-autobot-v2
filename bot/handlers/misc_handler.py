@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 from core import bounded_int, config
 from bot.state_machine import State
@@ -48,26 +49,30 @@ class MiscHandlerMixin:
 
         return State.FIND_RED_ICONS
 
+    def _check_new_level_during_boxes(self, screenshot: Any, log_context: str = "") -> State | None:
+        found, confidence, _, _ = self._find_new_level_button(screenshot)
+        if found:
+            self.vision_optimizer.update_new_level_confidence(confidence)
+            logger.info("New level found while opening boxes%s", log_context)
+            return State.TRANSITION_LEVEL
+        return None
+
     def handle_open_boxes(self, current_state: State) -> StateResult:
         self._click_idle()
 
         limited_screenshot = self.window_capture.capture(max_y=config.BOX_SEARCH_Y)
 
-        found, confidence, _, _ = self._find_new_level_button(limited_screenshot)
-        if found:
-            self.vision_optimizer.update_new_level_confidence(confidence)
-            logger.info("New level found while opening boxes")
-            return State.TRANSITION_LEVEL
+        new_level_state = self._check_new_level_during_boxes(limited_screenshot)
+        if new_level_state is not None:
+            return new_level_state
 
         box_threshold = self._box_threshold()
         box_candidates = self._collect_box_candidates(limited_screenshot, box_threshold)
         if not box_candidates and self._scrcpy_miss_recovery_sleep(config.SCRCPY_BOX_MISS_RECOVERY_DELAY):
             limited_screenshot = self.window_capture.capture(max_y=config.BOX_SEARCH_Y)
-            found, confidence, _, _ = self._find_new_level_button(limited_screenshot)
-            if found:
-                self.vision_optimizer.update_new_level_confidence(confidence)
-                logger.info("New level found while opening boxes after SCRCPY recovery")
-                return State.TRANSITION_LEVEL
+            new_level_state = self._check_new_level_during_boxes(limited_screenshot, " after SCRCPY recovery")
+            if new_level_state is not None:
+                return new_level_state
             box_candidates = self._collect_box_candidates(limited_screenshot, box_threshold)
 
         merged_boxes = self._merge_box_candidates_with_supervision(box_candidates)

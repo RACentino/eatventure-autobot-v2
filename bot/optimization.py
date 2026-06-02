@@ -17,6 +17,10 @@ MIN_LEARNING_LOOP_INTERVAL = 0.1
 MIN_LEARNING_JOIN_TIMEOUT = 0.1
 
 
+def _ema_blend(current: float, target: float, alpha: float) -> float:
+    return (1.0 - alpha) * current + alpha * target
+
+
 @dataclass(frozen=True)
 class AdaptiveTunerState:
     click_success_rate: float
@@ -63,7 +67,7 @@ class AdaptiveTuner:
         return self._state.search_interval
 
     def _ema(self, current: float, new_value: float) -> float:
-        return (1.0 - self.alpha) * current + self.alpha * new_value
+        return _ema_blend(current, new_value, self.alpha)
 
     def record_click_result(self, success: bool) -> None:
         if not self.enabled:
@@ -219,32 +223,30 @@ class VisionPersistence:
 
 
 class VisionOptimizer:
+    @staticmethod
+    def _default_thresholds() -> dict[str, float]:
+        return {
+            "red_icon_threshold": bounded_float(config.RED_ICON_THRESHOLD, 0.92, minimum=0.0, maximum=1.0),
+            "new_level_threshold": bounded_float(config.NEW_LEVEL_THRESHOLD, 0.965, minimum=0.0, maximum=1.0),
+            "new_level_red_icon_threshold": bounded_float(
+                config.NEW_LEVEL_RED_ICON_THRESHOLD, 0.942, minimum=0.0, maximum=1.0,
+            ),
+            "upgrade_station_threshold": bounded_float(
+                config.UPGRADE_STATION_THRESHOLD, 0.91, minimum=0.0, maximum=1.0,
+            ),
+            "stats_upgrade_threshold": bounded_float(
+                config.STATS_RED_ICON_THRESHOLD, 0.943, minimum=0.0, maximum=1.0,
+            ),
+            "box_threshold": bounded_float(config.BOX_THRESHOLD, 0.93, minimum=0.0, maximum=1.0),
+        }
+
     def __init__(self, persistence: VisionPersistence | None = None) -> None:
         self.enabled = bool(config.AI_VISION_ENABLED)
         self.alpha = bounded_float(config.AI_VISION_ALPHA, 0.18, minimum=0.0, maximum=1.0)
         self.alpha_max = bounded_float(config.AI_VISION_ALPHA_MAX, 0.35, minimum=self.alpha, maximum=1.0)
         self.confidence_boost = bounded_float(config.AI_VISION_CONFIDENCE_BOOST, 0.10, minimum=0.0)
-        self.red_icon_threshold = bounded_float(config.RED_ICON_THRESHOLD, 0.92, minimum=0.0, maximum=1.0)
-        self.new_level_threshold = bounded_float(config.NEW_LEVEL_THRESHOLD, 0.965, minimum=0.0, maximum=1.0)
-        self.new_level_red_icon_threshold = bounded_float(
-            config.NEW_LEVEL_RED_ICON_THRESHOLD,
-            0.942,
-            minimum=0.0,
-            maximum=1.0,
-        )
-        self.upgrade_station_threshold = bounded_float(
-            config.UPGRADE_STATION_THRESHOLD,
-            0.91,
-            minimum=0.0,
-            maximum=1.0,
-        )
-        self.stats_upgrade_threshold = bounded_float(
-            config.STATS_RED_ICON_THRESHOLD,
-            0.943,
-            minimum=0.0,
-            maximum=1.0,
-        )
-        self.box_threshold = bounded_float(config.BOX_THRESHOLD, 0.93, minimum=0.0, maximum=1.0)
+        for attr, value in self._default_thresholds().items():
+            setattr(self, attr, value)
         self.persistence = persistence
         self._miss_counts = {
             "red_icon": 0,
@@ -256,8 +258,7 @@ class VisionOptimizer:
         }
 
     def _ema(self, current: float, new_value: float, alpha: float | None = None) -> float:
-        blend = self.alpha if alpha is None else alpha
-        return (1.0 - blend) * current + blend * new_value
+        return _ema_blend(current, new_value, self.alpha if alpha is None else alpha)
 
     @staticmethod
     def _finite_float(value: Any) -> float | None:
@@ -458,27 +459,8 @@ class VisionOptimizer:
             self._apply_persisted_threshold(state, key, minimum, maximum)
 
     def reset(self) -> None:
-        self.red_icon_threshold = bounded_float(config.RED_ICON_THRESHOLD, 0.92, minimum=0.0, maximum=1.0)
-        self.new_level_threshold = bounded_float(config.NEW_LEVEL_THRESHOLD, 0.965, minimum=0.0, maximum=1.0)
-        self.new_level_red_icon_threshold = bounded_float(
-            config.NEW_LEVEL_RED_ICON_THRESHOLD,
-            0.942,
-            minimum=0.0,
-            maximum=1.0,
-        )
-        self.upgrade_station_threshold = bounded_float(
-            config.UPGRADE_STATION_THRESHOLD,
-            0.91,
-            minimum=0.0,
-            maximum=1.0,
-        )
-        self.stats_upgrade_threshold = bounded_float(
-            config.STATS_RED_ICON_THRESHOLD,
-            0.943,
-            minimum=0.0,
-            maximum=1.0,
-        )
-        self.box_threshold = bounded_float(config.BOX_THRESHOLD, 0.93, minimum=0.0, maximum=1.0)
+        for attr, value in self._default_thresholds().items():
+            setattr(self, attr, value)
         for key in self._miss_counts:
             self._miss_counts[key] = 0
         self._persist(force=True)
@@ -727,7 +709,7 @@ class HistoricalLearner:
         return True
 
     def _ema(self, current: float, target: float) -> float:
-        return (1.0 - self.ema_alpha) * float(current) + self.ema_alpha * float(target)
+        return _ema_blend(float(current), float(target), self.ema_alpha)
 
     @staticmethod
     def _clamp(value: float, minimum: float, maximum: float) -> float:

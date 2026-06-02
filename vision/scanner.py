@@ -196,7 +196,7 @@ class VisionScannerMixin:
             return screenshot[0:0, 0:0], 0, 0
         return screenshot[top:bottom, left:right], left, top
 
-    @staticmethod
+    @staticmethod  # Parallel implementation of IoU; see also ImageMatcher._box_intersection_over_union
     def _box_iou(first: MatchCandidate, second: MatchCandidate) -> float:
         _, x1, y1, w1, h1 = first[:5]
         _, x2, y2, w2, h2 = second[:5]
@@ -577,6 +577,34 @@ class VisionScannerMixin:
             )
         return verified_matches
 
+    def _finalize_and_merge_red_icon_detections(
+        self,
+        detections: dict[tuple[int, int], list[tuple[str, float]]],
+        screenshot: Any,
+        template: Any,
+        mask: Any,
+        template_name: str,
+        matches: list,
+        min_distance: int,
+        offset_x: int,
+        offset_y: int,
+    ) -> None:
+        matches = self.image_matcher._finalize_template_matches(
+            matches,
+            min_distance,
+            self._supervision_nms_enabled("red_icon"),
+            config.SUPERVISION_RED_ICON_NMS_IOU_THRESHOLD,
+            config.SUPERVISION_CLASS_AGNOSTIC_NMS,
+        )
+        verified_matches = self._verified_red_icon_matches(
+            screenshot,
+            template,
+            mask,
+            template_name,
+            matches,
+        )
+        self._merge_red_icon_matches(detections, template_name, verified_matches, offset_x, offset_y)
+
     def _collect_template_red_icon_detections(
         self,
         detections: dict[tuple[int, int], list[tuple[str, float]]],
@@ -601,21 +629,9 @@ class VisionScannerMixin:
                 scales=config.RED_ICON_TEMPLATE_SCALES,
                 template_name=template_name,
             )
-            matches = self.image_matcher._finalize_template_matches(
-                matches,
-                min_distance,
-                self._supervision_nms_enabled("red_icon"),
-                config.SUPERVISION_RED_ICON_NMS_IOU_THRESHOLD,
-                config.SUPERVISION_CLASS_AGNOSTIC_NMS,
+            self._finalize_and_merge_red_icon_detections(
+                detections, screenshot, template, mask, template_name, matches, min_distance, offset_x, offset_y,
             )
-            verified_matches = self._verified_red_icon_matches(
-                screenshot,
-                template,
-                mask,
-                template_name,
-                matches,
-            )
-            self._merge_red_icon_matches(detections, template_name, verified_matches, offset_x, offset_y)
 
     def _collect_hsv_red_icon_detections(
         self,
@@ -646,21 +662,9 @@ class VisionScannerMixin:
                 template_name=template_name,
                 screenshot_color_mask=screenshot_color_mask,
             )
-            matches = self.image_matcher._finalize_template_matches(
-                matches,
-                min_distance,
-                self._supervision_nms_enabled("red_icon"),
-                config.SUPERVISION_RED_ICON_NMS_IOU_THRESHOLD,
-                config.SUPERVISION_CLASS_AGNOSTIC_NMS,
+            self._finalize_and_merge_red_icon_detections(
+                detections, screenshot, template, mask, template_name, matches, min_distance, offset_x, offset_y,
             )
-            verified_matches = self._verified_red_icon_matches(
-                screenshot,
-                template,
-                mask,
-                template_name,
-                matches,
-            )
-            self._merge_red_icon_matches(detections, template_name, verified_matches, offset_x, offset_y)
 
     def _collect_red_icon_detections(
         self,

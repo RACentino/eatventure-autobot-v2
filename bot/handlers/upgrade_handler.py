@@ -14,6 +14,15 @@ MAX_UPGRADE_STATION_SEARCH_ATTEMPTS = 10
 
 
 class UpgradeHandlerMixin:
+    def _record_click_and_apply_tuning(self, success: bool) -> None:
+        self.tuner.record_click_result(success)
+        self._apply_tuning()
+
+    def _record_upgrade_search_failure(self) -> None:
+        self.vision_optimizer.update_upgrade_station_miss()
+        self.tuner.record_search_result(False)
+        self._apply_tuning()
+
     @staticmethod
     def _hold_max_duration() -> float:
         try:
@@ -30,14 +39,20 @@ class UpgradeHandlerMixin:
             logger.warning("Upgrade station hold position could not be resolved at (%s, %s)", x, y)
             return None
 
+
+    def _position_cursor_for_upgrade_hold(self, x: int, y: int) -> tuple[int, int] | None:
+        screen_pos = self.mouse_controller._resolve_screen_position(x, y, relative=True)
+        if screen_pos is None:
+            logger.warning("Upgrade station hold position could not be resolved at (%s, %s)", x, y)
+            return None
+
         screen_x, screen_y = screen_pos
         if self.mouse_controller._set_cursor_pos(screen_x, screen_y):
             if self.mouse_controller.move_delay > 0:
                 precise_sleep(self.mouse_controller.move_delay)
             return screen_x, screen_y
 
-        self.tuner.record_click_result(False)
-        self._apply_tuning()
+        self._record_click_and_apply_tuning(False)
         logger.warning("Failed to position cursor for Upgrade Station hold at (%s, %s)", x, y)
         return None
 
@@ -145,14 +160,12 @@ class UpgradeHandlerMixin:
                 screen_y,
                 interrupt_check=self._stop_requested.is_set,
             ):
-                self.tuner.record_click_result(False)
-                self._apply_tuning()
+                self._record_click_and_apply_tuning(False)
                 logger.warning("Upgrade station hold press failed at (%s, %s)", screen_x, screen_y)
                 return False, False, time.monotonic() - hold_started_at
 
             holding = True
-            self.tuner.record_click_result(True)
-            self._apply_tuning()
+            self._record_click_and_apply_tuning(True)
             return self._monitor_upgrade_station_hold(
                 screen_position_holder,
                 base_threshold,
@@ -170,9 +183,7 @@ class UpgradeHandlerMixin:
         logger.info("Upgrade station disappeared during verification; continuing main flow")
         self.upgrade_station_pos = None
         self.upgrade_found_in_cycle = False
-        self.vision_optimizer.update_upgrade_station_miss()
-        self.tuner.record_search_result(False)
-        self._apply_tuning()
+        self._record_upgrade_search_failure()
 
     def _record_verified_upgrade_station(self, match: RedIcon) -> tuple[int, int]:
         confidence, x, y = match
@@ -203,9 +214,7 @@ class UpgradeHandlerMixin:
                 "Upgrade station still detected after %.2fs hold; treating verification as failed",
                 hold_elapsed,
             )
-            self.vision_optimizer.update_upgrade_station_miss()
-            self.tuner.record_search_result(False)
-            self._apply_tuning()
+            self._record_upgrade_search_failure()
             return State.SEARCH_UPGRADE_STATION
 
         logger.info("Upgrade station no longer detected after %.2fs hold", hold_elapsed)
@@ -251,9 +260,7 @@ class UpgradeHandlerMixin:
                 if not self._sleep(self.tuner.search_interval):
                     return State.OPEN_BOXES
 
-        self.vision_optimizer.update_upgrade_station_miss()
-        self.tuner.record_search_result(False)
-        self._apply_tuning()
+        self._record_upgrade_search_failure()
         self.consecutive_failed_cycles += 1
         logger.info("Upgrade station not found, returning to OPEN_BOXES")
         return State.OPEN_BOXES
@@ -261,8 +268,7 @@ class UpgradeHandlerMixin:
     def _perform_upgrade_station_verification_click(self, x: int, y: int) -> bool:
         logger.info("Performing single verification click on upgrade station at (%s, %s)", x, y)
         click_succeeded = self.mouse_controller.click(x, y, relative=True)
-        self.tuner.record_click_result(click_succeeded)
-        self._apply_tuning()
+        self._record_click_and_apply_tuning(click_succeeded)
         if not click_succeeded:
             logger.warning("Upgrade station verification click failed at (%s, %s)", x, y)
         return click_succeeded

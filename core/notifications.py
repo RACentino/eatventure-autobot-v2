@@ -128,26 +128,22 @@ class TelegramNotifier:
             self._session.close()
             self._session = None
 
-    def notify_bot_started(self) -> None:
-        message = "Bot Started"
+    def _send_notification(self, message: str, label: str) -> None:
         if not self.send_message(message):
-            logger.debug("Bot-start notification was not queued")
+            logger.debug("%s notification was not queued", label)
+
+    def notify_bot_started(self) -> None:
+        self._send_notification("Bot Started", "Bot-start")
 
     def notify_bot_stopped(self) -> None:
-        message = "Bot Stopped"
-        if not self.send_message(message):
-            logger.debug("Bot-stop notification was not queued")
+        self._send_notification("Bot Stopped", "Bot-stop")
 
     def notify_new_level(self, level_number: int, time_spent: float) -> None:
         minutes = int(time_spent // 60)
         seconds = int(time_spent % 60)
         time_str = f"{minutes:02d}:{seconds:02d}"
-
-        message = f"{level_number}. restaurant completed! Time spent: {time_str}"
-        if not self.send_message(message):
-            logger.debug("New-level notification was not queued")
+        self._send_notification(f"{level_number}. restaurant completed! Time spent: {time_str}", "New-level")
 
     def notify_level_milestone(self, total_levels: int) -> None:
-        message = f"Milestone Reached\nTotal cities completed: {total_levels}"
-        if not self.send_message(message):
-            logger.debug("Level-milestone notification was not queued")
+        self._send_notification(f"Milestone Reached\nTotal cities completed: {total_levels}", "Level-milestone")
+

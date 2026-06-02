@@ -32,11 +32,15 @@ class ScrollHandlerMixin:
         if self._oscillation_cycle_index > max_scroll_cycles:
             self._oscillation_cycle_index = 1
 
-    def _perform_oscillating_scroll_step(self) -> bool:
+    def _scroll_distance(self) -> tuple[int, int, int]:
         pixel_step = bounded_float(config.SCROLL_PIXEL_STEP, 90.0, minimum=1.0)
         distance_ratio = bounded_float(config.SCROLL_DISTANCE_RATIO, 1.0, minimum=0.1)
         distance = int(round(pixel_step * distance_ratio))
         start_x, start_y = config.SCROLL_START_POS
+        return distance, start_x, start_y
+
+    def _perform_oscillating_scroll_step(self) -> bool:
+        distance, start_x, start_y = self._scroll_distance()
         direction = 1 if self._oscillation_leg_direction > 0 else -1
         target_y = start_y - distance if direction > 0 else start_y + distance
         logger.info(
@@ -61,10 +65,7 @@ class ScrollHandlerMixin:
         return bool(moved)
 
     def _perform_single_down_scroll(self) -> bool:
-        pixel_step = bounded_float(config.SCROLL_PIXEL_STEP, 90.0, minimum=1.0)
-        distance_ratio = bounded_float(config.SCROLL_DISTANCE_RATIO, 1.0, minimum=0.1)
-        distance = int(round(pixel_step * distance_ratio))
-        start_x, start_y = config.SCROLL_START_POS
+        distance, start_x, start_y = self._scroll_distance()
         target_y = start_y - distance
         logger.info("Verification scroll down before confirming new level red icon")
         moved = self.mouse_controller.drag(

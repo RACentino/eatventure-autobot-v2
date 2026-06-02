@@ -19,6 +19,7 @@ MAX_DEADLINE_POLL_ITERATIONS = 120_000
 CURSOR_POSITION_ATTEMPTS = 2
 CURSOR_POSITION_RETRY_DELAY = 0.08
 MAX_DRAG_STEPS = 60
+MAX_STATS_UPGRADE_CLICKS = 500
 
 
 def _point_within_client_area(
@@ -682,41 +683,37 @@ class MouseController:
             return False
         return True
 
-    def click(self, x: Any, y: Any, relative: bool = True, delay: Any = None) -> bool:
+    def _execute_click_action(
+        self,
+        action_label: str,
+        click_fn: Callable[[int, int], bool],
+        x: Any,
+        y: Any,
+        relative: bool,
+        delay: Any,
+    ) -> bool:
         with self._input_lock:
             screen_pos, cursor_positioned = self._position_cursor_for_click_attempt(x, y, relative)
             if screen_pos is None:
                 return False
             if not cursor_positioned:
-                self._log_failed_click_attempt("Click", screen_pos)
+                self._log_failed_click_attempt(action_label, screen_pos)
                 return False
 
             screen_x, screen_y = screen_pos
-            if not self._left_click_at_screen(screen_x, screen_y):
-                self._log_failed_click_attempt("Click", screen_pos)
+            if not click_fn(screen_x, screen_y):
+                self._log_failed_click_attempt(action_label, screen_pos)
                 return False
 
-            logger.debug("Clicked at (%s, %s)", screen_x, screen_y)
+            logger.debug("%s at (%s, %s)", action_label, screen_x, screen_y)
             self._wait_after_click(delay)
             return True
+
+    def click(self, x: Any, y: Any, relative: bool = True, delay: Any = None) -> bool:
+        return self._execute_click_action("Clicked", self._left_click_at_screen, x, y, relative, delay)
 
     def precise_click(self, x: Any, y: Any, relative: bool = True, delay: Any = None) -> bool:
-        with self._input_lock:
-            screen_pos, cursor_positioned = self._position_cursor_for_click_attempt(x, y, relative)
-            if screen_pos is None:
-                return False
-            if not cursor_positioned:
-                self._log_failed_click_attempt("Precise click", screen_pos)
-                return False
-
-            screen_x, screen_y = screen_pos
-            if not self._perform_precise_click_at_screen(screen_x, screen_y):
-                self._log_failed_click_attempt("Precise click", screen_pos)
-                return False
-
-            logger.debug("Precise-clicked at (%s, %s)", screen_x, screen_y)
-            self._wait_after_click(delay)
-            return True
+        return self._execute_click_action("Precise-clicked", self._perform_precise_click_at_screen, x, y, relative, delay)
 
     def hold_at(
         self,
@@ -805,7 +802,7 @@ class MouseController:
 
     @staticmethod
     def _stats_upgrade_click_limit(duration: float, click_delay: float) -> int:
-        return max(1, int(math.ceil(duration / click_delay)))
+        return min(MAX_STATS_UPGRADE_CLICKS, max(1, int(math.ceil(duration / click_delay))))
 
     def click_stats_upgrade_at(
         self,
