@@ -163,7 +163,7 @@ HOVER_DURATION = 0.100
 UPGRADE_SEARCH_INTERVAL = 0.150
 
 # Delay between state-machine actions.
-STATE_DELAY = 0.350
+STATE_DELAY = 0.200
 
 # Settling delay before verifying an upgrade station hold target.
 UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.150
