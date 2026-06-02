@@ -178,13 +178,13 @@ UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.160
 UPGRADE_STATION_VERIFY_RADIUS = 36
 
 # Maximum duration for holding an upgrade station click.
-CLICK_HOLD_MAX_DURATION = 9.5
+CLICK_HOLD_MAX_DURATION = 8.25
 
 # Duration for stats upgrade click bursts.
-STATS_UPGRADE_CLICK_DURATION = 2.4
+STATS_UPGRADE_CLICK_DURATION = 1
 
 # Delay between stats upgrade click actions.
-STATS_UPGRADE_CLICK_DELAY = 0.080
+STATS_UPGRADE_CLICK_DELAY = 0.011
 
 # Settling delay before scan actions in transition handlers.
 IDLE_SETTLE_DELAY = 0.200
