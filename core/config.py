@@ -145,13 +145,13 @@ RED_ICON_ASSET_MAX_RED_COMPONENT_SPAN = 112
 CLICK_DELAY = 0.128
 
 # Delay after cursor movement.
-MOUSE_MOVE_DELAY = 0.050
+MOUSE_MOVE_DELAY = 0.075
 
 # Duration to hold the mouse button down during click actions.
-MOUSE_DOWN_DURATION = 0.096
+MOUSE_DOWN_DURATION = 0.0100
 
 # Delay after releasing the mouse button.
-MOUSE_UP_DURATION = 0.064
+MOUSE_UP_DURATION = 0.075
 
 # Enables hover movement before click actions.
 HOVER_ENABLED = True
@@ -319,16 +319,16 @@ SCROLL_PIXEL_STEP = 90
 SCROLL_DISTANCE_RATIO = 1.0
 
 # Maximum oscillating scroll cycles before reset.
-MAX_SCROLL_CYCLES = 4
+MAX_SCROLL_CYCLES = 8
 
 # Step increment applied to each oscillating scroll cycle.
-SCROLL_INCREMENT_STEP = 2
+SCROLL_INCREMENT_STEP = 1
 
 # Delay between scroll intervals.
-SCROLL_INTERVAL_PAUSE = 0.250
+SCROLL_INTERVAL_PAUSE = 0.200
 
 # Settling delay after a scroll gesture.
-POST_SCROLL_SETTLE = 0.250
+POST_SCROLL_SETTLE = 0.200
 
 # Duration of each scroll drag gesture.
 SCROLL_DURATION = 0.150
@@ -343,7 +343,7 @@ UPGRADE_STATION_SEARCH_MAX_ATTEMPTS = 2
 UPGRADE_STATION_STATS_THRESHOLD = 1
 
 # Maximum retry attempts during level transition.
-TRANSITION_LEVEL_MAX_ATTEMPTS = 2
+TRANSITION_LEVEL_MAX_ATTEMPTS = 1
 
 # Consecutive failed scan cycles before triggering idle recovery.
 CONSECUTIVE_FAILED_CYCLES_THRESHOLD = 3
