@@ -190,22 +190,22 @@ STATS_UPGRADE_CLICK_DELAY = 0.011
 IDLE_SETTLE_DELAY = 0.150
 
 # Delay after clicking the new-level button.
-NEW_LEVEL_CLICK_SETTLE_DELAY = 0.360
+NEW_LEVEL_CLICK_SETTLE_DELAY = 0.080
 
 # Delay after clicking the level transition confirmation.
-LEVEL_TRANSITION_CONFIRM_DELAY = 0.640
+LEVEL_TRANSITION_CONFIRM_DELAY = 0.140
 
 # Delay after the level transition animation completes.
-LEVEL_TRANSITION_COMPLETE_DELAY = 0.760
+LEVEL_TRANSITION_COMPLETE_DELAY = 0.160
 
 # Retry interval during level transition attempts.
-LEVEL_TRANSITION_RETRY_INTERVAL = 0.336
+LEVEL_TRANSITION_RETRY_INTERVAL = 0.136
 
 # Retry interval when waiting for the unlock button to appear.
-WAIT_FOR_UNLOCK_RETRY_INTERVAL = 0.360
+WAIT_FOR_UNLOCK_RETRY_INTERVAL = 0.080
 
 # Settling delay after clicking the unlock button.
-WAIT_FOR_UNLOCK_SETTLE_DELAY = 0.400
+WAIT_FOR_UNLOCK_SETTLE_DELAY = 0.100
 
 
 # Telegram Notifications
