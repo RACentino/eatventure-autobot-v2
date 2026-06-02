@@ -145,7 +145,7 @@ RED_ICON_ASSET_MAX_RED_COMPONENT_SPAN = 112
 CLICK_DELAY = 0.088
 
 # Delay after cursor movement.
-MOUSE_MOVE_DELAY = 0.016
+MOUSE_MOVE_DELAY = 0.0375
 
 # Duration to hold the mouse button down during click actions.
 MOUSE_DOWN_DURATION = 0.100
@@ -157,10 +157,10 @@ MOUSE_UP_DURATION = 0.050
 HOVER_ENABLED = True
 
 # Duration for hover movement before click actions.
-HOVER_DURATION = 0.012
+HOVER_DURATION = 0.075
 
 # Delay between upgrade station search attempts.
-UPGRADE_SEARCH_INTERVAL = 0.150
+UPGRADE_SEARCH_INTERVAL = 0.600
 
 # Delay between state-machine actions.
 STATE_DELAY = 0.300
@@ -346,7 +346,7 @@ UPGRADE_STATION_STATS_THRESHOLD = 1
 TRANSITION_LEVEL_MAX_ATTEMPTS = 2
 
 # Consecutive failed scan cycles before triggering idle recovery.
-CONSECUTIVE_FAILED_CYCLES_THRESHOLD = 2
+CONSECUTIVE_FAILED_CYCLES_THRESHOLD = 3
 
 # Idle passes without progress before triggering a scroll search.
 IDLE_PASS_SCROLL_THRESHOLD = 2
