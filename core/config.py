@@ -163,7 +163,7 @@ HOVER_DURATION = 0.100
 UPGRADE_SEARCH_INTERVAL = 0.150
 
 # Delay between state-machine actions.
-STATE_DELAY = 0.200
+STATE_DELAY = 0.150
 
 # Settling delay before verifying an upgrade station hold target.
 UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.150
@@ -187,7 +187,7 @@ STATS_UPGRADE_CLICK_DURATION = 1.5
 STATS_UPGRADE_CLICK_DELAY = 0.011
 
 # Settling delay before scan actions in transition handlers.
-IDLE_SETTLE_DELAY = 0.160
+IDLE_SETTLE_DELAY = 0.150
 
 # Delay after clicking the new-level button.
 NEW_LEVEL_CLICK_SETTLE_DELAY = 0.360
