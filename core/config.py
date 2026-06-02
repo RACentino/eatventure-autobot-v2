@@ -337,7 +337,7 @@ SCROLL_DURATION = 0.150
 # Handler Limits
 
 # Maximum attempts when searching for an upgrade station.
-UPGRADE_STATION_SEARCH_MAX_ATTEMPTS = 2
+UPGRADE_STATION_SEARCH_MAX_ATTEMPTS = 1
 
 # Minimum upgrade counter before opening the stats panel.
 UPGRADE_STATION_STATS_THRESHOLD = 1
@@ -346,10 +346,10 @@ UPGRADE_STATION_STATS_THRESHOLD = 1
 TRANSITION_LEVEL_MAX_ATTEMPTS = 5
 
 # Consecutive failed scan cycles before triggering idle recovery.
-CONSECUTIVE_FAILED_CYCLES_THRESHOLD = 1
+CONSECUTIVE_FAILED_CYCLES_THRESHOLD = 2
 
 # Idle passes without progress before triggering a scroll search.
-IDLE_PASS_SCROLL_THRESHOLD = 1
+IDLE_PASS_SCROLL_THRESHOLD = 2
 
 
 # Adaptive Runtime Tuning
