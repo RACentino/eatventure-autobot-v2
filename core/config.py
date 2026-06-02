@@ -142,7 +142,7 @@ RED_ICON_ASSET_MAX_RED_COMPONENT_SPAN = 112
 # Mouse and Action Timing
 
 # Delay after normal click actions.
-CLICK_DELAY = 0.120
+CLICK_DELAY = 0.075
 
 # Delay after cursor movement.
 MOUSE_MOVE_DELAY = 0.075
@@ -163,7 +163,7 @@ HOVER_DURATION = 0.100
 UPGRADE_SEARCH_INTERVAL = 0.150
 
 # Delay between state-machine actions.
-STATE_DELAY = 0.150
+STATE_DELAY = 0.200
 
 # Settling delay before verifying an upgrade station hold target.
 UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.150
@@ -190,7 +190,7 @@ STATS_UPGRADE_CLICK_DELAY = 0.011
 IDLE_SETTLE_DELAY = 0.150
 
 # Delay after clicking the new-level button.
-NEW_LEVEL_CLICK_SETTLE_DELAY = 0.080
+NEW_LEVEL_CLICK_SETTLE_DELAY = 0.175
 
 # Delay after clicking the level transition confirmation.
 LEVEL_TRANSITION_CONFIRM_DELAY = 0.140
@@ -202,7 +202,7 @@ LEVEL_TRANSITION_COMPLETE_DELAY = 0.160
 LEVEL_TRANSITION_RETRY_INTERVAL = 0.136
 
 # Retry interval when waiting for the unlock button to appear.
-WAIT_FOR_UNLOCK_RETRY_INTERVAL = 0.080
+WAIT_FOR_UNLOCK_RETRY_INTERVAL = 0.175
 
 # Settling delay after clicking the unlock button.
 WAIT_FOR_UNLOCK_SETTLE_DELAY = 0.100
