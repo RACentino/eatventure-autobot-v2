@@ -142,7 +142,7 @@ RED_ICON_ASSET_MAX_RED_COMPONENT_SPAN = 112
 # Mouse and Action Timing
 
 # Delay after normal click actions.
-CLICK_DELAY = 0.018
+CLICK_DELAY = 0.075
 
 # Delay after cursor movement.
 MOUSE_MOVE_DELAY = 0.075
@@ -160,7 +160,7 @@ HOVER_ENABLED = True
 HOVER_DURATION = 0.150
 
 # Delay between upgrade station search attempts.
-UPGRADE_SEARCH_INTERVAL = 0.200
+UPGRADE_SEARCH_INTERVAL = 0.075
 
 # Delay between state-machine actions.
 STATE_DELAY = 0.200
