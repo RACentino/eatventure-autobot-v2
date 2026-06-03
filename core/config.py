@@ -163,7 +163,7 @@ HOVER_DURATION = 0.150
 UPGRADE_SEARCH_INTERVAL = 0.200
 
 # Delay between state-machine actions.
-STATE_DELAY = 0.200
+STATE_DELAY = 0.400
 
 # Settling delay before verifying an upgrade station hold target.
 UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.250
@@ -346,7 +346,7 @@ UPGRADE_STATION_STATS_THRESHOLD = 1
 TRANSITION_LEVEL_MAX_ATTEMPTS = 5
 
 # Consecutive failed scan cycles before triggering idle recovery.
-CONSECUTIVE_FAILED_CYCLES_THRESHOLD = 3
+CONSECUTIVE_FAILED_CYCLES_THRESHOLD = 2
 
 # Idle passes without progress before triggering a scroll search.
 IDLE_PASS_SCROLL_THRESHOLD = 2
