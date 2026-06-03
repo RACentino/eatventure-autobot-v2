@@ -142,7 +142,7 @@ RED_ICON_ASSET_MAX_RED_COMPONENT_SPAN = 112
 # Mouse and Action Timing
 
 # Delay after normal click actions.
-CLICK_DELAY = 0.075
+CLICK_DELAY = 0.125
 
 # Delay after cursor movement.
 MOUSE_MOVE_DELAY = 0.075
@@ -157,7 +157,7 @@ MOUSE_UP_DURATION = 0.075
 HOVER_ENABLED = True
 
 # Duration for hover movement before click actions.
-HOVER_DURATION = 0.100
+HOVER_DURATION = 0.150
 
 # Delay between upgrade station search attempts.
 UPGRADE_SEARCH_INTERVAL = 0.200
@@ -166,13 +166,13 @@ UPGRADE_SEARCH_INTERVAL = 0.200
 STATE_DELAY = 0.200
 
 # Settling delay before verifying an upgrade station hold target.
-UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.150
+UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.250
 
 # Maximum attempts for upgrade station verification.
 UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 1
 
 # Delay between upgrade station verification attempts.
-UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.075
+UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.175
 
 # Maximum pixel radius for accepting a verified upgrade station match.
 UPGRADE_STATION_VERIFY_RADIUS = 36
