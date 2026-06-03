@@ -142,7 +142,7 @@ RED_ICON_ASSET_MAX_RED_COMPONENT_SPAN = 112
 # Mouse and Action Timing
 
 # Delay after normal click actions.
-CLICK_DELAY = 0.125
+CLICK_DELAY = 0.075
 
 # Delay after cursor movement.
 MOUSE_MOVE_DELAY = 0.075
@@ -157,7 +157,7 @@ MOUSE_UP_DURATION = 0.075
 HOVER_ENABLED = True
 
 # Duration for hover movement before click actions.
-HOVER_DURATION = 0.150
+HOVER_DURATION = 0.100
 
 # Delay between upgrade station search attempts.
 UPGRADE_SEARCH_INTERVAL = 0.200
@@ -169,10 +169,10 @@ STATE_DELAY = 0.200
 UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.150
 
 # Maximum attempts for upgrade station verification.
-UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 3
+UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 1
 
 # Delay between upgrade station verification attempts.
-UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.050
+UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.075
 
 # Maximum pixel radius for accepting a verified upgrade station match.
 UPGRADE_STATION_VERIFY_RADIUS = 36
@@ -244,7 +244,7 @@ BOX_SEARCH_Y = 780
 # Click Coordinates
 
 # Relative idle click coordinate used before scan actions.
-IDLE_CLICK_POS = (2, 390)
+IDLE_CLICK_POS = (2, 690)
 
 # Relative coordinate for opening the stats upgrade panel.
 STATS_UPGRADE_BUTTON_POS = (310, 698)
@@ -331,7 +331,7 @@ SCROLL_INTERVAL_PAUSE = 0.300
 POST_SCROLL_SETTLE = 0.200
 
 # Duration of each scroll drag gesture.
-SCROLL_DURATION = 0.300
+SCROLL_DURATION = 0.250
 
 
 # Handler Limits
