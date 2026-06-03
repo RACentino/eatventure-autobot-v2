@@ -320,7 +320,7 @@ UPGRADE_RED_ICON_Y_MAX = 680
 # Scrolling
 
 # Pixel distance for each scroll drag.
-SCROLL_PIXEL_STEP = 120
+SCROLL_PIXEL_STEP = 90
 
 # Multiplier applied to scroll pixel distance.
 SCROLL_DISTANCE_RATIO = 1.0
@@ -338,7 +338,7 @@ SCROLL_INTERVAL_PAUSE = 0.18
 POST_SCROLL_SETTLE = 0.3
 
 # Duration of each scroll drag gesture.
-SCROLL_DURATION = 0.200
+SCROLL_DURATION = 0.150
 
 
 # Handler Limits
@@ -356,7 +356,7 @@ TRANSITION_LEVEL_MAX_ATTEMPTS = 5
 CONSECUTIVE_FAILED_CYCLES_THRESHOLD = 2
 
 # Idle passes without progress before triggering a scroll search.
-IDLE_PASS_SCROLL_THRESHOLD = 2
+IDLE_PASS_SCROLL_THRESHOLD = 1
 
 
 # Adaptive Runtime Tuning
