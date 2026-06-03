@@ -39,13 +39,6 @@ class UpgradeHandlerMixin:
             logger.warning("Upgrade station hold position could not be resolved at (%s, %s)", x, y)
             return None
 
-
-    def _position_cursor_for_upgrade_hold(self, x: int, y: int) -> tuple[int, int] | None:
-        screen_pos = self.mouse_controller._resolve_screen_position(x, y, relative=True)
-        if screen_pos is None:
-            logger.warning("Upgrade station hold position could not be resolved at (%s, %s)", x, y)
-            return None
-
         screen_x, screen_y = screen_pos
         if self.mouse_controller._set_cursor_pos(screen_x, screen_y):
             if self.mouse_controller.move_delay > 0:
@@ -200,10 +193,9 @@ class UpgradeHandlerMixin:
     @staticmethod
     def _upgrade_hold_timing() -> tuple[float, float]:
         hold_check_interval = bounded_float(
-            config.UPGRADE_STATION_VERIFY_SEARCH_INTERVAL,
-            0.10,
-            minimum=0.05,
-            maximum=0.20,
+            config.UPGRADE_STATION_HOLD_CHECK_INTERVAL,
+            0.20,
+            minimum=0.001,
         )
         return hold_check_interval, UpgradeHandlerMixin._hold_max_duration()
 
@@ -219,7 +211,7 @@ class UpgradeHandlerMixin:
 
         logger.info("Upgrade station no longer detected after %.2fs hold", hold_elapsed)
         self._click_idle()
-        self._sleep(config.STATE_DELAY)
+        self._sleep(config.UPGRADE_STATION_POST_HOLD_IDLE_SETTLE_DELAY)
         self.upgrade_station_counter += 1
         stats_threshold = bounded_int(config.UPGRADE_STATION_STATS_THRESHOLD, 2, minimum=1)
         if self.upgrade_station_counter < stats_threshold:
@@ -359,7 +351,7 @@ class UpgradeHandlerMixin:
         if not opened:
             return State.OPEN_BOXES
 
-        self._sleep(config.STATE_DELAY)
+        self._sleep(config.STATS_UPGRADE_PANEL_SETTLE_DELAY)
         clicked = self.mouse_controller.click_stats_upgrade_at(
             config.STATS_UPGRADE_POS[0],
             config.STATS_UPGRADE_POS[1],
