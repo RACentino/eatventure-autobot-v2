@@ -133,7 +133,7 @@ RED_ICON_HSV_RANGES = (
     ((176, 110, 190), (179, 255, 255)),
 )
 
-RED_ICON_HSV_MIN_MATCH_RATIO = 0.40
+RED_ICON_HSV_MIN_MATCH_RATIO = 0.35
 
 # Maximum red component span accepted during red icon texture validation.
 RED_ICON_ASSET_MAX_RED_COMPONENT_SPAN = 112
@@ -166,7 +166,7 @@ UPGRADE_SEARCH_INTERVAL = 0.560
 STATE_DELAY = 0.360
 
 # Settling delay before verifying an upgrade station hold target.
-UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.300
+UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.150
 
 # Maximum attempts for upgrade station verification.
 UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 1
@@ -178,13 +178,13 @@ UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.140
 UPGRADE_STATION_VERIFY_RADIUS = 36
 
 # Maximum duration for holding an upgrade station click.
-CLICK_HOLD_MAX_DURATION = 8.0
+CLICK_HOLD_MAX_DURATION = 8.5
 
 # Duration for stats upgrade click bursts.
-STATS_UPGRADE_CLICK_DURATION = 1.4
+STATS_UPGRADE_CLICK_DURATION = 1.5
 
 # Delay between stats upgrade click actions.
-STATS_UPGRADE_CLICK_DELAY = 0.050
+STATS_UPGRADE_CLICK_DELAY = 0.016
 
 # Settling delay before scan actions in transition handlers.
 IDLE_SETTLE_DELAY = 0.180
@@ -331,7 +331,7 @@ SCROLL_INTERVAL_PAUSE = 0.260
 POST_SCROLL_SETTLE = 0.360
 
 # Duration of each scroll drag gesture.
-SCROLL_DURATION = 0.320
+SCROLL_DURATION = 0.200
 
 
 # Handler Limits
