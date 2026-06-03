@@ -356,7 +356,7 @@ TRANSITION_LEVEL_MAX_ATTEMPTS = 5
 CONSECUTIVE_FAILED_CYCLES_THRESHOLD = 2
 
 # Idle passes without progress before triggering a scroll search.
-IDLE_PASS_SCROLL_THRESHOLD = 1
+IDLE_PASS_SCROLL_THRESHOLD = 2
 
 
 # Adaptive Runtime Tuning
