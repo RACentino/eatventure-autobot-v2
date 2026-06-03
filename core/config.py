@@ -112,7 +112,7 @@ UNLOCK_THRESHOLD = 0.905
 NEW_LEVEL_THRESHOLD = 0.965
 
 # Minimum red icon templates that must agree outside fast mode.
-RED_ICON_MIN_MATCHES = 3
+RED_ICON_MIN_MATCHES = 2
 
 # Enables single-template red icon_scan mode for faster passes.
 RED_ICON_FAST_MODE_ENABLED = False
@@ -142,37 +142,37 @@ RED_ICON_ASSET_MAX_RED_COMPONENT_SPAN = 112
 # Mouse and Action Timing
 
 # Delay after normal click actions.
-CLICK_DELAY = 0.125
+CLICK_DELAY = 0.075
 
 # Delay after cursor movement.
-MOUSE_MOVE_DELAY = 0.075
+MOUSE_MOVE_DELAY = 0.0375
 
 # Duration to hold the mouse button down during click actions.
 MOUSE_DOWN_DURATION = 0.150
 
 # Delay after releasing the mouse button.
-MOUSE_UP_DURATION = 0.075
+MOUSE_UP_DURATION = 0.050
 
 # Enables hover movement before click actions.
 HOVER_ENABLED = True
 
 # Duration for hover movement before click actions.
-HOVER_DURATION = 0.150
+HOVER_DURATION = 0.075
 
 # Delay between upgrade station search attempts.
-UPGRADE_SEARCH_INTERVAL = 0.200
+UPGRADE_SEARCH_INTERVAL = 0.5
 
 # Delay between state-machine actions.
-STATE_DELAY = 0.400
+STATE_DELAY = 0.5
 
 # Settling delay before verifying an upgrade station hold target.
-UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.250
+UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.150
 
 # Maximum attempts for upgrade station verification.
 UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 1
 
 # Delay between upgrade station verification attempts.
-UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.175
+UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.75
 
 # Maximum pixel radius for accepting a verified upgrade station match.
 UPGRADE_STATION_VERIFY_RADIUS = 36
@@ -325,7 +325,7 @@ MAX_SCROLL_CYCLES = 6
 SCROLL_INCREMENT_STEP = 1
 
 # Delay between scroll intervals.
-SCROLL_INTERVAL_PAUSE = 0.300
+SCROLL_INTERVAL_PAUSE = 0.200
 
 # Settling delay after a scroll gesture.
 POST_SCROLL_SETTLE = 0.200
