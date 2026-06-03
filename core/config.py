@@ -160,7 +160,7 @@ HOVER_ENABLED = True
 HOVER_DURATION = 0.150
 
 # Delay between upgrade station search attempts.
-UPGRADE_SEARCH_INTERVAL = 0.075
+UPGRADE_SEARCH_INTERVAL = 0.200
 
 # Delay between state-machine actions.
 STATE_DELAY = 0.200
