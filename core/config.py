@@ -142,7 +142,7 @@ RED_ICON_ASSET_MAX_RED_COMPONENT_SPAN = 112
 # Mouse and Action Timing
 
 # Delay after normal click actions.
-CLICK_DELAY = 0.060
+CLICK_DELAY = 0.06
 
 # Delay after cursor movement.
 MOUSE_MOVE_DELAY = 0.018
@@ -163,55 +163,55 @@ HOVER_DURATION = 0.025
 UPGRADE_SEARCH_INTERVAL = 0.085
 
 # Delay between state-machine actions.
-STATE_DELAY = 0.080
+STATE_DELAY = 0.08
 
 # Settling delay before verifying an upgrade station hold target.
-UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.140
+UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.14
 
 # Maximum attempts for upgrade station verification.
 UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 1
 
 # Delay between upgrade station verification attempts.
-UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.140
+UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.14
 
-UPGRADE_STATION_HOLD_CHECK_INTERVAL = 0.120
+UPGRADE_STATION_HOLD_CHECK_INTERVAL = 0.12
 
 # Maximum pixel radius for accepting a verified upgrade station match.
 UPGRADE_STATION_VERIFY_RADIUS = 36
 
 # Maximum duration for holding an upgrade station click.
-CLICK_HOLD_MAX_DURATION = 8.0
+CLICK_HOLD_MAX_DURATION = 8.3
 
-UPGRADE_STATION_POST_HOLD_IDLE_SETTLE_DELAY = 0.120
+UPGRADE_STATION_POST_HOLD_IDLE_SETTLE_DELAY = 0.12
 
-STATS_UPGRADE_PANEL_SETTLE_DELAY = 0.180
+STATS_UPGRADE_PANEL_SETTLE_DELAY = 0.18
 
 # Duration for stats upgrade click bursts.
 STATS_UPGRADE_CLICK_DURATION = 1.25
 
 # Delay between stats upgrade click actions.
-STATS_UPGRADE_CLICK_DELAY = 0.034
+STATS_UPGRADE_CLICK_DELAY = 0.016
 
 # Settling delay before scan actions in transition handlers.
 IDLE_SETTLE_DELAY = 0.055
 
 # Delay after clicking the new-level button.
-NEW_LEVEL_CLICK_SETTLE_DELAY = 0.140
+NEW_LEVEL_CLICK_SETTLE_DELAY = 0.14
 
 # Delay after clicking the level transition confirmation.
-LEVEL_TRANSITION_CONFIRM_DELAY = 0.220
+LEVEL_TRANSITION_CONFIRM_DELAY = 0.22
 
 # Delay after the level transition animation completes.
-LEVEL_TRANSITION_COMPLETE_DELAY = 0.240
+LEVEL_TRANSITION_COMPLETE_DELAY = 0.24
 
 # Retry interval during level transition attempts.
-LEVEL_TRANSITION_RETRY_INTERVAL = 0.090
+LEVEL_TRANSITION_RETRY_INTERVAL = 0.09
 
 # Retry interval when waiting for the unlock button to appear.
-WAIT_FOR_UNLOCK_RETRY_INTERVAL = 0.220
+WAIT_FOR_UNLOCK_RETRY_INTERVAL = 0.22
 
 # Settling delay after clicking the unlock button.
-WAIT_FOR_UNLOCK_SETTLE_DELAY = 0.140
+WAIT_FOR_UNLOCK_SETTLE_DELAY = 0.14
 
 
 # Telegram Notifications
@@ -280,7 +280,7 @@ UPGRADE_STATION_HSV_RANGES = (
 )
 
 # Minimum HSV mask ratio for accepting an upgrade station candidate.
-UPGRADE_STATION_HSV_MIN_MATCH_RATIO = 0.50
+UPGRADE_STATION_HSV_MIN_MATCH_RATIO = 0.5
 
 
 # Icon Regions and Offsets
@@ -331,13 +331,13 @@ MAX_SCROLL_CYCLES = 6
 SCROLL_INCREMENT_STEP = 1
 
 # Delay between scroll intervals.
-SCROLL_INTERVAL_PAUSE = 0.080
+SCROLL_INTERVAL_PAUSE = 0.18
 
 # Settling delay after a scroll gesture.
-POST_SCROLL_SETTLE = 0.180
+POST_SCROLL_SETTLE = 0.18
 
 # Duration of each scroll drag gesture.
-SCROLL_DURATION = 0.220
+SCROLL_DURATION = 0.22
 
 
 # Handler Limits
