@@ -133,7 +133,7 @@ RED_ICON_HSV_RANGES = (
     ((176, 110, 190), (179, 255, 255)),
 )
 
-RED_ICON_HSV_MIN_MATCH_RATIO = 0.5
+RED_ICON_HSV_MIN_MATCH_RATIO = 0.6
 
 # Maximum red component span accepted during red icon texture validation.
 RED_ICON_ASSET_MAX_RED_COMPONENT_SPAN = 112
