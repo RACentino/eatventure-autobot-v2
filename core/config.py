@@ -73,7 +73,7 @@ SCRCPY_UPGRADE_MISS_RECOVERY_DELAY = 0.090
 MATCH_THRESHOLD = 0.98
 
 # Template confidence threshold for red icon scans.
-RED_ICON_THRESHOLD = 0.920
+RED_ICON_THRESHOLD = 0.93
 
 # Template confidence threshold for new-level red icon validation.
 NEW_LEVEL_RED_ICON_THRESHOLD = 0.942
@@ -133,7 +133,7 @@ RED_ICON_HSV_RANGES = (
     ((176, 110, 190), (179, 255, 255)),
 )
 
-RED_ICON_HSV_MIN_MATCH_RATIO = 0.6
+RED_ICON_HSV_MIN_MATCH_RATIO = 0.5
 
 # Maximum red component span accepted during red icon texture validation.
 RED_ICON_ASSET_MAX_RED_COMPONENT_SPAN = 112
