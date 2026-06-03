@@ -142,16 +142,16 @@ RED_ICON_ASSET_MAX_RED_COMPONENT_SPAN = 112
 # Mouse and Action Timing
 
 # Delay after normal click actions.
-CLICK_DELAY = 0.1
+CLICK_DELAY = 0.07
 
 # Delay after cursor movement.
 MOUSE_MOVE_DELAY = 0.07
 
 # Duration to hold the mouse button down during click actions.
-MOUSE_DOWN_DURATION = 0.15
+MOUSE_DOWN_DURATION = 0.100
 
 # Delay after releasing the mouse button.
-MOUSE_UP_DURATION = 0.075
+MOUSE_UP_DURATION = 0.050
 
 # Enables hover movement before click actions.
 HOVER_ENABLED = True
@@ -160,10 +160,10 @@ HOVER_ENABLED = True
 HOVER_DURATION = 0.1
 
 # Delay between upgrade station search attempts.
-UPGRADE_SEARCH_INTERVAL = 0.3
+UPGRADE_SEARCH_INTERVAL = 0.2
 
 # Delay between state-machine actions.
-STATE_DELAY = 0.3
+STATE_DELAY = 0.2
 
 # Settling delay before verifying an upgrade station hold target.
 UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.150
@@ -320,22 +320,22 @@ UPGRADE_RED_ICON_Y_MAX = 680
 # Scrolling
 
 # Pixel distance for each scroll drag.
-SCROLL_PIXEL_STEP = 100
+SCROLL_PIXEL_STEP = 90
 
 # Multiplier applied to scroll pixel distance.
 SCROLL_DISTANCE_RATIO = 1.0
 
 # Maximum oscillating scroll cycles before reset.
-MAX_SCROLL_CYCLES = 2
+MAX_SCROLL_CYCLES = 5
 
 # Step increment applied to each oscillating scroll cycle.
-SCROLL_INCREMENT_STEP = 5
+SCROLL_INCREMENT_STEP = 2
 
 # Delay between scroll intervals.
-SCROLL_INTERVAL_PAUSE = 0.3
+SCROLL_INTERVAL_PAUSE = 0.200
 
 # Settling delay after a scroll gesture.
-POST_SCROLL_SETTLE = 0.3
+POST_SCROLL_SETTLE = 0.200
 
 # Duration of each scroll drag gesture.
 SCROLL_DURATION = 0.150
