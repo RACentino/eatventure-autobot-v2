@@ -2,7 +2,7 @@ import logging
 import math
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from pynput import mouse as pynput_mouse
@@ -145,6 +145,28 @@ def wait_event(stop_event: threading.Event | None, duration: Any) -> bool:
     return sleep_until(time.perf_counter() + duration, stop_event)
 
 
+def _window_bounds_sequence(bounds: Any) -> Sequence[Any]:
+    if isinstance(bounds, (str, bytes, bytearray)):
+        raise TypeError(f"expected a 4-item window bounds sequence, got {type(bounds).__name__}")
+    if not isinstance(bounds, Sequence):
+        raise TypeError(f"expected a 4-item window bounds sequence, got {type(bounds).__name__}")
+    if len(bounds) != 4:
+        raise ValueError(f"expected 4 window bounds values, got {len(bounds)}")
+    return bounds
+
+
+def _coerce_window_bounds(bounds: Any) -> WindowBounds:
+    values = _window_bounds_sequence(bounds)
+    try:
+        window_x_coordinate = int(values[0])
+        window_y_coordinate = int(values[1])
+        client_width = int(values[2])
+        client_height = int(values[3])
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"window bounds must contain integer-compatible values: {bounds!r}") from exc
+    return window_x_coordinate, window_y_coordinate, client_width, client_height
+
+
 class MouseController:
     def __init__(
         self,
@@ -196,14 +218,16 @@ class MouseController:
         win_x, win_y, _, _ = self.get_window_bounds()
         return win_x, win_y
 
+    def _read_window_bounds_source(self) -> Any:
+        if callable(self._window_bounds_source):
+            return self._window_bounds_source()
+        return self._window_bounds_source
+
     def get_window_bounds(self) -> WindowBounds:
         try:
-            bounds = self._window_bounds_source() if callable(self._window_bounds_source) else self._window_bounds_source
-            win_x, win_y, width, height = bounds
-            win_x = int(win_x)
-            win_y = int(win_y)
-            width = int(width)
-            height = int(height)
+            win_x, win_y, width, height = _coerce_window_bounds(
+                self._read_window_bounds_source()
+            )
         except Exception as exc:
             raise RuntimeError(f"Cannot read target window bounds: {exc}") from exc
         if width <= 0 or height <= 0:

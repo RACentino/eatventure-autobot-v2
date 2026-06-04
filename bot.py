@@ -642,7 +642,7 @@ class EatventureBot:
         self.window_capture = WindowCapture(config.WINDOW_TITLE, config.WINDOW_WIDTH, config.WINDOW_HEIGHT)
         self.image_matcher = ImageMatcher(config.MATCH_THRESHOLD)
         self.mouse_controller = MouseController(
-            self.window_capture.get_hwnd,
+            self.window_capture.get_window_rect,
             config.CLICK_DELAY,
             config.MOUSE_MOVE_DELAY,
         )
@@ -1561,6 +1561,9 @@ class EatventureBot:
             return State.SCROLL
 
         return State.FIND_RED_ICONS
+
+    def request_stop(self) -> None:
+        self._stop_requested.set()
 
     def start(self) -> bool:
         if self.running:
