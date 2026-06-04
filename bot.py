@@ -940,7 +940,7 @@ class EatventureBot:
         return screenshot[top:bottom, left:right], left, top
 
     @staticmethod
-    def _box_iou(first: MatchCandidate, second: MatchCandidate) -> float:
+    def _box_iou(first: BoxCandidate, second: BoxCandidate) -> float:
         _, x1, y1, w1, h1 = first[:5]
         _, x2, y2, w2, h2 = second[:5]
         left = max(x1 - w1 / 2, x2 - w2 / 2)
@@ -1932,13 +1932,11 @@ class EatventureBot:
             return State.OPEN_BOXES
 
         self._sleep(config.STATE_DELAY)
-        clicked = self.mouse_controller.spam_click_at(
+        clicked = self.mouse_controller.click_stats_upgrade_at(
             config.STATS_UPGRADE_POS[0],
             config.STATS_UPGRADE_POS[1],
             duration=config.STATS_UPGRADE_CLICK_DURATION,
             click_delay=config.STATS_UPGRADE_CLICK_DELAY,
-            mouse_down_duration=config.STATS_UPGRADE_CLICK_DELAY,
-            mouse_up_duration=0.0,
             relative=True,
             interrupt_check=self._stop_requested.is_set,
         )
