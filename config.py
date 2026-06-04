@@ -143,7 +143,7 @@ RED_ICON_HSV_MIN_MATCH_RATIO = 0.45
 CLICK_DELAY = 0.075
 
 # Delay after cursor movement.
-MOUSE_MOVE_DELAY = 0.04
+MOUSE_MOVE_DELAY = 0.2
 
 # Duration to hold the mouse button down during click actions.
 MOUSE_DOWN_DURATION = 0.16
@@ -176,10 +176,10 @@ UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.0
 CLICK_HOLD_MAX_DURATION = 8.75
 
 # Duration for stats upgrade click bursts.
-STATS_UPGRADE_CLICK_DURATION = 1.75
+STATS_UPGRADE_CLICK_DURATION = 3.0
 
 # Delay between stats upgrade click actions.
-STATS_UPGRADE_CLICK_DELAY = 0.016
+STATS_UPGRADE_CLICK_DELAY = 0.030
 
 # Telegram Notifications
 
