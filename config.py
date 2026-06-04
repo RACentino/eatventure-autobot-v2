@@ -120,7 +120,7 @@ NEW_LEVEL_THRESHOLD = 0.965
 RED_ICON_MIN_MATCHES = 3
 
 # Enables single-template red icon_scan mode for faster passes.
-RED_ICON_FAST_MODE_ENABLED = True
+RED_ICON_FAST_MODE_ENABLED = False
 
 # Red icon template names used when fast mode is enabled.
 RED_ICON_FAST_TEMPLATE_NAMES = ("RedIcon6","RedIcon15", "RedIcon12",)
@@ -289,10 +289,10 @@ SCROLL_PIXEL_STEP = 100
 SCROLL_DISTANCE_RATIO = 1.0
 
 # Maximum oscillating scroll cycles before reset.
-MAX_SCROLL_CYCLES = 5
+MAX_SCROLL_CYCLES = 3
 
 # Step increment applied to each oscillating scroll cycle.
-SCROLL_INCREMENT_STEP = 2
+SCROLL_INCREMENT_STEP = 3
 
 # Delay between scroll intervals.
 SCROLL_INTERVAL_PAUSE = 0.250
@@ -301,7 +301,7 @@ SCROLL_INTERVAL_PAUSE = 0.250
 POST_SCROLL_SETTLE = 0.250
 
 # Duration of each scroll drag gesture.
-SCROLL_DURATION = 0.200
+SCROLL_DURATION = 0.150
 
 
 # Adaptive Runtime Tuning
