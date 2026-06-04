@@ -161,10 +161,10 @@ HOVER_DURATION = 0.15
 UPGRADE_SEARCH_INTERVAL = 0.0
 
 # Delay between state-machine actions.
-STATE_DELAY = 0.45
+STATE_DELAY = 0.3
 
 # Settling delay before verifying an upgrade station hold target.
-UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.35
+UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.15
 
 # Maximum attempts for upgrade station verification.
 UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 2
@@ -283,7 +283,7 @@ UPGRADE_RED_ICON_Y_MAX = 680
 # Scrolling
 
 # Pixel distance for each scroll drag.
-SCROLL_PIXEL_STEP = 120
+SCROLL_PIXEL_STEP = 100
 
 # Multiplier applied to scroll pixel distance.
 SCROLL_DISTANCE_RATIO = 1.0
@@ -298,10 +298,10 @@ SCROLL_INCREMENT_STEP = 2
 SCROLL_INTERVAL_PAUSE = 0.15
 
 # Settling delay after a scroll gesture.
-POST_SCROLL_SETTLE = 0.35
+POST_SCROLL_SETTLE = 0.15
 
 # Duration of each scroll drag gesture.
-SCROLL_DURATION = 0.150
+SCROLL_DURATION = 0.200
 
 
 # Adaptive Runtime Tuning
