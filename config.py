@@ -140,7 +140,7 @@ RED_ICON_HSV_MIN_MATCH_RATIO = 0.45
 # Mouse and Action Timing
 
 # Delay after normal click actions.
-CLICK_DELAY = 0.075
+CLICK_DELAY = 0.1
 
 # Delay after cursor movement.
 MOUSE_MOVE_DELAY = 0.2
@@ -161,7 +161,7 @@ HOVER_DURATION = 0.15
 UPGRADE_SEARCH_INTERVAL = 0.15
 
 # Delay between state-machine actions.
-STATE_DELAY = 0.4
+STATE_DELAY = 0.3
 
 # Settling delay before verifying an upgrade station hold target.
 UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.3
