@@ -5,8 +5,9 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from core import config
-from core.platform import pynput_mouse, require_automation_backend
+from pynput import mouse as pynput_mouse
+
+import config
 
 logger = logging.getLogger(__name__)
 
@@ -155,11 +156,10 @@ class MouseController:
         mouse_device: Any = None,
     ) -> None:
         if mouse_device is None:
-            require_automation_backend("MouseController")
             self._mouse = pynput_mouse.Controller()
         else:
             self._mouse = mouse_device
-        self._left_button = pynput_mouse.Button.left if pynput_mouse is not None else "left"
+        self._left_button = pynput_mouse.Button.left
         self._window_bounds_source = window_bounds_source
         self.click_delay = self._coerce_non_negative_float(
             config.CLICK_DELAY if click_delay is None else click_delay,

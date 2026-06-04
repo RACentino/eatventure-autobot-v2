@@ -1,10 +1,15 @@
+from pathlib import Path
+
+
 # Paths
 
-# Project-relative path to the image template assets directory.
-ASSETS_DIR = "assets"
+BASE_DIR = Path(__file__).resolve().parent
 
-# Project-relative path to the runtime log output directory.
-LOGS_DIR = "logs"
+# Absolute path to the image template assets directory.
+ASSETS_DIR = str(BASE_DIR / "assets")
+
+# Absolute path to the runtime log output directory.
+LOGS_DIR = str(BASE_DIR / "logs")
 
 
 # Window and Logging
@@ -123,9 +128,6 @@ RED_ICON_FAST_TEMPLATE_NAMES = ("RedIcon6","RedIcon15", "RedIcon12",)
 # Minimum pixel distance between fast-mode red icon matches.
 RED_ICON_FAST_MIN_DISTANCE = 64
 
-# Red icon template scales used for multi-resolution screenshots.
-RED_ICON_TEMPLATE_SCALES = (1.0, 2.0, 2.5)
-
 RED_ICON_HSV_COLOR_GATE_ENABLED = True
 
 RED_ICON_HSV_RANGES = (
@@ -134,10 +136,6 @@ RED_ICON_HSV_RANGES = (
 )
 
 RED_ICON_HSV_MIN_MATCH_RATIO = 0.5
-
-# Maximum red component span accepted during red icon texture validation.
-RED_ICON_ASSET_MAX_RED_COMPONENT_SPAN = 112
-
 
 # Mouse and Action Timing
 
@@ -148,22 +146,22 @@ CLICK_DELAY = 0.22
 MOUSE_MOVE_DELAY = 0.08
 
 # Duration to hold the mouse button down during click actions.
-MOUSE_DOWN_DURATION = 0.175
+MOUSE_DOWN_DURATION = 0.14
 
 # Delay after releasing the mouse button.
-MOUSE_UP_DURATION = 0.100
+MOUSE_UP_DURATION = 0.10
 
 # Enables hover movement before click actions.
 HOVER_ENABLED = True
 
 # Duration for hover movement before click actions.
-HOVER_DURATION = 0.25
+HOVER_DURATION = 0.12
 
 # Delay between upgrade station search attempts.
 UPGRADE_SEARCH_INTERVAL = 0.175
 
 # Delay between state-machine actions.
-STATE_DELAY = 0.3
+STATE_DELAY = 0.25
 
 # Settling delay before verifying an upgrade station hold target.
 UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.35
@@ -174,46 +172,14 @@ UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 2
 # Delay between upgrade station verification attempts.
 UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.175
 
-
-UPGRADE_STATION_HOLD_CHECK_INTERVAL = 0.12
-
-# Maximum pixel radius for accepting a verified upgrade station match.
-UPGRADE_STATION_VERIFY_RADIUS = 72
-
 # Maximum duration for holding an upgrade station click.
 CLICK_HOLD_MAX_DURATION = 9.0
-
-UPGRADE_STATION_POST_HOLD_IDLE_SETTLE_DELAY = 0.35
-
-STATS_UPGRADE_PANEL_SETTLE_DELAY = 0.45
 
 # Duration for stats upgrade click bursts.
 STATS_UPGRADE_CLICK_DURATION = 1.5
 
 # Delay between stats upgrade click actions.
 STATS_UPGRADE_CLICK_DELAY = 0.016
-
-# Settling delay before scan actions in transition handlers.
-IDLE_SETTLE_DELAY = 0.25
-
-# Delay after clicking the new-level button.
-NEW_LEVEL_CLICK_SETTLE_DELAY = 0.75
-
-# Delay after clicking the level transition confirmation.
-LEVEL_TRANSITION_CONFIRM_DELAY = 1.25
-
-# Delay after the level transition animation completes.
-LEVEL_TRANSITION_COMPLETE_DELAY = 1.50
-
-# Retry interval during level transition attempts.
-LEVEL_TRANSITION_RETRY_INTERVAL = 0.25
-
-# Retry interval when waiting for the unlock button to appear.
-WAIT_FOR_UNLOCK_RETRY_INTERVAL = 0.35
-
-# Settling delay after clicking the unlock button.
-WAIT_FOR_UNLOCK_SETTLE_DELAY = 0.45
-
 
 # Telegram Notifications
 
@@ -226,10 +192,7 @@ TELEGRAM_BOT_TOKEN = ""
 # Telegram chat identifier that receives notifications.
 TELEGRAM_CHAT_ID = ""
 
-# Maximum queued Telegram messages before new messages are dropped.
-TELEGRAM_QUEUE_MAXSIZE = 100
-
-# Maximum Telegram worker shutdown wait in seconds.
+# Maximum Telegram request timeout in seconds.
 TELEGRAM_CLOSE_TIMEOUT = 2.0
 
 
@@ -339,24 +302,6 @@ POST_SCROLL_SETTLE = 0.3
 
 # Duration of each scroll drag gesture.
 SCROLL_DURATION = 0.250
-
-
-# Handler Limits
-
-# Maximum attempts when searching for an upgrade station.
-UPGRADE_STATION_SEARCH_MAX_ATTEMPTS = 5
-
-# Minimum upgrade counter before opening the stats panel.
-UPGRADE_STATION_STATS_THRESHOLD = 1
-
-# Maximum retry attempts during level transition.
-TRANSITION_LEVEL_MAX_ATTEMPTS = 5
-
-# Consecutive failed scan cycles before triggering idle recovery.
-CONSECUTIVE_FAILED_CYCLES_THRESHOLD = 2
-
-# Idle passes without progress before triggering a scroll search.
-IDLE_PASS_SCROLL_THRESHOLD = 1
 
 
 # Adaptive Runtime Tuning
@@ -508,8 +453,8 @@ AI_STATS_UPGRADE_MISS_WINDOW = 3
 # Amount to lower the stats upgrade threshold after miss window exhaustion.
 AI_STATS_UPGRADE_MISS_STEP = 0.001
 
-# Project-relative file path for persisted adaptive vision state.
-AI_VISION_STATE_FILE = "memory/vision_state.json"
+# Absolute file path for persisted adaptive vision state.
+AI_VISION_STATE_FILE = str(BASE_DIR / "memory" / "vision_state.json")
 
 # Minimum interval between adaptive vision state saves.
 AI_VISION_SAVE_INTERVAL = 2.0
@@ -520,8 +465,8 @@ AI_VISION_SAVE_INTERVAL = 2.0
 # Enables historical learning from completed levels.
 AI_LEARNING_ENABLED = False
 
-# Project-relative file path for persisted historical learning state.
-AI_LEARNING_STATE_FILE = "memory/learning_state_stable.json"
+# Absolute file path for persisted historical learning state.
+AI_LEARNING_STATE_FILE = str(BASE_DIR / "memory" / "learning_state_stable.json")
 
 # Minimum interval between historical learning state saves.
 AI_LEARNING_SAVE_INTERVAL = 5.0

@@ -23,17 +23,10 @@ class StateMachine:
     def __init__(self, initial_state: State = State.FIND_RED_ICONS) -> None:
         if not isinstance(initial_state, State):
             raise TypeError(f"initial_state must be a State, got {type(initial_state).__name__}")
-        self._state_pair: tuple[State | None, State] = (None, initial_state)
+        self.current_state: State = initial_state
+        self.previous_state: State | None = None
         self.state_handlers: dict[State, Callable[[State], State | None]] = {}
         logger.info("State machine initialized in state: %s", initial_state.name)
-
-    @property
-    def previous_state(self) -> State | None:
-        return self._state_pair[0]
-
-    @property
-    def current_state(self) -> State:
-        return self._state_pair[1]
     
     def register_handler(self, state: State, handler: Callable[[State], State | None]) -> None:
         if not isinstance(state, State):
@@ -47,26 +40,25 @@ class StateMachine:
         if not isinstance(new_state, State):
             logger.error("Invalid transition target: %r", new_state)
             return False
-        current_state = self.current_state
-        if new_state != current_state:
-            logger.debug("State transition: %s -> %s", current_state.name, new_state.name)
-            self._state_pair = (current_state, new_state)
+        if new_state != self.current_state:
+            logger.debug("State transition: %s -> %s", self.current_state.name, new_state.name)
+            self.previous_state = self.current_state
+            self.current_state = new_state
         return True
     
     def update(self) -> bool:
-        current_state = self.current_state
-        handler = self.state_handlers.get(current_state)
+        handler = self.state_handlers.get(self.current_state)
         if handler is None:
-            logger.warning("No handler registered for state: %s", current_state.name)
+            logger.warning("No handler registered for state: %s", self.current_state.name)
             return False
 
-        next_state = handler(current_state)
+        next_state = handler(self.current_state)
         if next_state is None:
             return True
         if not isinstance(next_state, State):
             logger.error(
                 "Handler for %s returned invalid state: %r",
-                current_state.name,
+                self.current_state.name,
                 next_state,
             )
             return False

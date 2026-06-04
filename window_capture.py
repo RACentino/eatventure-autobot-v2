@@ -3,8 +3,8 @@ import threading
 from typing import Any
 
 import numpy as np
-
-from core.platform import mss, pywinctl, require_automation_backend
+import mss
+import pywinctl
 
 logger = logging.getLogger(__name__)
 WindowRect = tuple[int, int, int, int]
@@ -21,7 +21,6 @@ class WindowNotAvailableError(WindowCaptureError):
 
 class WindowCapture:
     def __init__(self, window_title: str, target_width: int = 800, target_height: int = 600) -> None:
-        require_automation_backend("WindowCapture")
         self.window_title = window_title
         self.hwnd = None
         self._window = None

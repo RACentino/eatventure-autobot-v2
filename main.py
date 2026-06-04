@@ -2,29 +2,20 @@ import logging
 import queue
 import sys
 import threading
-from enum import Enum, auto
+from pathlib import Path
 from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 from typing import Any
 
-from core import config, project_path
-from core.platform import BackendDependencyError, pynput_keyboard, require_keyboard_backend
+from pynput import keyboard as pynput_keyboard
+
+import config
 from bot import EatventureBot
-from interaction.mouse import precise_sleep
+from mouse_controller import precise_sleep
 
 bot_instance: EatventureBot | None = None
 log_listener: QueueListener | None = None
 exit_requested = threading.Event()
-BOT_COMMAND_QUEUE_MAXSIZE = 64
-bot_command_queue: queue.Queue["BotCommand"] = queue.Queue(maxsize=BOT_COMMAND_QUEUE_MAXSIZE)
-BOT_COMMAND_DRAIN_LIMIT = 64
 BOT_EVENT_LOOP_ITERATION_LIMIT = 2_147_483_647
-
-
-class BotCommand(Enum):
-    LOG_CURSOR_POSITION = auto()
-    TOGGLE_RUNNING = auto()
-    WIPE_MEMORY = auto()
-    EXIT_PROGRAM = auto()
 
 
 def _get_key_character(key: Any) -> str | None:
@@ -51,9 +42,7 @@ def _toggle_bot_running(logger: logging.Logger) -> None:
         bot_instance.telegram.notify_bot_stopped()
         logger.info("[Z pressed] Bot STOPPED")
         return
-
-    started = bot_instance.start()
-    if started:
+    if bot_instance.start():
         bot_instance.telegram.notify_bot_started()
         logger.info("[Z pressed] Bot STARTED")
         return
@@ -70,67 +59,8 @@ def _wipe_bot_memory(logger: logging.Logger) -> None:
 def _request_program_exit(logger: logging.Logger) -> None:
     logger.info("[P pressed] Exiting program")
     exit_requested.set()
-
-
-def _put_bot_command(command: BotCommand) -> bool:
-    try:
-        bot_command_queue.put_nowait(command)
-        return True
-    except queue.Full:
-        return False
-
-
-def _discard_oldest_bot_command() -> bool:
-    try:
-        bot_command_queue.get_nowait()
-    except queue.Empty:
-        return False
-    bot_command_queue.task_done()
-    return True
-
-
-def _enqueue_bot_command(command: BotCommand) -> None:
-    if command in {BotCommand.TOGGLE_RUNNING, BotCommand.EXIT_PROGRAM} and bot_instance is not None:
+    if bot_instance is not None:
         bot_instance.request_stop()
-    if _put_bot_command(command):
-        return
-    if command not in {BotCommand.TOGGLE_RUNNING, BotCommand.EXIT_PROGRAM}:
-        logging.getLogger(__name__).warning("Bot command queue full; dropping %s", command.name)
-        return
-    if _discard_oldest_bot_command() and _put_bot_command(command):
-        logging.getLogger(__name__).warning("Bot command queue full; discarded oldest command for %s", command.name)
-        return
-    logging.getLogger(__name__).error("Bot command queue full; failed to enqueue %s", command.name)
-
-
-def _process_bot_command(command: BotCommand, logger: logging.Logger) -> None:
-    command_handlers = {
-        BotCommand.LOG_CURSOR_POSITION: _log_window_relative_cursor_position,
-        BotCommand.TOGGLE_RUNNING: _toggle_bot_running,
-        BotCommand.WIPE_MEMORY: _wipe_bot_memory,
-        BotCommand.EXIT_PROGRAM: _request_program_exit,
-    }
-    handler = command_handlers.get(command)
-    if handler is None:
-        logger.warning("Unknown bot command ignored: %r", command)
-        return
-    try:
-        handler(logger)
-    except Exception:
-        logger.exception("Bot command failed: %s", command.name)
-
-
-def _drain_bot_commands(logger: logging.Logger) -> None:
-    for _ in range(BOT_COMMAND_DRAIN_LIMIT):
-        try:
-            command = bot_command_queue.get_nowait()
-        except queue.Empty:
-            return
-        try:
-            _process_bot_command(command, logger)
-        finally:
-            bot_command_queue.task_done()
-    logger.warning("Deferred bot command drain after %s commands", BOT_COMMAND_DRAIN_LIMIT)
 
 
 def on_press(key: Any) -> None:
@@ -138,30 +68,27 @@ def on_press(key: Any) -> None:
         character = _get_key_character(key)
         if character is None:
             return
-
-        key_commands = {
-            "x": BotCommand.LOG_CURSOR_POSITION,
-            "z": BotCommand.TOGGLE_RUNNING,
-            "c": BotCommand.WIPE_MEMORY,
-            "p": BotCommand.EXIT_PROGRAM,
+        logger = logging.getLogger(__name__)
+        key_handlers = {
+            "x": _log_window_relative_cursor_position,
+            "z": _toggle_bot_running,
+            "c": _wipe_bot_memory,
+            "p": _request_program_exit,
         }
-        command = key_commands.get(character)
-        if command is not None:
-            _enqueue_bot_command(command)
+        handler = key_handlers.get(character)
+        if handler is not None:
+            handler(logger)
     except Exception as exc:
         logging.getLogger(__name__).error("Keyboard listener error: %s", exc)
 
 
 def _create_keyboard_listener() -> Any:
-    require_keyboard_backend("Keyboard listener")
-    if pynput_keyboard is None:
-        raise BackendDependencyError("Keyboard listener backend is unavailable")
     return pynput_keyboard.Listener(on_press=on_press)
 
 
 def setup_logging() -> None:
     global log_listener
-    logs_dir = project_path(config.LOGS_DIR)
+    logs_dir = Path(config.LOGS_DIR)
     logs_dir.mkdir(parents=True, exist_ok=True)
 
     log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -190,7 +117,6 @@ def setup_logging() -> None:
     log_queue = queue.SimpleQueue()
     queue_handler = QueueHandler(log_queue)
     root_logger.addHandler(queue_handler)
-
     log_listener = QueueListener(
         log_queue,
         console_handler,
@@ -206,7 +132,7 @@ def _print_startup_banner() -> None:
     print("=" * 60)
     print(f"Window Title: {config.WINDOW_TITLE}")
     print(f"Match Threshold: {config.MATCH_THRESHOLD * 100}%")
-    print(f"Assets Directory: {project_path(config.ASSETS_DIR)}")
+    print(f"Assets Directory: {config.ASSETS_DIR}")
     print("=" * 60)
 
 
@@ -215,10 +141,8 @@ def _run_bot_event_loop() -> None:
     for _ in range(BOT_EVENT_LOOP_ITERATION_LIMIT):
         if exit_requested.is_set():
             return
-        _drain_bot_commands(logger)
         if bot_instance is not None and bot_instance.running:
             bot_instance.step()
-        _drain_bot_commands(logger)
         precise_sleep(0.1)
     logger.error("Bot event loop reached iteration limit")
     exit_requested.set()
@@ -246,22 +170,15 @@ def _cleanup_runtime(listener: Any | None) -> None:
 def main() -> int:
     global bot_instance
     listener = None
-
     _print_startup_banner()
 
     try:
         setup_logging()
         exit_requested.clear()
-
-        try:
-            listener = _create_keyboard_listener()
-        except BackendDependencyError as exc:
-            logging.getLogger(__name__).error("Keyboard listener unavailable: %s", exc)
-            return 1
+        listener = _create_keyboard_listener()
         listener.start()
 
         bot_instance = EatventureBot()
-
         logger = logging.getLogger(__name__)
         logger.info("Bot initialized and ready")
         logger.info("Press Z to START/STOP the bot")
@@ -270,7 +187,6 @@ def main() -> int:
         logger.info("Press P to EXIT the program")
 
         _run_bot_event_loop()
-
         logger.info("Program exiting")
     except KeyboardInterrupt:
         logging.getLogger(__name__).info("Bot stopped by user (Ctrl+C)")

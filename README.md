@@ -93,10 +93,6 @@ scrcpy --window-title "EatventureAuto"
 
 *(Note: Ensure the window title matches the `WINDOW_TITLE` variable in `config.py`)*
 
-## Coming Soon
-
-* **Graphical User Interface (GUI)**: A dedicated control panel for easier operation, allowing real-time monitoring, visual threshold adjustment, and one-click start/stop functionality without terminal interaction.
-
 ## Telegram Notification
 
 ### Step 1: Create a Telegram Bot
@@ -110,7 +106,7 @@ scrcpy --window-title "EatventureAuto"
 1. Start a chat with your new bot and send any message.
 2. Visit `https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates` in your browser.
 3. Look for the `"chat":{"id":...}` field and copy the number.
-4. Set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, and `TELEGRAM_ENABLED = True` in `core/config.py` before starting the bot.
+4. Set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, and `TELEGRAM_ENABLED = True` in `config.py` before starting the bot.
 
 ## Disclaimer
 
@@ -119,5 +115,3 @@ This bot is developed for **educational purposes only**. Using automation tools 
 ## License
 
 Eatventure Autobot is open-source software. It is free to use, modify, and distribute for personal and educational use.
-
-Keywords: [eatventure bot, python automation, opencv, scrcpy, mobile game bot, image recognition, state machine, adaptive ai, android automation, game botting]
