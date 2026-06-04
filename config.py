@@ -161,10 +161,10 @@ HOVER_DURATION = 0.15
 UPGRADE_SEARCH_INTERVAL = 0.0
 
 # Delay between state-machine actions.
-STATE_DELAY = 0.4
+STATE_DELAY = 0.3
 
 # Settling delay before verifying an upgrade station hold target.
-UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.35
+UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.25
 
 # Maximum attempts for upgrade station verification.
 UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 2
@@ -176,7 +176,7 @@ UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.0
 CLICK_HOLD_MAX_DURATION = 8.75
 
 # Duration for stats upgrade click bursts.
-STATS_UPGRADE_CLICK_DURATION = 1.25
+STATS_UPGRADE_CLICK_DURATION = 1.75
 
 # Delay between stats upgrade click actions.
 STATS_UPGRADE_CLICK_DELAY = 0.016
