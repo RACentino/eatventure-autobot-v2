@@ -135,7 +135,7 @@ RED_ICON_HSV_RANGES = (
     ((176, 110, 190), (179, 255, 255)),
 )
 
-RED_ICON_HSV_MIN_MATCH_RATIO = 0.6
+RED_ICON_HSV_MIN_MATCH_RATIO = 0.45
 
 # Mouse and Action Timing
 
