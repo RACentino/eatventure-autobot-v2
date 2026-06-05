@@ -4,6 +4,8 @@ from typing import Any
 import cv2
 import numpy as np
 
+_SUPERVISION_IMPORT_ERROR: Exception | None
+
 try:
     import supervision as sv
 except Exception as exc:

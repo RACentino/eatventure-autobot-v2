@@ -169,9 +169,9 @@ class WindowCapture:
             return self._window is not None
 
     def close(self) -> None:
-        close = getattr(self._screenshotter, "close", None)
-        if callable(close):
-            close()
+        close_screenshotter = getattr(self._screenshotter, "close", None)
+        if callable(close_screenshotter):
+            close_screenshotter()
 
 
 class ForbiddenAreaOverlay:
@@ -179,7 +179,7 @@ class ForbiddenAreaOverlay:
         self.window_capture = window_capture
         self.forbidden_zones = forbidden_zones
         self.running = False
-        self.thread = None
+        self.thread: threading.Thread | None = None
 
     def start(self) -> None:
         if self.running:

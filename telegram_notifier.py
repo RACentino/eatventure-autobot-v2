@@ -44,16 +44,20 @@ class TelegramNotifier:
         logger.error("Failed to send Telegram message: status=%s", response.status_code)
         return False
 
+    def _notify(self, message: str) -> None:
+        if not self.send_message(message):
+            logger.debug("Telegram notification was not delivered")
+
     def notify_bot_started(self) -> None:
-        self.send_message("Bot Started")
+        self._notify("Bot Started")
 
     def notify_bot_stopped(self) -> None:
-        self.send_message("Bot Stopped")
+        self._notify("Bot Stopped")
 
     def notify_new_level(self, level_number: int, time_spent: float) -> None:
         minutes = int(time_spent // 60)
         seconds = int(time_spent % 60)
-        self.send_message(f"{level_number}. restaurant completed! Time spent: {minutes:02d}:{seconds:02d}")
+        self._notify(f"{level_number}. restaurant completed! Time spent: {minutes:02d}:{seconds:02d}")
 
     def notify_level_milestone(self, total_levels: int) -> None:
-        self.send_message(f"Milestone Reached\nTotal cities completed: {total_levels}")
+        self._notify(f"Milestone Reached\nTotal cities completed: {total_levels}")

@@ -3,7 +3,7 @@ import math
 import threading
 import time
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import Any, Protocol
 
 from pynput import mouse as pynput_mouse
 
@@ -22,6 +22,14 @@ MAX_DRAG_STEPS = 60
 MAX_STATS_UPGRADE_CLICKS = 500
 
 
+class StopEventLike(Protocol):
+    def is_set(self) -> bool:
+        ...
+
+    def wait(self, timeout: float) -> bool:
+        ...
+
+
 def _duration(value: Any, default: float = 0.0) -> float:
     try:
         number = float(value)
@@ -36,7 +44,7 @@ def precise_sleep(duration: Any) -> None:
     wait_event(None, duration)
 
 
-def sleep_until(deadline: float, stop_event: threading.Event | None = None) -> bool:
+def sleep_until(deadline: float, stop_event: StopEventLike | None = None) -> bool:
     for _ in range(_sleep_iterations(deadline)):
         if stop_event is not None and stop_event.is_set():
             return False
@@ -50,7 +58,7 @@ def sleep_until(deadline: float, stop_event: threading.Event | None = None) -> b
     return stop_event is None or not stop_event.is_set()
 
 
-def wait_event(stop_event: threading.Event | None, duration: Any) -> bool:
+def wait_event(stop_event: StopEventLike | None, duration: Any) -> bool:
     duration = _duration(duration)
     if duration <= 0:
         return stop_event is None or not stop_event.is_set()
@@ -194,7 +202,7 @@ class MouseController:
         self._left_button_is_down = True
         wait_time = _duration(config.MOUSE_DOWN_DURATION if duration is None else duration, config.MOUSE_DOWN_DURATION)
         if wait_time > 0 and not self._interruptible_delay(wait_time, interrupt_check):
-            self._release_left(x, y)
+            self._release_after_failed_sequence(x, y)
             return False
         return True
 
@@ -205,6 +213,10 @@ class MouseController:
         self._left_button_is_down = False
         wait_time = _duration(config.MOUSE_UP_DURATION if duration is None else duration, config.MOUSE_UP_DURATION)
         return self._interruptible_delay(wait_time, interrupt_check)
+
+    def _release_after_failed_sequence(self, x: int, y: int) -> None:
+        if not self._release_left(x, y):
+            logger.error("Could not release left button after interrupted sequence at (%s, %s)", x, y)
 
     @staticmethod
     def _interruptible_delay(duration: Any, interrupt_check: Callable[[], bool] | None = None) -> bool:
@@ -265,7 +277,7 @@ class MouseController:
             if not self._press_left(screen_x, screen_y, duration=0.0, interrupt_check=interrupt_check):
                 return False
             if not self._interruptible_delay(_duration(4.0 if duration is None else duration, 4.0), interrupt_check):
-                self._release_left(screen_x, screen_y)
+                self._release_after_failed_sequence(screen_x, screen_y)
                 return False
             if not self._release_left(screen_x, screen_y, interrupt_check=interrupt_check):
                 return False
@@ -317,9 +329,11 @@ class MouseController:
             start_time = time.perf_counter()
             for index, (screen_x, screen_y) in enumerate(path):
                 if not self._set_cursor(screen_x, screen_y, verify=index == steps):
-                    self._release_left(screen_x, screen_y)
+                    self._release_after_failed_sequence(screen_x, screen_y)
                     return False
-                sleep_until(start_time + ((index + 1) * duration / steps))
+                if not sleep_until(start_time + ((index + 1) * duration / steps)):
+                    self._release_after_failed_sequence(screen_x, screen_y)
+                    return False
             if not self._release_left(*end_pos):
                 return False
             precise_sleep(self.click_delay)

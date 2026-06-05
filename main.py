@@ -114,7 +114,7 @@ def setup_logging() -> None:
     if log_listener is not None:
         log_listener.stop()
 
-    log_queue = queue.SimpleQueue()
+    log_queue: queue.SimpleQueue[logging.LogRecord] = queue.SimpleQueue()
     queue_handler = QueueHandler(log_queue)
     root_logger.addHandler(queue_handler)
     log_listener = QueueListener(
