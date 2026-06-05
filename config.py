@@ -78,7 +78,7 @@ SCRCPY_UPGRADE_MISS_RECOVERY_DELAY = 0.040
 MATCH_THRESHOLD = 0.98
 
 # Template confidence threshold for red icon scans.
-RED_ICON_THRESHOLD = 0.920
+RED_ICON_THRESHOLD = 0.950
 
 # Template confidence threshold for new-level red icon validation.
 NEW_LEVEL_RED_ICON_THRESHOLD = 0.950
@@ -299,13 +299,13 @@ SCROLL_DURATION = 0.250
 # Adaptive Runtime Tuning
 
 # Enables adaptive runtime timing adjustments.
-ADAPTIVE_TUNER_ENABLED = False
+ADAPTIVE_TUNER_ENABLED = True
 
 # EMA alpha used by the adaptive tuner.
 ADAPTIVE_TUNER_ALPHA = 0.18
 
 # Click success rate below which delays are increased.
-ADAPTIVE_TUNER_CLICK_LOW_THRESHOLD = 0.96
+ADAPTIVE_TUNER_CLICK_LOW_THRESHOLD = 0.9
 
 # Click success rate above which delays are reduced.
 ADAPTIVE_TUNER_CLICK_HIGH_THRESHOLD = 0.995
@@ -323,34 +323,34 @@ ADAPTIVE_TUNER_CLICK_DELAY_STEP = 0.010
 ADAPTIVE_TUNER_MOVE_DELAY_STEP = 0.006
 
 # Amount subtracted from click delay after high click success.
-ADAPTIVE_TUNER_CLICK_DECREMENT = 0.005
+ADAPTIVE_TUNER_CLICK_DECREMENT = 0.02
 
 # Amount subtracted from move delay after high click success.
-ADAPTIVE_TUNER_MOVE_DECREMENT = 0.003
+ADAPTIVE_TUNER_MOVE_DECREMENT = 0.03
 
 # Amount added to search interval after low search success.
 ADAPTIVE_TUNER_SEARCH_INTERVAL_STEP = 0.010
 
 # Amount subtracted from search interval after high search success.
-ADAPTIVE_TUNER_SEARCH_DECREMENT = 0.005
+ADAPTIVE_TUNER_SEARCH_DECREMENT = 0.02
 
 # Minimum click delay allowed by adaptive tuning.
 ADAPTIVE_TUNER_MIN_CLICK_DELAY = 0.040
 
 # Maximum click delay allowed by adaptive tuning.
-ADAPTIVE_TUNER_MAX_CLICK_DELAY = 0.070
+ADAPTIVE_TUNER_MAX_CLICK_DELAY = 0.2
 
 # Minimum move delay allowed by adaptive tuning.
 ADAPTIVE_TUNER_MIN_MOVE_DELAY = 0.020
 
 # Maximum move delay allowed by adaptive tuning.
-ADAPTIVE_TUNER_MAX_MOVE_DELAY = 0.040
+ADAPTIVE_TUNER_MAX_MOVE_DELAY = 0.15
 
 # Minimum search interval allowed by adaptive tuning.
 ADAPTIVE_TUNER_MIN_SEARCH_INTERVAL = 0.0
 
 # Maximum search interval allowed by adaptive tuning.
-ADAPTIVE_TUNER_MAX_SEARCH_INTERVAL = 0.050
+ADAPTIVE_TUNER_MAX_SEARCH_INTERVAL = 0.2
 
 
 # Adaptive Vision
