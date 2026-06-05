@@ -174,7 +174,7 @@ CLICK_HOLD_MAX_DURATION = 9
 STATS_UPGRADE_CLICK_DURATION = 1.25
 
 # Delay between stats upgrade click actions.
-STATS_UPGRADE_CLICK_DELAY = 0.085
+STATS_UPGRADE_CLICK_DELAY = 0.01
 
 # Telegram Notifications
 
