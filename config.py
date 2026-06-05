@@ -371,85 +371,85 @@ AI_VISION_CONFIDENCE_BOOST = 0.10
 AI_VISION_CONFIDENCE_THRESHOLD = 0.96
 
 # Minimum adaptive threshold for box scans.
-AI_BOX_THRESHOLD_MIN = 0.903
+AI_BOX_THRESHOLD_MIN = 0.925
 
 # Maximum adaptive threshold for box scans.
-AI_BOX_THRESHOLD_MAX = 0.903
+AI_BOX_THRESHOLD_MAX = 0.98
 
 # Consecutive box misses before adaptive lowering is applied.
 AI_BOX_MISS_WINDOW = 3
 
 # Amount to lower the box threshold after miss window exhaustion.
-AI_BOX_MISS_STEP = 0.002
+AI_BOX_MISS_STEP = 0.005
 
 # Minimum adaptive threshold for red icon scans.
-AI_RED_ICON_THRESHOLD_MIN = 0.950
+AI_RED_ICON_THRESHOLD_MIN = 0.915
 
 # Maximum adaptive threshold for red icon scans.
-AI_RED_ICON_THRESHOLD_MAX = 0.950
+AI_RED_ICON_THRESHOLD_MAX = 0.99
 
 # Safety margin subtracted from average red icon confidence.
-AI_RED_ICON_MARGIN = 0.012
+AI_RED_ICON_MARGIN = 0.010
 
 # Consecutive red icon misses before adaptive lowering is applied.
-AI_RED_ICON_MISS_WINDOW = 5
+AI_RED_ICON_MISS_WINDOW = 1
 
 # Amount to lower the red icon threshold after miss window exhaustion.
-AI_RED_ICON_MISS_STEP = 0.001
+AI_RED_ICON_MISS_STEP = 0.005
 
 # Minimum adaptive threshold for new-level button scans.
-AI_NEW_LEVEL_THRESHOLD_MIN = 0.945
+AI_NEW_LEVEL_THRESHOLD_MIN = 0.9
 
 # Maximum adaptive threshold for new-level button scans.
-AI_NEW_LEVEL_THRESHOLD_MAX = 0.988
+AI_NEW_LEVEL_THRESHOLD_MAX = 0.99
 
 # Consecutive new-level misses before adaptive lowering is applied.
-AI_NEW_LEVEL_MISS_WINDOW = 3
+AI_NEW_LEVEL_MISS_WINDOW = 1
 
 # Amount to lower the new-level threshold after miss window exhaustion.
-AI_NEW_LEVEL_MISS_STEP = 0.002
+AI_NEW_LEVEL_MISS_STEP = 0.005
 
 # Minimum adaptive threshold for new-level red icon scans.
-AI_NEW_LEVEL_RED_ICON_THRESHOLD_MIN = 0.950
+AI_NEW_LEVEL_RED_ICON_THRESHOLD_MIN = 0.9
 
 # Maximum adaptive threshold for new-level red icon scans.
-AI_NEW_LEVEL_RED_ICON_THRESHOLD_MAX = 0.950
+AI_NEW_LEVEL_RED_ICON_THRESHOLD_MAX = 0.99
 
 # Consecutive new-level red icon misses before adaptive lowering is applied.
-AI_NEW_LEVEL_RED_ICON_MISS_WINDOW = 5
+AI_NEW_LEVEL_RED_ICON_MISS_WINDOW = 1
 
 # Amount to lower the new-level red icon threshold after miss window exhaustion.
-AI_NEW_LEVEL_RED_ICON_MISS_STEP = 0.001
+AI_NEW_LEVEL_RED_ICON_MISS_STEP = 0.005
 
 # Minimum adaptive threshold for upgrade station scans.
-AI_UPGRADE_STATION_THRESHOLD_MIN = 0.918
+AI_UPGRADE_STATION_THRESHOLD_MIN = 0.910
 
 # Maximum adaptive threshold for upgrade station scans.
-AI_UPGRADE_STATION_THRESHOLD_MAX = 0.918
+AI_UPGRADE_STATION_THRESHOLD_MAX = 0.99
 
 # Consecutive upgrade station misses before adaptive lowering is applied.
-AI_UPGRADE_STATION_MISS_WINDOW = 3
+AI_UPGRADE_STATION_MISS_WINDOW = 1
 
 # Amount to lower the upgrade station threshold after miss window exhaustion.
-AI_UPGRADE_STATION_MISS_STEP = 0.002
+AI_UPGRADE_STATION_MISS_STEP = 0.005
 
 # Minimum adaptive threshold for stats upgrade scans.
-AI_STATS_UPGRADE_THRESHOLD_MIN = 0.950
+AI_STATS_UPGRADE_THRESHOLD_MIN = 0.9
 
 # Maximum adaptive threshold for stats upgrade scans.
-AI_STATS_UPGRADE_THRESHOLD_MAX = 0.950
+AI_STATS_UPGRADE_THRESHOLD_MAX = 0.99
 
 # Consecutive stats upgrade misses before adaptive lowering is applied.
-AI_STATS_UPGRADE_MISS_WINDOW = 3
+AI_STATS_UPGRADE_MISS_WINDOW = 1
 
 # Amount to lower the stats upgrade threshold after miss window exhaustion.
-AI_STATS_UPGRADE_MISS_STEP = 0.001
+AI_STATS_UPGRADE_MISS_STEP = 0.005
 
 # Absolute file path for persisted adaptive vision state.
 AI_VISION_STATE_FILE = str(BASE_DIR / "memory" / "vision_state.json")
 
 # Minimum interval between adaptive vision state saves.
-AI_VISION_SAVE_INTERVAL = 2.0
+AI_VISION_SAVE_INTERVAL = 0.05
 
 
 # Historical Learning
@@ -461,10 +461,10 @@ AI_LEARNING_ENABLED = True
 AI_LEARNING_STATE_FILE = str(BASE_DIR / "memory" / "learning_state_stable.json")
 
 # Minimum interval between historical learning state saves.
-AI_LEARNING_SAVE_INTERVAL = 5.0
+AI_LEARNING_SAVE_INTERVAL = 0.05
 
 # Maximum historical learning records kept in memory and persisted state.
-AI_LEARNING_RECORDS_LIMIT = 256
+AI_LEARNING_RECORDS_LIMIT = 500
 
 # Maximum wait for the historical learning worker to stop.
 AI_LEARNING_THREAD_JOIN_TIMEOUT = 1.5
