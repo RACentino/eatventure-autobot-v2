@@ -108,7 +108,7 @@ BOX_HSV_RANGES = (
 )
 
 # Minimum HSV mask ratio for accepting a box candidate.
-BOX_HSV_MIN_MATCH_RATIO = 0.4
+BOX_HSV_MIN_MATCH_RATIO = 0.5
 
 # Template confidence threshold for unlock button scans.
 UNLOCK_THRESHOLD = 0.905
@@ -143,13 +143,13 @@ RED_ICON_HSV_MIN_MATCH_RATIO = 0.45
 CLICK_DELAY = 0.1
 
 # Delay after cursor movement.
-MOUSE_MOVE_DELAY = 0.075
+MOUSE_MOVE_DELAY = 0.1
 
 # Duration to hold the mouse button down during click actions.
 MOUSE_DOWN_DURATION = 0.15
 
 # Delay after releasing the mouse button.
-MOUSE_UP_DURATION = 0.075
+MOUSE_UP_DURATION = 0.12
 
 # Enables hover movement before click actions.
 HOVER_ENABLED = True
