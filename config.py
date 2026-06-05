@@ -135,7 +135,7 @@ RED_ICON_HSV_MIN_MATCH_RATIO = 0.5
 # Mouse and Action Timing
 
 # Delay after normal click actions.
-CLICK_DELAY = 0.1
+CLICK_DELAY = 0.
 
 # Delay after cursor movement.
 MOUSE_MOVE_DELAY = 0.1
@@ -302,7 +302,7 @@ SCROLL_DURATION = 0.250
 ADAPTIVE_TUNER_ENABLED = True
 
 # EMA alpha used by the adaptive tuner.
-ADAPTIVE_TUNER_ALPHA = 0.18
+ADAPTIVE_TUNER_ALPHA = 0.25
 
 # Click success rate below which delays are increased.
 ADAPTIVE_TUNER_CLICK_LOW_THRESHOLD = 0.9
@@ -338,19 +338,19 @@ ADAPTIVE_TUNER_SEARCH_DECREMENT = 0.005
 ADAPTIVE_TUNER_MIN_CLICK_DELAY = 0.050
 
 # Maximum click delay allowed by adaptive tuning.
-ADAPTIVE_TUNER_MAX_CLICK_DELAY = 0.2
+ADAPTIVE_TUNER_MAX_CLICK_DELAY = 0.5
 
 # Minimum move delay allowed by adaptive tuning.
 ADAPTIVE_TUNER_MIN_MOVE_DELAY = 0.05
 
 # Maximum move delay allowed by adaptive tuning.
-ADAPTIVE_TUNER_MAX_MOVE_DELAY = 0.2
+ADAPTIVE_TUNER_MAX_MOVE_DELAY = 0.5
 
 # Minimum search interval allowed by adaptive tuning.
 ADAPTIVE_TUNER_MIN_SEARCH_INTERVAL = 0.0
 
 # Maximum search interval allowed by adaptive tuning.
-ADAPTIVE_TUNER_MAX_SEARCH_INTERVAL = 0.2
+ADAPTIVE_TUNER_MAX_SEARCH_INTERVAL = 0.5
 
 
 # Adaptive Vision
