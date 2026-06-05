@@ -214,7 +214,7 @@ BOX_SEARCH_Y = 780
 # Click Coordinates
 
 # Relative idle click coordinate used before scan actions.
-IDLE_CLICK_POS = (2 , 390)
+IDLE_CLICK_POS = (2 , 690)
 
 # Relative coordinate for opening the stats upgrade panel.
 STATS_UPGRADE_BUTTON_POS = (310, 698)
