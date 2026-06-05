@@ -597,7 +597,7 @@ class EatventureBot:
             template_h, template_w = template.shape[:2]
             for confidence, x, y in matches:
                 top_left = (int(x) - template_w // 2, int(y) - template_h // 2)
-                if config.RED_ICON_HSV_COLOR_GATE_ENABLED and not self.image_matcher._check_hsv_gate(
+                if not self.image_matcher._check_hsv_gate(
                     screenshot,
                     template,
                     top_left,
@@ -736,9 +736,15 @@ class EatventureBot:
             candidates = filtered if filtered is not None else candidates
         for confidence, x, y, width, height in candidates:
             top_left = (int(x) - int(width) // 2, int(y) - int(height) // 2)
-            if config.UPGRADE_STATION_HSV_COLOR_GATE_ENABLED:
-                if not self.image_matcher._check_hsv_gate(screenshot, template, top_left, mask, config.UPGRADE_STATION_HSV_RANGES, config.UPGRADE_STATION_HSV_MIN_MATCH_RATIO):
-                    continue
+            if not self.image_matcher._check_hsv_gate(
+                screenshot,
+                template,
+                top_left,
+                mask,
+                config.UPGRADE_STATION_HSV_RANGES,
+                config.UPGRADE_STATION_HSV_MIN_MATCH_RATIO,
+            ):
+                continue
             if not self.mouse_controller.is_in_forbidden_zone(x, y, relative=True):
                 return float(confidence), int(x), int(y)
         return None
@@ -808,9 +814,15 @@ class EatventureBot:
             template, mask = template_pair
             for confidence, x, y, width, height in self.image_matcher.find_template_candidates(screenshot, template, mask=mask, threshold=self.vision_optimizer.threshold("box"), min_distance=12, template_name=name):
                 top_left = (int(x) - int(width) // 2, int(y) - int(height) // 2)
-                if config.BOX_HSV_COLOR_GATE_ENABLED:
-                    if not self.image_matcher._check_hsv_gate(screenshot, template, top_left, mask, config.BOX_HSV_RANGES, config.BOX_HSV_MIN_MATCH_RATIO):
-                        continue
+                if not self.image_matcher._check_hsv_gate(
+                    screenshot,
+                    template,
+                    top_left,
+                    mask,
+                    config.BOX_HSV_RANGES,
+                    config.BOX_HSV_MIN_MATCH_RATIO,
+                ):
+                    continue
                 candidates.append((float(confidence), int(x), int(y), int(width), int(height), name))
         if self._supervision_enabled("SUPERVISION_BOX_NMS_ENABLED"):
             filtered = self.image_matcher.filter_candidates_with_supervision_nms(candidates, iou_threshold=config.SUPERVISION_BOX_NMS_IOU_THRESHOLD, class_agnostic=config.SUPERVISION_CLASS_AGNOSTIC_NMS)

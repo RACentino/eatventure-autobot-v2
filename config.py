@@ -92,9 +92,6 @@ UPGRADE_STATION_THRESHOLD = 0.910
 # Template confidence threshold for box scans.
 BOX_THRESHOLD = 0.930
 
-# Enables HSV range gating for box candidates.
-BOX_HSV_COLOR_GATE_ENABLED = True
-
 # Accepted HSV ranges for box candidate gating.
 BOX_HSV_RANGES = (
     ((10, 65, 180), (13, 105, 255)),
@@ -127,8 +124,6 @@ RED_ICON_FAST_TEMPLATE_NAMES = ("RedIcon6","RedIcon15", "RedIcon12",)
 
 # Minimum pixel distance between fast-mode red icon matches.
 RED_ICON_FAST_MIN_DISTANCE = 64
-
-RED_ICON_HSV_COLOR_GATE_ENABLED = True
 
 RED_ICON_HSV_RANGES = (
     ((0, 110, 190), (8, 255, 255)),
@@ -233,9 +228,6 @@ LEVEL_TRANSITION_POS = (174, 520)
 
 
 # Upgrade Station HSV Gate
-
-# Enables HSV range gating for upgrade station candidates.
-UPGRADE_STATION_HSV_COLOR_GATE_ENABLED = True
 
 # Accepted HSV ranges for upgrade station candidate gating.
 UPGRADE_STATION_HSV_RANGES = (
