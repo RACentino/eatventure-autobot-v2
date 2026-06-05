@@ -262,7 +262,7 @@ class MouseController:
             if not self._set_cursor(screen_x, screen_y):
                 return False
             precise_sleep(self.move_delay)
-            if not self._press_left(screen_x, screen_y, interrupt_check=interrupt_check):
+            if not self._press_left(screen_x, screen_y, duration=0.0, interrupt_check=interrupt_check):
                 return False
             if not self._interruptible_delay(_duration(4.0 if duration is None else duration, 4.0), interrupt_check):
                 self._release_left(screen_x, screen_y)

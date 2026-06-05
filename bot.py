@@ -743,6 +743,18 @@ class EatventureBot:
                 return float(confidence), int(x), int(y)
         return None
 
+    def _verify_upgrade_station(self, base_threshold: float, relaxed_threshold: float, wait_between_attempts: bool) -> RedIcon | None:
+        attempts = max(1, int(config.UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS))
+        for attempt in range(attempts):
+            match = self._upgrade_station_match(base_threshold if attempt == 0 else relaxed_threshold)
+            if match is not None:
+                return match
+            if wait_between_attempts and attempt < attempts - 1 and not self._sleep(config.UPGRADE_STATION_VERIFY_SEARCH_INTERVAL):
+                return None
+        if wait_between_attempts and self._scrcpy_recovery(config.SCRCPY_UPGRADE_MISS_RECOVERY_DELAY):
+            return self._upgrade_station_match(relaxed_threshold)
+        return None
+
     def _reset_search_cycle(self) -> None:
         self.cycle_counter = 0
         self.wait_for_unlock_attempts = 0
@@ -986,15 +998,7 @@ class EatventureBot:
             return State.OPEN_BOXES
         base_threshold = self.vision_optimizer.threshold("upgrade_station")
         relaxed_threshold = max(0.0, base_threshold - 0.05)
-        verified = None
-        for attempt in range(max(1, int(config.UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS))):
-            verified = self._upgrade_station_match(base_threshold if attempt == 0 else relaxed_threshold)
-            if verified is not None:
-                break
-            if attempt == 0:
-                self._sleep(config.UPGRADE_STATION_VERIFY_SEARCH_INTERVAL)
-        if verified is None and self._scrcpy_recovery(config.SCRCPY_UPGRADE_MISS_RECOVERY_DELAY):
-            verified = self._upgrade_station_match(relaxed_threshold)
+        verified = self._verify_upgrade_station(base_threshold, relaxed_threshold, True)
         if verified is None:
             self.vision_optimizer.record_miss("upgrade_station")
             return State.OPEN_BOXES
@@ -1002,7 +1006,28 @@ class EatventureBot:
         self.vision_optimizer.record_confidence("upgrade_station", confidence)
         if self.current_red_icon_index < len(self.red_icons):
             self._remember_successful_y(self.red_icons[self.current_red_icon_index][2])
-        if not self.mouse_controller.hold_at(x, y, duration=max(0.0, float(config.CLICK_HOLD_MAX_DURATION)), relative=True, interrupt_check=self._stop_requested.is_set):
+        hold_duration = max(0.0, float(config.CLICK_HOLD_MAX_DURATION))
+        verify_interval = max(0.0, float(config.UPGRADE_STATION_VERIFY_SEARCH_INTERVAL))
+        next_verify_at = time.perf_counter() + verify_interval
+        station_lost = False
+
+        def hold_interrupted() -> bool:
+            nonlocal next_verify_at, station_lost
+            if self._stop_requested.is_set():
+                return True
+            if time.perf_counter() < next_verify_at:
+                return False
+            match = self._verify_upgrade_station(base_threshold, relaxed_threshold, False)
+            station_lost = match is None
+            if station_lost:
+                self.vision_optimizer.record_miss("upgrade_station")
+                return True
+            self.vision_optimizer.record_confidence("upgrade_station", match[0])
+            next_verify_at = time.perf_counter() + verify_interval
+            return False
+
+        held = self.mouse_controller.hold_at(x, y, duration=hold_duration, relative=True, interrupt_check=hold_interrupted)
+        if not held and not station_lost:
             return State.OPEN_BOXES
         self.upgrade_station_pos = None
         self._click_idle()
