@@ -78,7 +78,7 @@ SCRCPY_UPGRADE_MISS_RECOVERY_DELAY = 0.040
 MATCH_THRESHOLD = 0.98
 
 # Template confidence threshold for red icon scans.
-RED_ICON_THRESHOLD = 0.950
+RED_ICON_THRESHOLD = 0.920
 
 # Template confidence threshold for new-level red icon validation.
 NEW_LEVEL_RED_ICON_THRESHOLD = 0.950
@@ -130,7 +130,7 @@ RED_ICON_HSV_RANGES = (
     ((174, 110, 190), (179, 255, 255)),
 )
 
-RED_ICON_HSV_MIN_MATCH_RATIO = 0.45
+RED_ICON_HSV_MIN_MATCH_RATIO = 0.5
 
 # Mouse and Action Timing
 
@@ -356,7 +356,7 @@ ADAPTIVE_TUNER_MAX_SEARCH_INTERVAL = 0.050
 # Adaptive Vision
 
 # Enables adaptive vision threshold updates.
-AI_VISION_ENABLED = False
+AI_VISION_ENABLED = True
 
 # Base EMA alpha used for vision confidence updates.
 AI_VISION_ALPHA = 0.18
@@ -455,7 +455,7 @@ AI_VISION_SAVE_INTERVAL = 2.0
 # Historical Learning
 
 # Enables historical learning from completed levels.
-AI_LEARNING_ENABLED = False
+AI_LEARNING_ENABLED = True
 
 # Absolute file path for persisted historical learning state.
 AI_LEARNING_STATE_FILE = str(BASE_DIR / "memory" / "learning_state_stable.json")
