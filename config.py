@@ -135,7 +135,7 @@ RED_ICON_HSV_MIN_MATCH_RATIO = 0.45
 # Mouse and Action Timing
 
 # Delay after normal click actions.
-CLICK_DELAY = 0.1
+CLICK_DELAY = 0.05
 
 # Delay after cursor movement.
 MOUSE_MOVE_DELAY = 0.05
@@ -281,10 +281,10 @@ SCROLL_PIXEL_STEP = 180
 SCROLL_DISTANCE_RATIO = 1.0
 
 # Maximum oscillating scroll cycles before reset.
-MAX_SCROLL_CYCLES = 5
+MAX_SCROLL_CYCLES = 2
 
 # Step increment applied to each oscillating scroll cycle.
-SCROLL_INCREMENT_STEP = 1
+SCROLL_INCREMENT_STEP = 2
 
 # Delay between scroll intervals.
 SCROLL_INTERVAL_PAUSE = 0.150
