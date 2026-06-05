@@ -159,7 +159,7 @@ UPGRADE_SEARCH_INTERVAL = 0.05
 STATE_DELAY = 0.0
 
 # Settling delay before verifying an upgrade station hold target.
-UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.2
+UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.15
 
 # Maximum attempts for upgrade station verification.
 UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 2
@@ -287,10 +287,10 @@ MAX_SCROLL_CYCLES = 2
 SCROLL_INCREMENT_STEP = 2
 
 # Delay between scroll intervals.
-SCROLL_INTERVAL_PAUSE = 0.150
+SCROLL_INTERVAL_PAUSE = 0.25
 
 # Settling delay after a scroll gesture.
-POST_SCROLL_SETTLE = 0.150
+POST_SCROLL_SETTLE = 0.25
 
 # Duration of each scroll drag gesture.
 SCROLL_DURATION = 0.250
