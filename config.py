@@ -302,7 +302,7 @@ SCROLL_DURATION = 0.250
 ADAPTIVE_TUNER_ENABLED = True
 
 # EMA alpha used by the adaptive tuner.
-ADAPTIVE_TUNER_ALPHA = 0.25
+ADAPTIVE_TUNER_ALPHA = 0.18
 
 # Click success rate below which delays are increased.
 ADAPTIVE_TUNER_CLICK_LOW_THRESHOLD = 0.9
