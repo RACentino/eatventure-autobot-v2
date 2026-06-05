@@ -78,7 +78,7 @@ SCRCPY_UPGRADE_MISS_RECOVERY_DELAY = 0.040
 MATCH_THRESHOLD = 0.98
 
 # Template confidence threshold for red icon scans.
-RED_ICON_THRESHOLD = 0.92
+RED_ICON_THRESHOLD = 0.95
 
 # Template confidence threshold for new-level red icon validation.
 NEW_LEVEL_RED_ICON_THRESHOLD = 0.942
