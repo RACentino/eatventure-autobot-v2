@@ -78,13 +78,13 @@ SCRCPY_UPGRADE_MISS_RECOVERY_DELAY = 0.040
 MATCH_THRESHOLD = 0.98
 
 # Template confidence threshold for red icon scans.
-RED_ICON_THRESHOLD = 0.95
+RED_ICON_THRESHOLD = 0.950
 
 # Template confidence threshold for new-level red icon validation.
-NEW_LEVEL_RED_ICON_THRESHOLD = 0.942
+NEW_LEVEL_RED_ICON_THRESHOLD = 0.950
 
 # Template confidence threshold for stats upgrade red icon validation.
-STATS_RED_ICON_THRESHOLD = 0.943
+STATS_RED_ICON_THRESHOLD = 0.950
 
 # Template confidence threshold for upgrade station scans.
 UPGRADE_STATION_THRESHOLD = 0.910
@@ -126,8 +126,8 @@ RED_ICON_FAST_TEMPLATE_NAMES = ("RedIcon6","RedIcon15", "RedIcon12",)
 RED_ICON_FAST_MIN_DISTANCE = 64
 
 RED_ICON_HSV_RANGES = (
-    ((0, 110, 190), (8, 255, 255)),
-    ((176, 110, 190), (179, 255, 255)),
+    ((0, 110, 190), (12, 255, 255)),
+    ((174, 110, 190), (179, 255, 255)),
 )
 
 RED_ICON_HSV_MIN_MATCH_RATIO = 0.45
@@ -383,10 +383,10 @@ AI_BOX_MISS_WINDOW = 3
 AI_BOX_MISS_STEP = 0.002
 
 # Minimum adaptive threshold for red icon scans.
-AI_RED_ICON_THRESHOLD_MIN = 0.942
+AI_RED_ICON_THRESHOLD_MIN = 0.950
 
 # Maximum adaptive threshold for red icon scans.
-AI_RED_ICON_THRESHOLD_MAX = 0.942
+AI_RED_ICON_THRESHOLD_MAX = 0.950
 
 # Safety margin subtracted from average red icon confidence.
 AI_RED_ICON_MARGIN = 0.012
@@ -410,10 +410,10 @@ AI_NEW_LEVEL_MISS_WINDOW = 3
 AI_NEW_LEVEL_MISS_STEP = 0.002
 
 # Minimum adaptive threshold for new-level red icon scans.
-AI_NEW_LEVEL_RED_ICON_THRESHOLD_MIN = 0.942
+AI_NEW_LEVEL_RED_ICON_THRESHOLD_MIN = 0.950
 
 # Maximum adaptive threshold for new-level red icon scans.
-AI_NEW_LEVEL_RED_ICON_THRESHOLD_MAX = 0.942
+AI_NEW_LEVEL_RED_ICON_THRESHOLD_MAX = 0.950
 
 # Consecutive new-level red icon misses before adaptive lowering is applied.
 AI_NEW_LEVEL_RED_ICON_MISS_WINDOW = 5
@@ -434,10 +434,10 @@ AI_UPGRADE_STATION_MISS_WINDOW = 3
 AI_UPGRADE_STATION_MISS_STEP = 0.002
 
 # Minimum adaptive threshold for stats upgrade scans.
-AI_STATS_UPGRADE_THRESHOLD_MIN = 0.942
+AI_STATS_UPGRADE_THRESHOLD_MIN = 0.950
 
 # Maximum adaptive threshold for stats upgrade scans.
-AI_STATS_UPGRADE_THRESHOLD_MAX = 0.942
+AI_STATS_UPGRADE_THRESHOLD_MAX = 0.950
 
 # Consecutive stats upgrade misses before adaptive lowering is applied.
 AI_STATS_UPGRADE_MISS_WINDOW = 3
