@@ -138,7 +138,7 @@ RED_ICON_HSV_MIN_MATCH_RATIO = 0.45
 CLICK_DELAY = 0.1
 
 # Delay after cursor movement.
-MOUSE_MOVE_DELAY = 0.1
+MOUSE_MOVE_DELAY = 0.05
 
 # Duration to hold the mouse button down during click actions.
 MOUSE_DOWN_DURATION = 0.1
@@ -153,7 +153,7 @@ HOVER_ENABLED = True
 HOVER_DURATION = 0.15
 
 # Delay between upgrade station search attempts.
-UPGRADE_SEARCH_INTERVAL = 0.2
+UPGRADE_SEARCH_INTERVAL = 0.1
 
 # Delay between state-machine actions.
 STATE_DELAY = 0.0
@@ -168,7 +168,7 @@ UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 2
 UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.1
 
 # Maximum duration for holding an upgrade station click.
-CLICK_HOLD_MAX_DURATION = 9
+CLICK_HOLD_MAX_DURATION = 8.5
 
 # Duration for stats upgrade click bursts.
 STATS_UPGRADE_CLICK_DURATION = 1.25
@@ -287,10 +287,10 @@ MAX_SCROLL_CYCLES = 5
 SCROLL_INCREMENT_STEP = 1
 
 # Delay between scroll intervals.
-SCROLL_INTERVAL_PAUSE = 0.035
+SCROLL_INTERVAL_PAUSE = 0.2
 
 # Settling delay after a scroll gesture.
-POST_SCROLL_SETTLE = 0.080
+POST_SCROLL_SETTLE = 0.2
 
 # Duration of each scroll drag gesture.
 SCROLL_DURATION = 0.240
