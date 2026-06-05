@@ -135,10 +135,10 @@ RED_ICON_HSV_MIN_MATCH_RATIO = 0.5
 # Mouse and Action Timing
 
 # Delay after normal click actions.
-CLICK_DELAY = 0.
+CLICK_DELAY = 0.25
 
 # Delay after cursor movement.
-MOUSE_MOVE_DELAY = 0.1
+MOUSE_MOVE_DELAY = 0.25
 
 # Duration to hold the mouse button down during click actions.
 MOUSE_DOWN_DURATION = 0.15
@@ -153,7 +153,7 @@ HOVER_ENABLED = True
 HOVER_DURATION = 0.15
 
 # Delay between upgrade station search attempts.
-UPGRADE_SEARCH_INTERVAL = 0.1
+UPGRADE_SEARCH_INTERVAL = 0.25
 
 # Delay between state-machine actions.
 STATE_DELAY = 0.0
@@ -308,40 +308,40 @@ ADAPTIVE_TUNER_ALPHA = 0.25
 ADAPTIVE_TUNER_CLICK_LOW_THRESHOLD = 0.9
 
 # Click success rate above which delays are reduced.
-ADAPTIVE_TUNER_CLICK_HIGH_THRESHOLD = 0.995
+ADAPTIVE_TUNER_CLICK_HIGH_THRESHOLD = 0.95
 
 # Search success rate below which search interval is increased.
 ADAPTIVE_TUNER_SEARCH_LOW_THRESHOLD = 0.90
 
 # Search success rate above which search interval is reduced.
-ADAPTIVE_TUNER_SEARCH_HIGH_THRESHOLD = 0.985
+ADAPTIVE_TUNER_SEARCH_HIGH_THRESHOLD = 0.92
 
 # Amount added to click delay after low click success.
-ADAPTIVE_TUNER_CLICK_DELAY_STEP = 0.005
+ADAPTIVE_TUNER_CLICK_DELAY_STEP = 0.01
 
 # Amount added to move delay after low click success.
-ADAPTIVE_TUNER_MOVE_DELAY_STEP = 0.005
+ADAPTIVE_TUNER_MOVE_DELAY_STEP = 0.01
 
 # Amount subtracted from click delay after high click success.
-ADAPTIVE_TUNER_CLICK_DECREMENT = 0.005
+ADAPTIVE_TUNER_CLICK_DECREMENT = 0.01
 
 # Amount subtracted from move delay after high click success.
-ADAPTIVE_TUNER_MOVE_DECREMENT = 0.005
+ADAPTIVE_TUNER_MOVE_DECREMENT = 0.01
 
 # Amount added to search interval after low search success.
-ADAPTIVE_TUNER_SEARCH_INTERVAL_STEP = 0.005
+ADAPTIVE_TUNER_SEARCH_INTERVAL_STEP = 0.01
 
 # Amount subtracted from search interval after high search success.
-ADAPTIVE_TUNER_SEARCH_DECREMENT = 0.005
+ADAPTIVE_TUNER_SEARCH_DECREMENT = 0.01
 
 # Minimum click delay allowed by adaptive tuning.
-ADAPTIVE_TUNER_MIN_CLICK_DELAY = 0.050
+ADAPTIVE_TUNER_MIN_CLICK_DELAY = 0.0
 
 # Maximum click delay allowed by adaptive tuning.
 ADAPTIVE_TUNER_MAX_CLICK_DELAY = 0.5
 
 # Minimum move delay allowed by adaptive tuning.
-ADAPTIVE_TUNER_MIN_MOVE_DELAY = 0.05
+ADAPTIVE_TUNER_MIN_MOVE_DELAY = 0.0
 
 # Maximum move delay allowed by adaptive tuning.
 ADAPTIVE_TUNER_MAX_MOVE_DELAY = 0.5
