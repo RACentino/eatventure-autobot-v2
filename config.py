@@ -141,10 +141,10 @@ CLICK_DELAY = 0.1
 MOUSE_MOVE_DELAY = 0.05
 
 # Duration to hold the mouse button down during click actions.
-MOUSE_DOWN_DURATION = 0.1
+MOUSE_DOWN_DURATION = 0.15
 
 # Delay after releasing the mouse button.
-MOUSE_UP_DURATION = 0.1
+MOUSE_UP_DURATION = 0.12
 
 # Enables hover movement before click actions.
 HOVER_ENABLED = True
@@ -153,7 +153,7 @@ HOVER_ENABLED = True
 HOVER_DURATION = 0.15
 
 # Delay between upgrade station search attempts.
-UPGRADE_SEARCH_INTERVAL = 0.1
+UPGRADE_SEARCH_INTERVAL = 0.05
 
 # Delay between state-machine actions.
 STATE_DELAY = 0.0
@@ -287,13 +287,13 @@ MAX_SCROLL_CYCLES = 5
 SCROLL_INCREMENT_STEP = 1
 
 # Delay between scroll intervals.
-SCROLL_INTERVAL_PAUSE = 0.2
+SCROLL_INTERVAL_PAUSE = 0.150
 
 # Settling delay after a scroll gesture.
-POST_SCROLL_SETTLE = 0.2
+POST_SCROLL_SETTLE = 0.150
 
 # Duration of each scroll drag gesture.
-SCROLL_DURATION = 0.240
+SCROLL_DURATION = 0.250
 
 
 # Adaptive Runtime Tuning
