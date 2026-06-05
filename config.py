@@ -302,19 +302,19 @@ SCROLL_DURATION = 0.250
 ADAPTIVE_TUNER_ENABLED = True
 
 # EMA alpha used by the adaptive tuner.
-ADAPTIVE_TUNER_ALPHA = 0.18
+ADAPTIVE_TUNER_ALPHA = 1.0
 
 # Click success rate below which delays are increased.
-ADAPTIVE_TUNER_CLICK_LOW_THRESHOLD = 0.9
+ADAPTIVE_TUNER_CLICK_LOW_THRESHOLD = 1.0
 
 # Click success rate above which delays are reduced.
-ADAPTIVE_TUNER_CLICK_HIGH_THRESHOLD = 0.95
+ADAPTIVE_TUNER_CLICK_HIGH_THRESHOLD = 0.0
 
 # Search success rate below which search interval is increased.
-ADAPTIVE_TUNER_SEARCH_LOW_THRESHOLD = 0.90
+ADAPTIVE_TUNER_SEARCH_LOW_THRESHOLD = 1.0
 
 # Search success rate above which search interval is reduced.
-ADAPTIVE_TUNER_SEARCH_HIGH_THRESHOLD = 0.92
+ADAPTIVE_TUNER_SEARCH_HIGH_THRESHOLD = 0.0
 
 # Amount added to click delay after low click success.
 ADAPTIVE_TUNER_CLICK_DELAY_STEP = 0.01
@@ -335,13 +335,13 @@ ADAPTIVE_TUNER_SEARCH_INTERVAL_STEP = 0.01
 ADAPTIVE_TUNER_SEARCH_DECREMENT = 0.01
 
 # Minimum click delay allowed by adaptive tuning.
-ADAPTIVE_TUNER_MIN_CLICK_DELAY = 0.0
+ADAPTIVE_TUNER_MIN_CLICK_DELAY = 0.050
 
 # Maximum click delay allowed by adaptive tuning.
 ADAPTIVE_TUNER_MAX_CLICK_DELAY = 0.5
 
 # Minimum move delay allowed by adaptive tuning.
-ADAPTIVE_TUNER_MIN_MOVE_DELAY = 0.0
+ADAPTIVE_TUNER_MIN_MOVE_DELAY = 0.050
 
 # Maximum move delay allowed by adaptive tuning.
 ADAPTIVE_TUNER_MAX_MOVE_DELAY = 0.5
@@ -356,100 +356,100 @@ ADAPTIVE_TUNER_MAX_SEARCH_INTERVAL = 0.5
 # Adaptive Vision
 
 # Enables adaptive vision threshold updates.
-AI_VISION_ENABLED = True
+AI_VISION_ENABLED = False
 
 # Base EMA alpha used for vision confidence updates.
-AI_VISION_ALPHA = 0.18
+AI_VISION_ALPHA = 1.0
 
 # Maximum EMA alpha used when confidence exceeds the threshold strongly.
-AI_VISION_ALPHA_MAX = 0.35
+AI_VISION_ALPHA_MAX = 1.0
 
 # Confidence boost applied to persisted vision thresholds.
-AI_VISION_CONFIDENCE_BOOST = 0.10
+AI_VISION_CONFIDENCE_BOOST = 1.0
 
 # Confidence level that starts stronger adaptive alpha scaling.
-AI_VISION_CONFIDENCE_THRESHOLD = 0.96
+AI_VISION_CONFIDENCE_THRESHOLD = 0.0
 
 # Minimum adaptive threshold for box scans.
-AI_BOX_THRESHOLD_MIN = 0.925
+AI_BOX_THRESHOLD_MIN = 0.0
 
 # Maximum adaptive threshold for box scans.
-AI_BOX_THRESHOLD_MAX = 0.98
+AI_BOX_THRESHOLD_MAX = 1.0
 
 # Consecutive box misses before adaptive lowering is applied.
-AI_BOX_MISS_WINDOW = 3
+AI_BOX_MISS_WINDOW = 1
 
 # Amount to lower the box threshold after miss window exhaustion.
-AI_BOX_MISS_STEP = 0.005
+AI_BOX_MISS_STEP = 1.0
 
 # Minimum adaptive threshold for red icon scans.
-AI_RED_ICON_THRESHOLD_MIN = 0.915
+AI_RED_ICON_THRESHOLD_MIN = 0.0
 
 # Maximum adaptive threshold for red icon scans.
-AI_RED_ICON_THRESHOLD_MAX = 0.99
+AI_RED_ICON_THRESHOLD_MAX = 1.0
 
 # Safety margin subtracted from average red icon confidence.
-AI_RED_ICON_MARGIN = 0.010
+AI_RED_ICON_MARGIN = 1.0
 
 # Consecutive red icon misses before adaptive lowering is applied.
 AI_RED_ICON_MISS_WINDOW = 1
 
 # Amount to lower the red icon threshold after miss window exhaustion.
-AI_RED_ICON_MISS_STEP = 0.005
+AI_RED_ICON_MISS_STEP = 1.0
 
 # Minimum adaptive threshold for new-level button scans.
-AI_NEW_LEVEL_THRESHOLD_MIN = 0.9
+AI_NEW_LEVEL_THRESHOLD_MIN = 0.0
 
 # Maximum adaptive threshold for new-level button scans.
-AI_NEW_LEVEL_THRESHOLD_MAX = 0.99
+AI_NEW_LEVEL_THRESHOLD_MAX = 1.0
 
 # Consecutive new-level misses before adaptive lowering is applied.
 AI_NEW_LEVEL_MISS_WINDOW = 1
 
 # Amount to lower the new-level threshold after miss window exhaustion.
-AI_NEW_LEVEL_MISS_STEP = 0.005
+AI_NEW_LEVEL_MISS_STEP = 1.0
 
 # Minimum adaptive threshold for new-level red icon scans.
-AI_NEW_LEVEL_RED_ICON_THRESHOLD_MIN = 0.9
+AI_NEW_LEVEL_RED_ICON_THRESHOLD_MIN = 0.0
 
 # Maximum adaptive threshold for new-level red icon scans.
-AI_NEW_LEVEL_RED_ICON_THRESHOLD_MAX = 0.99
+AI_NEW_LEVEL_RED_ICON_THRESHOLD_MAX = 1.0
 
 # Consecutive new-level red icon misses before adaptive lowering is applied.
 AI_NEW_LEVEL_RED_ICON_MISS_WINDOW = 1
 
 # Amount to lower the new-level red icon threshold after miss window exhaustion.
-AI_NEW_LEVEL_RED_ICON_MISS_STEP = 0.005
+AI_NEW_LEVEL_RED_ICON_MISS_STEP = 1.0
 
 # Minimum adaptive threshold for upgrade station scans.
-AI_UPGRADE_STATION_THRESHOLD_MIN = 0.910
+AI_UPGRADE_STATION_THRESHOLD_MIN = 0.0
 
 # Maximum adaptive threshold for upgrade station scans.
-AI_UPGRADE_STATION_THRESHOLD_MAX = 0.99
+AI_UPGRADE_STATION_THRESHOLD_MAX = 1.0
 
 # Consecutive upgrade station misses before adaptive lowering is applied.
 AI_UPGRADE_STATION_MISS_WINDOW = 1
 
 # Amount to lower the upgrade station threshold after miss window exhaustion.
-AI_UPGRADE_STATION_MISS_STEP = 0.005
+AI_UPGRADE_STATION_MISS_STEP = 1.0
 
 # Minimum adaptive threshold for stats upgrade scans.
-AI_STATS_UPGRADE_THRESHOLD_MIN = 0.9
+AI_STATS_UPGRADE_THRESHOLD_MIN = 0.0
 
 # Maximum adaptive threshold for stats upgrade scans.
-AI_STATS_UPGRADE_THRESHOLD_MAX = 0.99
+AI_STATS_UPGRADE_THRESHOLD_MAX = 1.0
 
 # Consecutive stats upgrade misses before adaptive lowering is applied.
 AI_STATS_UPGRADE_MISS_WINDOW = 1
 
 # Amount to lower the stats upgrade threshold after miss window exhaustion.
-AI_STATS_UPGRADE_MISS_STEP = 0.005
+AI_STATS_UPGRADE_MISS_STEP = 1.0
 
 # Absolute file path for persisted adaptive vision state.
 AI_VISION_STATE_FILE = str(BASE_DIR / "memory" / "vision_state.json")
 
 # Minimum interval between adaptive vision state saves.
-AI_VISION_SAVE_INTERVAL = 0.05
+AI_VISION_SAVE_INTERVAL = 0.0
 
 
 # Historical Learning
@@ -461,7 +461,7 @@ AI_LEARNING_ENABLED = True
 AI_LEARNING_STATE_FILE = str(BASE_DIR / "memory" / "learning_state_stable.json")
 
 # Minimum interval between historical learning state saves.
-AI_LEARNING_SAVE_INTERVAL = 0.05
+AI_LEARNING_SAVE_INTERVAL = 0.0
 
 # Maximum historical learning records kept in memory and persisted state.
 AI_LEARNING_RECORDS_LIMIT = 500
@@ -470,46 +470,46 @@ AI_LEARNING_RECORDS_LIMIT = 500
 AI_LEARNING_THREAD_JOIN_TIMEOUT = 1.5
 
 # Delay between historical learning worker passes.
-AI_LEARNING_THREAD_INTERVAL = 5.0
+AI_LEARNING_THREAD_INTERVAL = 0.05
 
 # Number of adjacent level records considered as pairs.
-AI_LEARNING_PAIR_WINDOW = 5
+AI_LEARNING_PAIR_WINDOW = 2
 
 # Number of level records considered for a learning batch.
-AI_LEARNING_BATCH_WINDOW = 12
+AI_LEARNING_BATCH_WINDOW = 2
 
 # EMA alpha used for historical behavior profiles.
-AI_LEARNING_EMA_ALPHA = 0.14
+AI_LEARNING_EMA_ALPHA = 0.8
 
 # Number of best profiles blended into a learned behavior.
-AI_LEARNING_PROFILE_BLEND_TOP_K = 3
+AI_LEARNING_PROFILE_BLEND_TOP_K = 1
 
 # Minimum improvement ratio needed before applying learned behavior.
-AI_LEARNING_MIN_IMPROVEMENT_RATIO = 0.05
+AI_LEARNING_MIN_IMPROVEMENT_RATIO = 0.0
 
 # Cooldown between learned behavior applications.
-AI_LEARNING_APPLY_COOLDOWN = 20.0
+AI_LEARNING_APPLY_COOLDOWN = 0.0
 
 # Minimum click delay allowed by historical learning.
-AI_LEARNING_MIN_CLICK_DELAY = 0.040
+AI_LEARNING_MIN_CLICK_DELAY = 0.0
 
 # Maximum click delay allowed by historical learning.
-AI_LEARNING_MAX_CLICK_DELAY = 0.070
+AI_LEARNING_MAX_CLICK_DELAY = 0.5
 
 # Minimum move delay allowed by historical learning.
-AI_LEARNING_MIN_MOVE_DELAY = 0.020
+AI_LEARNING_MIN_MOVE_DELAY = 0.0
 
 # Maximum move delay allowed by historical learning.
-AI_LEARNING_MAX_MOVE_DELAY = 0.040
+AI_LEARNING_MAX_MOVE_DELAY = 0.5
 
 # Minimum search interval allowed by historical learning.
 AI_LEARNING_MIN_SEARCH_INTERVAL = 0.0
 
 # Maximum search interval allowed by historical learning.
-AI_LEARNING_MAX_SEARCH_INTERVAL = 0.050
+AI_LEARNING_MAX_SEARCH_INTERVAL = 0.5
 
 # Minimum sleep between historical learning worker loops.
-LEARNING_LOOP_MIN_SLEEP = 1.0
+LEARNING_LOOP_MIN_SLEEP = 0.05
 
 
 # Forbidden Zones
