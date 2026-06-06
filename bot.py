@@ -568,7 +568,19 @@ class EatventureBot:
         assets = []
         for x, y, template_name, confidence in self._best_red_icon_matches(detections):
             width, height = self._template_size(template_name)
-            assets.append(AssetDetection("red_icon", template_name, confidence, x, y, width, height))
+            assets.append(
+                AssetDetection(
+                    "red_icon",
+                    template_name,
+                    confidence,
+                    x,
+                    y,
+                    width,
+                    height,
+                    x + config.RED_ICON_OFFSET_X,
+                    y + config.RED_ICON_OFFSET_Y,
+                )
+            )
         return assets
 
     def _template_size(self, name: str) -> tuple[int, int]:
@@ -822,11 +834,14 @@ class EatventureBot:
 
     def _upgrade_station_assets(self, screenshot: Any) -> list[AssetDetection]:
         candidates = self._upgrade_station_candidates(screenshot[: config.UPGRADE_STATION_SEARCH_Y, :], config.UPGRADE_STATION_THRESHOLD)
-        return [AssetDetection("upgrade_station", "upgradeStation", confidence, x, y, width, height) for confidence, x, y, width, height in candidates]
+        return [
+            AssetDetection("upgrade_station", "upgradeStation", confidence, x, y, width, height, x, y)
+            for confidence, x, y, width, height in candidates
+        ]
 
     def _box_assets(self, screenshot: Any) -> list[AssetDetection]:
         candidates = self._box_candidates(screenshot[: config.BOX_SEARCH_Y, :], include_tracked=False)
-        return [AssetDetection("box", name, confidence, x, y, width, height) for confidence, x, y, width, height, name in candidates]
+        return [AssetDetection("box", name, confidence, x, y, width, height, x, y) for confidence, x, y, width, height, name in candidates]
 
     def request_stop(self) -> None:
         self._stop_requested.set()

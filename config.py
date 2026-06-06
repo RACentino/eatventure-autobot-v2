@@ -66,13 +66,13 @@ ASSET_TRACKING_ENABLED = True
 ASSET_TRACKING_CAPTURE_Y = 780
 
 # Frame rate passed to supervision ByteTrack.
-ASSET_TRACKING_FRAME_RATE = 60.0
+ASSET_TRACKING_FRAME_RATE = 120.0
 
 # Delay between tracker capture passes.
-ASSET_TRACKING_INTERVAL = 0.05
+ASSET_TRACKING_INTERVAL = 0.005
 
 # Maximum age in seconds for tracker snapshots used by bot actions.
-ASSET_TRACKING_MAX_SNAPSHOT_AGE = 0.35
+ASSET_TRACKING_MAX_SNAPSHOT_AGE = 0.005
 
 # Maximum detections passed through each tracking frame.
 ASSET_TRACKING_MAX_DETECTIONS = 256
@@ -81,7 +81,7 @@ ASSET_TRACKING_MAX_DETECTIONS = 256
 ASSET_TRACKING_TRACK_ACTIVATION_THRESHOLD = 0.25
 
 # Number of lost frames ByteTrack keeps before removing a track.
-ASSET_TRACKING_LOST_TRACK_BUFFER = 30
+ASSET_TRACKING_LOST_TRACK_BUFFER = 10
 
 # ByteTrack association threshold between existing tracks and detections.
 ASSET_TRACKING_MINIMUM_MATCHING_THRESHOLD = 0.8
@@ -105,10 +105,10 @@ ASSET_TRACKING_THREAD_JOIN_TIMEOUT = 1.5
 ASSET_TRACKING_OVERLAY_ENABLED = True
 
 # Overlay refresh cadence in milliseconds.
-ASSET_TRACKING_OVERLAY_REFRESH_MS = 100
+ASSET_TRACKING_OVERLAY_REFRESH_MS = 5
 
 # Maximum tracked assets drawn by the overlay per refresh.
-ASSET_TRACKING_OVERLAY_MAX_ITEMS = 80
+ASSET_TRACKING_OVERLAY_MAX_ITEMS = 100
 
 # Overlay color for red icon detections.
 ASSET_TRACKING_RED_ICON_COLOR = "#ff4040"
@@ -151,6 +151,15 @@ STATS_RED_ICON_THRESHOLD = 0.950
 
 # Template confidence threshold for upgrade station scans.
 UPGRADE_STATION_THRESHOLD = 0.910
+
+# Accepted HSV ranges for upgrade station candidate gating.
+UPGRADE_STATION_HSV_RANGES = (
+    ((12, 88, 185), (29, 199, 252)),
+    ((100, 135, 204), (103, 191, 255)),
+)
+
+# Minimum HSV mask ratio for accepting an upgrade station candidate.
+UPGRADE_STATION_HSV_MIN_MATCH_RATIO = 0.5
 
 # Template confidence threshold for box scans.
 BOX_THRESHOLD = 0.935
@@ -288,18 +297,6 @@ NEW_LEVEL_BUTTON_POS = (30, 692)
 
 # Relative coordinate for the level transition confirmation.
 LEVEL_TRANSITION_POS = (174, 520)
-
-
-# Upgrade Station HSV Gate
-
-# Accepted HSV ranges for upgrade station candidate gating.
-UPGRADE_STATION_HSV_RANGES = (
-    ((12, 88, 185), (29, 199, 252)),
-    ((100, 135, 204), (103, 191, 255)),
-)
-
-# Minimum HSV mask ratio for accepting an upgrade station candidate.
-UPGRADE_STATION_HSV_MIN_MATCH_RATIO = 0.5
 
 
 # Icon Regions and Offsets
