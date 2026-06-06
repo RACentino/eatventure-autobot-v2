@@ -162,7 +162,7 @@ UPGRADE_STATION_HSV_RANGES = (
 UPGRADE_STATION_HSV_MIN_MATCH_RATIO = 0.5
 
 # Template confidence threshold for box scans.
-BOX_THRESHOLD = 0.935
+BOX_THRESHOLD = 0.930
 
 # Accepted HSV ranges for box candidate gating.
 BOX_HSV_RANGES = (
@@ -359,7 +359,7 @@ SCROLL_DURATION = 0.250
 # Adaptive Runtime Tuning
 
 # Enables adaptive runtime timing adjustments.
-ADAPTIVE_TUNER_ENABLED = True
+ADAPTIVE_TUNER_ENABLED = False
 
 # EMA alpha used by the adaptive tuner.
 ADAPTIVE_TUNER_ALPHA = 1.0
@@ -416,7 +416,7 @@ ADAPTIVE_TUNER_MAX_SEARCH_INTERVAL = 0.5
 # Historical Learning
 
 # Enables historical learning from completed levels.
-AI_LEARNING_ENABLED = True
+AI_LEARNING_ENABLED = False
 
 # Absolute file path for persisted historical learning state.
 AI_LEARNING_STATE_FILE = str(BASE_DIR / "memory" / "learning_state_stable.json")
