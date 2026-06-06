@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 
 import config
+from overlay_window import configure_overlay_canvas, configure_overlay_root, destroy_overlay_root, position_overlay_over_rect, set_overlay_visible_regions
 
 logger = logging.getLogger(__name__)
 
@@ -440,23 +441,15 @@ class AssetTrackingOverlay:
             import tkinter as tk
 
             root = tk.Tk()
-            root.title("Asset Tracking Overlay")
-            root.resizable(False, False)
-            self._set_topmost(root)
-            canvas = tk.Canvas(root, highlightthickness=0, background="#101010")
+            background = configure_overlay_root(root, "Asset Tracking Overlay")
+            canvas = tk.Canvas(root, highlightthickness=0, background=background)
+            configure_overlay_canvas(canvas, background)
             canvas.pack(fill="both", expand=True)
             self._overlay_loop(root, canvas)
         except Exception as exc:
             logger.error("Failed to create asset tracking overlay: %s", exc)
         finally:
             self.running = False
-
-    @staticmethod
-    def _set_topmost(root: Any) -> None:
-        try:
-            root.attributes("-topmost", True)
-        except Exception:
-            logger.debug("Topmost overlay attribute is unavailable")
 
     def _overlay_loop(self, root: Any, canvas: Any) -> None:
         refresh_seconds = max(0.02, float(config.ASSET_TRACKING_OVERLAY_REFRESH_MS) / 1000.0)
@@ -472,11 +465,12 @@ class AssetTrackingOverlay:
 
     def _draw(self, root: Any, canvas: Any) -> bool:
         try:
-            x, y, width, height = self.window_capture.get_window_rect()
-            root.geometry(f"{width}x{height}+{x + width + 16}+{max(0, y)}")
-            canvas.config(width=width, height=height)
+            if not position_overlay_over_rect(root, canvas, self.window_capture.get_window_rect()):
+                return False
             canvas.delete("asset")
-            for asset in self.tracker.assets()[: int(config.ASSET_TRACKING_OVERLAY_MAX_ITEMS)]:
+            assets = self.tracker.assets()[: int(config.ASSET_TRACKING_OVERLAY_MAX_ITEMS)]
+            set_overlay_visible_regions(root, _asset_visible_regions(assets))
+            for asset in assets:
                 self._draw_asset(canvas, asset)
             return True
         except Exception as exc:
@@ -494,10 +488,7 @@ class AssetTrackingOverlay:
 
     @staticmethod
     def _destroy(root: Any) -> None:
-        try:
-            root.destroy()
-        except Exception:
-            logger.debug("Asset tracking overlay root was already closed")
+        destroy_overlay_root(root)
 
 
 def _asset_bounds(asset: TrackedAsset) -> tuple[int, int, int, int]:
@@ -509,6 +500,28 @@ def _asset_bounds(asset: TrackedAsset) -> tuple[int, int, int, int]:
         int(asset.center_x) + half_width,
         int(asset.center_y) + half_height,
     )
+
+
+def _asset_visible_regions(assets: list[TrackedAsset]) -> list[tuple[int, int, int, int]]:
+    regions = []
+    for asset in assets:
+        x1, y1, x2, y2 = _asset_bounds(asset)
+        width = max(1, int(x2 - x1))
+        height = max(1, int(y2 - y1))
+        regions.extend(_outlined_regions(x1, y1, width, height, 3))
+        regions.append((int(asset.center_x) - 3, int(asset.center_y) - 3, 6, 6))
+        regions.append((x1, max(0, y1 - 18), min(180, max(48, width + 80)), 18))
+    return regions
+
+
+def _outlined_regions(x: int, y: int, width: int, height: int, border: int) -> list[tuple[int, int, int, int]]:
+    border = max(1, int(border))
+    return [
+        (x, y, width, border),
+        (x, y + height - border, width, border),
+        (x, y, border, height),
+        (x + width - border, y, border, height),
+    ]
 
 
 def _asset_color(asset_type: str) -> str:

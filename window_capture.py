@@ -1,15 +1,19 @@
 import logging
 import threading
+import time
 from typing import Any
 
 import mss
 import numpy as np
 import pywinctl
 
+from overlay_window import configure_overlay_canvas, configure_overlay_root, destroy_overlay_root, position_overlay_over_rect, set_overlay_visible_regions
+
 logger = logging.getLogger(__name__)
 
 WindowRect = tuple[int, int, int, int]
 ForbiddenZone = tuple[int, int, int, int]
+FORBIDDEN_AREA_OVERLAY_LOOP_ITERATION_LIMIT = 2_147_483_647
 
 
 class WindowCaptureError(RuntimeError):
@@ -200,36 +204,44 @@ class ForbiddenAreaOverlay:
             import tkinter as tk
 
             root = tk.Tk()
-            root.title("Forbidden Area Visualizer")
-            root.resizable(False, False)
-            try:
-                root.attributes("-topmost", True)
-            except Exception:
-                pass
-            canvas = tk.Canvas(root, highlightthickness=0, background="#111111")
+            background = configure_overlay_root(root, "Forbidden Area Visualizer")
+            canvas = tk.Canvas(root, highlightthickness=0, background=background)
+            configure_overlay_canvas(canvas, background)
             canvas.pack(fill="both", expand=True)
-
-            def tick() -> None:
-                if not self.running:
-                    root.destroy()
-                    return
-                try:
-                    x, y, width, height = self.window_capture.get_window_rect()
-                    root.geometry(f"{width}x{height}+{x + width + 16}+{max(0, y)}")
-                    canvas.config(width=width, height=height)
-                    canvas.delete("zone")
-                    for x_min, x_max, y_min, y_max in self.forbidden_zones:
-                        canvas.create_rectangle(int(x_min), int(y_min), int(x_max), int(y_max), fill="#ff4040", stipple="gray25", outline="#ff4040", tags="zone")
-                except Exception as exc:
-                    logger.error("Error in forbidden area visualizer loop: %s", exc)
-                    self.running = False
-                    root.destroy()
-                    return
-                root.after(100, tick)
-
-            tick()
-            root.mainloop()
+            self._overlay_loop(root, canvas)
         except Exception as exc:
             logger.error("Failed to create forbidden area visualizer: %s", exc)
         finally:
             self.running = False
+
+    def _overlay_loop(self, root: Any, canvas: Any) -> None:
+        for _ in range(FORBIDDEN_AREA_OVERLAY_LOOP_ITERATION_LIMIT):
+            if not self.running:
+                break
+            if not self._draw(root, canvas):
+                break
+            root.update_idletasks()
+            root.update()
+            time.sleep(0.1)
+        destroy_overlay_root(root)
+
+    def _draw(self, root: Any, canvas: Any) -> bool:
+        try:
+            if not position_overlay_over_rect(root, canvas, self.window_capture.get_window_rect()):
+                return False
+            canvas.delete("zone")
+            set_overlay_visible_regions(root, _zone_visible_regions(self.forbidden_zones))
+            for x_min, x_max, y_min, y_max in self.forbidden_zones:
+                canvas.create_rectangle(int(x_min), int(y_min), int(x_max), int(y_max), fill="#ff4040", stipple="gray25", outline="#ff4040", tags="zone")
+            return True
+        except Exception as exc:
+            logger.error("Error in forbidden area visualizer loop: %s", exc)
+            self.running = False
+            return False
+
+
+def _zone_visible_regions(zones: list[ForbiddenZone]) -> list[tuple[int, int, int, int]]:
+    regions = []
+    for x_min, x_max, y_min, y_max in zones:
+        regions.append((int(x_min), int(y_min), max(1, int(x_max) - int(x_min)), max(1, int(y_max) - int(y_min))))
+    return regions

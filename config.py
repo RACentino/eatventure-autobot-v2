@@ -27,7 +27,7 @@ WINDOW_HEIGHT = 780
 DEBUG = False
 
 # Shows the forbidden click area overlay while the bot is running.
-SHOW_FORBIDDEN_AREA = False
+SHOW_FORBIDDEN_AREA = True
 
 
 # Supervision NMS
@@ -81,7 +81,7 @@ ASSET_TRACKING_MAX_DETECTIONS = 256
 ASSET_TRACKING_TRACK_ACTIVATION_THRESHOLD = 0.25
 
 # Number of lost frames ByteTrack keeps before removing a track.
-ASSET_TRACKING_LOST_TRACK_BUFFER = 10
+ASSET_TRACKING_LOST_TRACK_BUFFER = 60
 
 # ByteTrack association threshold between existing tracks and detections.
 ASSET_TRACKING_MINIMUM_MATCHING_THRESHOLD = 0.8
@@ -105,10 +105,10 @@ ASSET_TRACKING_THREAD_JOIN_TIMEOUT = 1.5
 ASSET_TRACKING_OVERLAY_ENABLED = True
 
 # Overlay refresh cadence in milliseconds.
-ASSET_TRACKING_OVERLAY_REFRESH_MS = 5
+ASSET_TRACKING_OVERLAY_REFRESH_MS = 100
 
 # Maximum tracked assets drawn by the overlay per refresh.
-ASSET_TRACKING_OVERLAY_MAX_ITEMS = 100
+ASSET_TRACKING_OVERLAY_MAX_ITEMS = 200
 
 # Overlay color for red icon detections.
 ASSET_TRACKING_RED_ICON_COLOR = "#ff4040"
