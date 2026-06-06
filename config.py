@@ -123,7 +123,7 @@ ASSET_TRACKING_BOX_COLOR = "#ffd24a"
 # SCRCPY Recovery
 
 # Enables a short retry delay after SCRCPY capture misses.
-SCRCPY_MISS_RECOVERY_ENABLED = True
+SCRCPY_MISS_RECOVERY_ENABLED = False
 
 # Retry delay after a red icon scan miss.
 SCRCPY_RED_ICON_MISS_RECOVERY_DELAY = 0.035
@@ -225,7 +225,7 @@ HOVER_ENABLED = True
 HOVER_DURATION = 0.15
 
 # Delay between upgrade station search attempts.
-UPGRADE_SEARCH_INTERVAL = 0.050
+UPGRADE_SEARCH_INTERVAL = 0.1
 
 # Delay between state-machine actions.
 STATE_DELAY = 0.001
@@ -237,7 +237,7 @@ UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.150
 UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 1
 
 # Delay between upgrade station verification attempts.
-UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.050
+UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.1
 
 # Maximum duration for holding an upgrade station click.
 CLICK_HOLD_MAX_DURATION = 8.5
