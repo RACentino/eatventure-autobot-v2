@@ -57,6 +57,69 @@ SUPERVISION_RED_ICON_NMS_IOU_THRESHOLD = 0.20
 SUPERVISION_UPGRADE_STATION_NMS_IOU_THRESHOLD = 0.20
 
 
+# ByteTrack Asset Tracking
+
+# Enables continuous background asset tracking.
+ASSET_TRACKING_ENABLED = True
+
+# Maximum vertical capture area used by the background tracker.
+ASSET_TRACKING_CAPTURE_Y = 780
+
+# Frame rate passed to supervision ByteTrack.
+ASSET_TRACKING_FRAME_RATE = 60.0
+
+# Delay between tracker capture passes.
+ASSET_TRACKING_INTERVAL = 0.05
+
+# Maximum age in seconds for tracker snapshots used by bot actions.
+ASSET_TRACKING_MAX_SNAPSHOT_AGE = 0.35
+
+# Maximum detections passed through each tracking frame.
+ASSET_TRACKING_MAX_DETECTIONS = 256
+
+# Detection confidence threshold for ByteTrack track activation.
+ASSET_TRACKING_TRACK_ACTIVATION_THRESHOLD = 0.25
+
+# Number of lost frames ByteTrack keeps before removing a track.
+ASSET_TRACKING_LOST_TRACK_BUFFER = 30
+
+# ByteTrack association threshold between existing tracks and detections.
+ASSET_TRACKING_MINIMUM_MATCHING_THRESHOLD = 0.8
+
+# Consecutive tracked frames required before a track is considered valid.
+ASSET_TRACKING_MINIMUM_CONSECUTIVE_FRAMES = 1
+
+# Enables background red icon detections.
+ASSET_TRACKING_RED_ICON_ENABLED = True
+
+# Enables background upgrade station detections.
+ASSET_TRACKING_UPGRADE_STATION_ENABLED = True
+
+# Enables background box detections.
+ASSET_TRACKING_BOX_ENABLED = True
+
+# Maximum wait for the background tracker thread to stop.
+ASSET_TRACKING_THREAD_JOIN_TIMEOUT = 1.5
+
+# Enables the real-time asset tracking overlay.
+ASSET_TRACKING_OVERLAY_ENABLED = True
+
+# Overlay refresh cadence in milliseconds.
+ASSET_TRACKING_OVERLAY_REFRESH_MS = 100
+
+# Maximum tracked assets drawn by the overlay per refresh.
+ASSET_TRACKING_OVERLAY_MAX_ITEMS = 80
+
+# Overlay color for red icon detections.
+ASSET_TRACKING_RED_ICON_COLOR = "#ff4040"
+
+# Overlay color for upgrade station detections.
+ASSET_TRACKING_UPGRADE_STATION_COLOR = "#40d0ff"
+
+# Overlay color for box detections.
+ASSET_TRACKING_BOX_COLOR = "#ffd24a"
+
+
 # SCRCPY Recovery
 
 # Enables a short retry delay after SCRCPY capture misses.
@@ -351,105 +414,6 @@ ADAPTIVE_TUNER_MIN_SEARCH_INTERVAL = 0.0
 
 # Maximum search interval allowed by adaptive tuning.
 ADAPTIVE_TUNER_MAX_SEARCH_INTERVAL = 0.5
-
-
-# Adaptive Vision
-
-# Enables adaptive vision threshold updates.
-AI_VISION_ENABLED = False
-
-# Base EMA alpha used for vision confidence updates.
-AI_VISION_ALPHA = 1.0
-
-# Maximum EMA alpha used when confidence exceeds the threshold strongly.
-AI_VISION_ALPHA_MAX = 1.0
-
-# Confidence boost applied to persisted vision thresholds.
-AI_VISION_CONFIDENCE_BOOST = 1.0
-
-# Confidence level that starts stronger adaptive alpha scaling.
-AI_VISION_CONFIDENCE_THRESHOLD = 0.0
-
-# Minimum adaptive threshold for box scans.
-AI_BOX_THRESHOLD_MIN = 0.0
-
-# Maximum adaptive threshold for box scans.
-AI_BOX_THRESHOLD_MAX = 1.0
-
-# Consecutive box misses before adaptive lowering is applied.
-AI_BOX_MISS_WINDOW = 1
-
-# Amount to lower the box threshold after miss window exhaustion.
-AI_BOX_MISS_STEP = 1.0
-
-# Minimum adaptive threshold for red icon scans.
-AI_RED_ICON_THRESHOLD_MIN = 0.0
-
-# Maximum adaptive threshold for red icon scans.
-AI_RED_ICON_THRESHOLD_MAX = 1.0
-
-# Safety margin subtracted from average red icon confidence.
-AI_RED_ICON_MARGIN = 1.0
-
-# Consecutive red icon misses before adaptive lowering is applied.
-AI_RED_ICON_MISS_WINDOW = 1
-
-# Amount to lower the red icon threshold after miss window exhaustion.
-AI_RED_ICON_MISS_STEP = 1.0
-
-# Minimum adaptive threshold for new-level button scans.
-AI_NEW_LEVEL_THRESHOLD_MIN = 0.0
-
-# Maximum adaptive threshold for new-level button scans.
-AI_NEW_LEVEL_THRESHOLD_MAX = 1.0
-
-# Consecutive new-level misses before adaptive lowering is applied.
-AI_NEW_LEVEL_MISS_WINDOW = 1
-
-# Amount to lower the new-level threshold after miss window exhaustion.
-AI_NEW_LEVEL_MISS_STEP = 1.0
-
-# Minimum adaptive threshold for new-level red icon scans.
-AI_NEW_LEVEL_RED_ICON_THRESHOLD_MIN = 0.0
-
-# Maximum adaptive threshold for new-level red icon scans.
-AI_NEW_LEVEL_RED_ICON_THRESHOLD_MAX = 1.0
-
-# Consecutive new-level red icon misses before adaptive lowering is applied.
-AI_NEW_LEVEL_RED_ICON_MISS_WINDOW = 1
-
-# Amount to lower the new-level red icon threshold after miss window exhaustion.
-AI_NEW_LEVEL_RED_ICON_MISS_STEP = 1.0
-
-# Minimum adaptive threshold for upgrade station scans.
-AI_UPGRADE_STATION_THRESHOLD_MIN = 0.0
-
-# Maximum adaptive threshold for upgrade station scans.
-AI_UPGRADE_STATION_THRESHOLD_MAX = 1.0
-
-# Consecutive upgrade station misses before adaptive lowering is applied.
-AI_UPGRADE_STATION_MISS_WINDOW = 1
-
-# Amount to lower the upgrade station threshold after miss window exhaustion.
-AI_UPGRADE_STATION_MISS_STEP = 1.0
-
-# Minimum adaptive threshold for stats upgrade scans.
-AI_STATS_UPGRADE_THRESHOLD_MIN = 0.0
-
-# Maximum adaptive threshold for stats upgrade scans.
-AI_STATS_UPGRADE_THRESHOLD_MAX = 1.0
-
-# Consecutive stats upgrade misses before adaptive lowering is applied.
-AI_STATS_UPGRADE_MISS_WINDOW = 1
-
-# Amount to lower the stats upgrade threshold after miss window exhaustion.
-AI_STATS_UPGRADE_MISS_STEP = 1.0
-
-# Absolute file path for persisted adaptive vision state.
-AI_VISION_STATE_FILE = str(BASE_DIR / "memory" / "vision_state.json")
-
-# Minimum interval between adaptive vision state saves.
-AI_VISION_SAVE_INTERVAL = 0.0
 
 
 # Historical Learning

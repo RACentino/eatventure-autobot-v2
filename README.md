@@ -32,14 +32,13 @@ The vision system is built around masked OpenCV template matching with a few pra
 * **Masked Template Matching**: Uses transparent PNG masks so icon shape matching stays stable.
 * **Multi-Template Consensus**: Red icons are only trusted after enough template variants agree on roughly the same location.
 * **HSV Gate Validation**: Red icons, upgrade stations, and boxes use HSV range gates to reject color-inconsistent candidates.
-* **Adaptive Thresholds**: Detection thresholds can tighten or relax over time based on observed confidence.
+* **Continuous ByteTrack Asset Tracking**: A background tracker maps red icons, upgrade stations, and boxes while the bot continues moving and acting.
 
 ### Adaptive and Historical Learning
 
 The bot features a self-optimizing AI layer that adapts to your device's performance:
 
 * **Adaptive Tuner**: Automatically monitors success rates and adjusts `CLICK_DELAY` and `MOUSE_MOVE_DELAY` in real-time. If clicks are missing, it slows down; if successful, it speeds up to find the "sweet spot" of efficiency.
-* **Vision Optimizer**: Dynamically adjusts detection thresholds based on past match confidence, ensuring reliable detection even in varying lighting or game environments.
 * **Historical Learner**: Records the time taken for every restaurant completion. Over time, it identifies the most efficient timing profiles and applies them as the "Global Best" configuration, learning the optimal cadence for your specific game progress.
 
 ### Better Logging System
@@ -47,7 +46,7 @@ The bot features a self-optimizing AI layer that adapts to your device's perform
 A comprehensive logging system tracks every decision the bot makes. It includes:
 
 * **Structured Tracebacks**: Detailed exception handling to prevent crashes.
-* **State Persistence**: AI vision and learning states are saved to JSON files, allowing the bot to retain its "knowledge" even after a restart.
+* **State Persistence**: Historical learning state is saved to JSON files, allowing the bot to retain its "knowledge" even after a restart.
 * **Performance Metrics**: Logs completion times and AI "confidence" levels for debugging.
 
 ### Visual Debugging
@@ -55,6 +54,7 @@ A comprehensive logging system tracks every decision the bot makes. It includes:
 The bot provides tools for real-time calibration and transparency:
 
 * **Forbidden Zone Overlay**: When enabled, the bot draws a **semi-transparent red overlay** directly over the game window. This visualizes the "Dead Zones" where the bot is forbidden from clicking (e.g., ad menus, settings buttons), allowing for pixel-perfect configuration of the `FORBIDDEN_ZONES`.
+* **Asset Tracking Overlay**: When enabled, the bot renders real-time bounding boxes and track IDs for detected red icons, upgrade stations, and boxes in a sidecar calibration window.
 
 ### Forbidden Zone Configuration
 

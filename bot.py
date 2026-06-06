@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import config
+from asset_tracker import AssetDetection, AssetTracker, AssetTrackingOverlay, TrackedAsset
 from image_matcher import ImageMatcher
 from mouse_controller import MouseController, precise_sleep, wait_event
 from state_machine import State, StateMachine
@@ -39,7 +40,7 @@ def _remove_temp_file(path: str | None) -> None:
         logger.debug("Failed to remove temporary file %s: %s", path, exc)
 
 
-class VisionPersistence:
+class RuntimePersistence:
     def __init__(self, path: str, save_interval: float) -> None:
         self.path = path
         self.save_interval = max(0.0, float(save_interval))
@@ -154,133 +155,8 @@ class AdaptiveTuner:
         self.search_interval = float(config.UPGRADE_SEARCH_INTERVAL)
 
 
-class VisionOptimizer:
-    def __init__(self, persistence: VisionPersistence | None = None) -> None:
-        self.enabled = bool(config.AI_VISION_ENABLED)
-        self.persistence = persistence
-        self.alpha = float(config.AI_VISION_ALPHA)
-        self.alpha_max = float(config.AI_VISION_ALPHA_MAX)
-        self.confidence_boost = float(config.AI_VISION_CONFIDENCE_BOOST)
-        self.settings = self._settings()
-        self.thresholds = {name: values["default"] for name, values in self.settings.items()}
-        self.misses = {name: 0 for name in self.settings}
-
-    @staticmethod
-    def _settings() -> dict[str, dict[str, float | int]]:
-        return {
-            "red_icon": {
-                "default": config.RED_ICON_THRESHOLD,
-                "minimum": config.AI_RED_ICON_THRESHOLD_MIN,
-                "maximum": config.AI_RED_ICON_THRESHOLD_MAX,
-                "miss_window": config.AI_RED_ICON_MISS_WINDOW,
-                "miss_step": config.AI_RED_ICON_MISS_STEP,
-                "margin": config.AI_RED_ICON_MARGIN,
-            },
-            "new_level": {
-                "default": config.NEW_LEVEL_THRESHOLD,
-                "minimum": config.AI_NEW_LEVEL_THRESHOLD_MIN,
-                "maximum": config.AI_NEW_LEVEL_THRESHOLD_MAX,
-                "miss_window": config.AI_NEW_LEVEL_MISS_WINDOW,
-                "miss_step": config.AI_NEW_LEVEL_MISS_STEP,
-                "margin": 0.0,
-            },
-            "new_level_red_icon": {
-                "default": config.NEW_LEVEL_RED_ICON_THRESHOLD,
-                "minimum": config.AI_NEW_LEVEL_RED_ICON_THRESHOLD_MIN,
-                "maximum": config.AI_NEW_LEVEL_RED_ICON_THRESHOLD_MAX,
-                "miss_window": config.AI_NEW_LEVEL_RED_ICON_MISS_WINDOW,
-                "miss_step": config.AI_NEW_LEVEL_RED_ICON_MISS_STEP,
-                "margin": 0.0,
-            },
-            "upgrade_station": {
-                "default": config.UPGRADE_STATION_THRESHOLD,
-                "minimum": config.AI_UPGRADE_STATION_THRESHOLD_MIN,
-                "maximum": config.AI_UPGRADE_STATION_THRESHOLD_MAX,
-                "miss_window": config.AI_UPGRADE_STATION_MISS_WINDOW,
-                "miss_step": config.AI_UPGRADE_STATION_MISS_STEP,
-                "margin": 0.0,
-            },
-            "stats_upgrade": {
-                "default": config.STATS_RED_ICON_THRESHOLD,
-                "minimum": config.AI_STATS_UPGRADE_THRESHOLD_MIN,
-                "maximum": config.AI_STATS_UPGRADE_THRESHOLD_MAX,
-                "miss_window": config.AI_STATS_UPGRADE_MISS_WINDOW,
-                "miss_step": config.AI_STATS_UPGRADE_MISS_STEP,
-                "margin": 0.0,
-            },
-            "box": {
-                "default": config.BOX_THRESHOLD,
-                "minimum": config.AI_BOX_THRESHOLD_MIN,
-                "maximum": config.AI_BOX_THRESHOLD_MAX,
-                "miss_window": config.AI_BOX_MISS_WINDOW,
-                "miss_step": config.AI_BOX_MISS_STEP,
-                "margin": 0.0,
-            },
-        }
-
-    @staticmethod
-    def _number(value: Any) -> float | None:
-        try:
-            number = float(value)
-        except (TypeError, ValueError):
-            return None
-        return number if math.isfinite(number) else None
-
-    def _ema(self, current: float, value: float, alpha: float) -> float:
-        return (1.0 - alpha) * current + alpha * value
-
-    def _adaptive_alpha(self, confidence: float) -> float:
-        boost = max(0.0, min(1.0, confidence - config.AI_VISION_CONFIDENCE_THRESHOLD))
-        return min(self.alpha + boost * self.confidence_boost, self.alpha_max)
-
-    def threshold(self, name: str) -> float:
-        values = self.settings[name]
-        return float(self.thresholds[name] if self.enabled else values["default"])
-
-    def record_confidence(self, name: str, confidence: Any) -> None:
-        confidence = self._number(confidence)
-        if not self.enabled or confidence is None or confidence <= 0 or name not in self.settings:
-            return
-        values = self.settings[name]
-        self.misses[name] = 0
-        target = confidence - float(values["margin"])
-        target = AdaptiveTuner._clamp(target, float(values["minimum"]), float(values["maximum"]))
-        self.thresholds[name] = self._ema(self.thresholds[name], target, self._adaptive_alpha(confidence))
-        self._persist()
-
-    def record_miss(self, name: str) -> None:
-        if not self.enabled or name not in self.settings:
-            return
-        values = self.settings[name]
-        self.misses[name] += 1
-        if self.misses[name] < int(values["miss_window"]):
-            return
-        self.misses[name] = 0
-        target = max(float(values["minimum"]), self.thresholds[name] - float(values["miss_step"]))
-        self.thresholds[name] = self._ema(self.thresholds[name], target, self.alpha_max)
-        self._persist()
-
-    def apply_persisted_state(self, state: dict[str, Any]) -> None:
-        for name, values in self.settings.items():
-            value = self._number(state.get(f"{name}_threshold"))
-            if value is None:
-                continue
-            self.thresholds[name] = AdaptiveTuner._clamp(value, float(values["minimum"]), float(values["maximum"]))
-
-    def reset(self) -> None:
-        self.thresholds = {name: values["default"] for name, values in self.settings.items()}
-        self.misses = {name: 0 for name in self.settings}
-        self._persist(force=True)
-
-    def _persist(self, force: bool = False) -> None:
-        if self.persistence is not None:
-            state = {f"{name}_threshold": float(value) for name, value in self.thresholds.items()}
-            if not self.persistence.save(state, force=force):
-                logger.debug("Vision optimizer state was not persisted")
-
-
 class HistoricalLearner:
-    def __init__(self, bot: Any, persistence: VisionPersistence | None = None) -> None:
+    def __init__(self, bot: Any, persistence: RuntimePersistence | None = None) -> None:
         self.bot = bot
         self.persistence = persistence
         self.enabled = bool(config.AI_LEARNING_ENABLED)
@@ -459,12 +335,10 @@ class EatventureBot:
         self.state_machine = StateMachine(State.FIND_RED_ICONS)
         self.telegram = TelegramNotifier(config.TELEGRAM_BOT_TOKEN, config.TELEGRAM_CHAT_ID, config.TELEGRAM_ENABLED)
         self.tuner = AdaptiveTuner()
-        self.vision_persistence = VisionPersistence(config.AI_VISION_STATE_FILE, config.AI_VISION_SAVE_INTERVAL)
-        self.vision_optimizer = VisionOptimizer(self.vision_persistence)
-        self.vision_optimizer.apply_persisted_state(self.vision_persistence.load())
-        self.learning_persistence = VisionPersistence(config.AI_LEARNING_STATE_FILE, config.AI_LEARNING_SAVE_INTERVAL)
+        self.learning_persistence = RuntimePersistence(config.AI_LEARNING_STATE_FILE, config.AI_LEARNING_SAVE_INTERVAL)
         self.historical_learner = HistoricalLearner(self, self.learning_persistence)
         self.templates = self.load_templates()
+        self.asset_tracker = AssetTracker(self.window_capture, self._detect_trackable_assets)
         self.register_states()
         self.ready = self._validate_required_templates()
         self.running = False
@@ -487,6 +361,7 @@ class EatventureBot:
         self._new_level_red_icon_verified = False
         self.forbidden_zones = list(config.NUMBERED_FORBIDDEN_ZONE_BOUNDS)
         self.overlay: ForbiddenAreaOverlay | None = None
+        self.tracking_overlay: AssetTrackingOverlay | None = None
         logger.info("Bot initialized successfully")
 
     def load_templates(self) -> dict[str, TemplatePair]:
@@ -606,8 +481,25 @@ class EatventureBot:
         top_left = (int(center_x) - int(width) // 2, int(center_y) - int(height) // 2)
         return self.image_matcher._check_hsv_gate(screenshot, template, top_left, mask, hsv_ranges, hsv_match_threshold)
 
-    def _collect_red_icons(self, screenshot: Any, threshold: float, offset_x: int = 0, offset_y: int = 0) -> dict[tuple[int, int], list[tuple[str, float]]]:
+    def _tracked_assets(self, asset_type: str) -> list[TrackedAsset]:
+        if not config.ASSET_TRACKING_ENABLED:
+            return []
+        return self.asset_tracker.assets(asset_type)
+
+    @staticmethod
+    def _asset_in_screenshot(asset: TrackedAsset, screenshot: Any, offset_x: int, offset_y: int) -> bool:
+        height, width = screenshot.shape[:2]
+        return offset_x <= asset.center_x < offset_x + width and offset_y <= asset.center_y < offset_y + height
+
+    def _merge_tracked_red_icons(self, detections: dict[tuple[int, int], list[tuple[str, float]]], screenshot: Any, offset_x: int, offset_y: int) -> None:
+        for asset in self._tracked_assets("red_icon"):
+            if self._asset_in_screenshot(asset, screenshot, offset_x, offset_y):
+                self._merge_icon(detections, asset.center_x, asset.center_y, asset.template_name, asset.confidence)
+
+    def _collect_red_icons(self, screenshot: Any, threshold: float, offset_x: int = 0, offset_y: int = 0, include_tracked: bool = True) -> dict[tuple[int, int], list[tuple[str, float]]]:
         detections: dict[tuple[int, int], list[tuple[str, float]]] = {}
+        if include_tracked and screenshot.size > 0:
+            self._merge_tracked_red_icons(detections, screenshot, offset_x, offset_y)
         min_distance = config.RED_ICON_FAST_MIN_DISTANCE if config.RED_ICON_FAST_MODE_ENABLED else 80
         for name in self._red_icon_template_names():
             template_pair = self._template(name)
@@ -650,19 +542,42 @@ class EatventureBot:
                 return
         detections[(x, y)] = [(name, confidence)]
 
-    def _icons_from_detections(self, detections: dict[tuple[int, int], list[tuple[str, float]]]) -> tuple[list[RedIcon], list[float]]:
-        icons = []
-        confidences = []
+    @staticmethod
+    def _best_by_template(matches: list[tuple[str, float]]) -> dict[str, float]:
+        best_by_template: dict[str, float] = {}
+        for name, confidence in matches:
+            best_by_template[name] = max(float(confidence), best_by_template.get(name, 0.0))
+        return best_by_template
+
+    def _best_red_icon_matches(self, detections: dict[tuple[int, int], list[tuple[str, float]]]) -> list[tuple[int, int, str, float]]:
+        best_matches = []
         min_matches = self._red_icon_min_matches()
         for (x, y), matches in detections.items():
-            best_by_template: dict[str, float] = {}
-            for name, confidence in matches:
-                best_by_template[name] = max(confidence, best_by_template.get(name, 0.0))
-            if len(best_by_template) >= min_matches:
-                confidence = max(best_by_template.values())
-                icons.append((confidence, x, y))
-                confidences.append(confidence)
-        return icons, confidences
+            best_by_template = self._best_by_template(matches)
+            if len(best_by_template) < min_matches:
+                continue
+            template_name, confidence = max(best_by_template.items(), key=lambda item: item[1])
+            best_matches.append((x, y, template_name, confidence))
+        return best_matches
+
+    def _icons_from_detections(self, detections: dict[tuple[int, int], list[tuple[str, float]]]) -> tuple[list[RedIcon], list[float]]:
+        icons = [(confidence, x, y) for x, y, _, confidence in self._best_red_icon_matches(detections)]
+        return icons, [confidence for confidence, _, _ in icons]
+
+    def _red_icon_assets_from_detections(self, detections: dict[tuple[int, int], list[tuple[str, float]]]) -> list[AssetDetection]:
+        assets = []
+        for x, y, template_name, confidence in self._best_red_icon_matches(detections):
+            width, height = self._template_size(template_name)
+            assets.append(AssetDetection("red_icon", template_name, confidence, x, y, width, height))
+        return assets
+
+    def _template_size(self, name: str) -> tuple[int, int]:
+        template_pair = self._template(name)
+        if template_pair is None:
+            return 1, 1
+        template, _ = template_pair
+        height, width = template.shape[:2]
+        return int(width), int(height)
 
     def _find_new_level_button(self, screenshot: Any) -> tuple[bool, float, int, int]:
         template_pair = self._template("newLevel")
@@ -673,11 +588,11 @@ class EatventureBot:
             screenshot,
             template,
             mask=mask,
-            threshold=self.vision_optimizer.threshold("new_level"),
+            threshold=config.NEW_LEVEL_THRESHOLD,
             template_name="newLevel",
         )
 
-    def _find_zone_red_icon(self, screenshot: Any, zone: tuple[int, int, int, int], threshold: float, kind: str) -> RedIcon | None:
+    def _find_zone_red_icon(self, screenshot: Any, zone: tuple[int, int, int, int], threshold: float) -> RedIcon | None:
         names = self._red_icon_template_names()
         region, x_offset, y_offset = self._region(screenshot, zone[0], zone[1], zone[2], zone[3], self._template_span(names))
         detections = self._collect_red_icons(region, threshold, x_offset, y_offset)
@@ -686,10 +601,6 @@ class EatventureBot:
         for confidence, x, y in icons:
             if zone[0] <= x <= zone[1] and zone[2] <= y <= zone[3] and (best is None or confidence > best[0]):
                 best = (confidence, x, y)
-        if best is None:
-            self.vision_optimizer.record_miss(kind)
-        else:
-            self.vision_optimizer.record_confidence(kind, best[0])
         return best
 
     def _find_new_level_red_icon(self, screenshot: Any | None = None) -> RedIcon | None:
@@ -701,18 +612,13 @@ class EatventureBot:
             config.NEW_LEVEL_RED_ICON_Y_MIN,
             config.NEW_LEVEL_RED_ICON_Y_MAX,
         )
-        threshold = self.vision_optimizer.threshold("new_level_red_icon")
-        return self._find_zone_red_icon(screenshot, zone, threshold, "new_level_red_icon")
+        return self._find_zone_red_icon(screenshot, zone, config.NEW_LEVEL_RED_ICON_THRESHOLD)
 
     def _scan_red_icons(self, screenshot: Any) -> tuple[list[RedIcon], list[float], RedIcon | None]:
         limited = screenshot[: config.MAX_SEARCH_Y, :]
-        threshold = min(self.vision_optimizer.threshold("red_icon"), self.vision_optimizer.threshold("new_level_red_icon"))
+        threshold = min(config.RED_ICON_THRESHOLD, config.NEW_LEVEL_RED_ICON_THRESHOLD)
         icons, confidences = self._icons_from_detections(self._collect_red_icons(limited, threshold))
         new_level_icon = self._find_new_level_red_icon(screenshot)
-        if confidences:
-            self.vision_optimizer.record_confidence("red_icon", sum(confidences) / len(confidences))
-        else:
-            self.vision_optimizer.record_miss("red_icon")
         return icons, confidences, new_level_icon
 
     def _scrcpy_recovery(self, delay: Any) -> bool:
@@ -746,20 +652,12 @@ class EatventureBot:
         if all(abs(existing_y - y) >= 12 for existing_y in self.successful_red_icon_positions):
             self.successful_red_icon_positions.append(int(y))
 
-    def _upgrade_station_match(self, threshold: float) -> RedIcon | None:
+    def _upgrade_station_candidates(self, screenshot: Any, threshold: float) -> list[tuple[float, int, int, int, int]]:
         template_pair = self._template("upgradeStation")
         if template_pair is None:
-            return None
-        screenshot = self.window_capture.capture(max_y=config.UPGRADE_STATION_SEARCH_Y)
+            return []
         template, mask = template_pair
-        candidates = self.image_matcher.find_template_candidates(
-            screenshot,
-            template,
-            mask=mask,
-            threshold=threshold,
-            min_distance=15,
-            template_name="upgradeStation",
-        )
+        candidates = self.image_matcher.find_template_candidates(screenshot, template, mask=mask, threshold=threshold, min_distance=15, template_name="upgradeStation")
         if self._supervision_enabled("SUPERVISION_UPGRADE_STATION_NMS_ENABLED"):
             filtered = self.image_matcher.filter_candidates_with_supervision_nms(
                 candidates,
@@ -767,19 +665,34 @@ class EatventureBot:
                 class_agnostic=config.SUPERVISION_CLASS_AGNOSTIC_NMS,
             )
             candidates = filtered if filtered is not None else candidates
-        for confidence, x, y, width, height in candidates:
-            if not self._passes_hsv_gate(
-                screenshot,
-                template,
-                mask,
-                x,
-                y,
-                width,
-                height,
-                config.UPGRADE_STATION_HSV_RANGES,
-                config.UPGRADE_STATION_HSV_MIN_MATCH_RATIO,
-            ):
-                continue
+        return [candidate for candidate in candidates if self._upgrade_station_hsv_match(screenshot, template, mask, candidate)]
+
+    def _upgrade_station_hsv_match(self, screenshot: Any, template: Any, mask: Any, candidate: tuple[float, int, int, int, int]) -> bool:
+        _, x, y, width, height = candidate
+        return self._passes_hsv_gate(
+            screenshot,
+            template,
+            mask,
+            x,
+            y,
+            width,
+            height,
+            config.UPGRADE_STATION_HSV_RANGES,
+            config.UPGRADE_STATION_HSV_MIN_MATCH_RATIO,
+        )
+
+    def _tracked_upgrade_station_match(self) -> RedIcon | None:
+        for asset in sorted(self._tracked_assets("upgrade_station"), key=lambda item: item.confidence, reverse=True):
+            if not self.mouse_controller.is_in_forbidden_zone(asset.center_x, asset.center_y, relative=True):
+                return asset.confidence, asset.center_x, asset.center_y
+        return None
+
+    def _upgrade_station_match(self, threshold: float) -> RedIcon | None:
+        tracked_match = self._tracked_upgrade_station_match()
+        if tracked_match is not None:
+            return tracked_match
+        screenshot = self.window_capture.capture(max_y=config.UPGRADE_STATION_SEARCH_Y)
+        for confidence, x, y, _, _ in self._upgrade_station_candidates(screenshot, threshold):
             if not self.mouse_controller.is_in_forbidden_zone(x, y, relative=True):
                 return float(confidence), int(x), int(y)
         return None
@@ -844,7 +757,13 @@ class EatventureBot:
         self.historical_learner.record_completion(elapsed, source)
         return elapsed
 
-    def _box_candidates(self, screenshot: Any) -> list[BoxCandidate]:
+    def _tracked_box_candidates(self) -> list[BoxCandidate]:
+        return [
+            (asset.confidence, asset.center_x, asset.center_y, asset.width, asset.height, asset.template_name)
+            for asset in self._tracked_assets("box")
+        ]
+
+    def _raw_box_candidates(self, screenshot: Any) -> list[BoxCandidate]:
         candidates = []
         for name in BOX_TEMPLATE_NAMES:
             template_pair = self._template(name)
@@ -855,7 +774,7 @@ class EatventureBot:
                 screenshot,
                 template,
                 mask=mask,
-                threshold=self.vision_optimizer.threshold("box"),
+                threshold=config.BOX_THRESHOLD,
                 min_distance=12,
                 template_name=name,
             )
@@ -873,6 +792,9 @@ class EatventureBot:
                 ):
                     continue
                 candidates.append((float(confidence), int(x), int(y), int(width), int(height), name))
+        return candidates
+
+    def _filter_box_candidates(self, candidates: list[BoxCandidate]) -> list[BoxCandidate]:
         if self._supervision_enabled("SUPERVISION_BOX_NMS_ENABLED"):
             filtered = self.image_matcher.filter_candidates_with_supervision_nms(
                 candidates,
@@ -881,6 +803,30 @@ class EatventureBot:
             )
             return list(filtered) if filtered is not None else candidates
         return candidates
+
+    def _box_candidates(self, screenshot: Any, include_tracked: bool = True) -> list[BoxCandidate]:
+        candidates = self._tracked_box_candidates() if include_tracked else []
+        candidates.extend(self._raw_box_candidates(screenshot))
+        return self._filter_box_candidates(candidates)
+
+    def _detect_trackable_assets(self, screenshot: Any) -> list[AssetDetection]:
+        assets = []
+        if config.ASSET_TRACKING_RED_ICON_ENABLED:
+            threshold = min(config.RED_ICON_THRESHOLD, config.NEW_LEVEL_RED_ICON_THRESHOLD)
+            assets.extend(self._red_icon_assets_from_detections(self._collect_red_icons(screenshot, threshold, include_tracked=False)))
+        if config.ASSET_TRACKING_UPGRADE_STATION_ENABLED:
+            assets.extend(self._upgrade_station_assets(screenshot))
+        if config.ASSET_TRACKING_BOX_ENABLED:
+            assets.extend(self._box_assets(screenshot))
+        return assets
+
+    def _upgrade_station_assets(self, screenshot: Any) -> list[AssetDetection]:
+        candidates = self._upgrade_station_candidates(screenshot[: config.UPGRADE_STATION_SEARCH_Y, :], config.UPGRADE_STATION_THRESHOLD)
+        return [AssetDetection("upgrade_station", "upgradeStation", confidence, x, y, width, height) for confidence, x, y, width, height in candidates]
+
+    def _box_assets(self, screenshot: Any) -> list[AssetDetection]:
+        candidates = self._box_candidates(screenshot[: config.BOX_SEARCH_Y, :], include_tracked=False)
+        return [AssetDetection("box", name, confidence, x, y, width, height) for confidence, x, y, width, height, name in candidates]
 
     def request_stop(self) -> None:
         self._stop_requested.set()
@@ -899,16 +845,24 @@ class EatventureBot:
         self._stop_requested.clear()
         self.running = True
         self.current_level_start_time = self.current_level_start_time or datetime.now()
+        self.asset_tracker.start()
         self.historical_learner.start()
         if config.SHOW_FORBIDDEN_AREA and self.overlay is None:
             self.overlay = ForbiddenAreaOverlay(self.window_capture, self.forbidden_zones)
             self.overlay.start()
+        if config.ASSET_TRACKING_OVERLAY_ENABLED and self.tracking_overlay is None:
+            self.tracking_overlay = AssetTrackingOverlay(self.window_capture, self.asset_tracker)
+            self.tracking_overlay.start()
         return True
 
     def stop(self) -> None:
         self._stop_requested.set()
         self.running = False
+        self.asset_tracker.stop()
         self.historical_learner.stop()
+        if self.tracking_overlay is not None:
+            self.tracking_overlay.stop()
+            self.tracking_overlay = None
         if self.overlay is not None:
             self.overlay.stop()
             self.overlay = None
@@ -970,7 +924,7 @@ class EatventureBot:
 
     def wipe_memory(self) -> None:
         self.tuner.reset()
-        self.vision_optimizer.reset()
+        self.asset_tracker.reset()
         self.historical_learner.reset()
         self.successful_red_icon_positions.clear()
         self.current_level_start_time = datetime.now() if self.running else None
@@ -980,16 +934,14 @@ class EatventureBot:
         self._click_idle()
         self.work_done = False
         screenshot = self.window_capture.capture(max_y=config.EXTENDED_SEARCH_Y)
-        found, confidence, x, y = self._find_new_level_button(screenshot[: config.MAX_SEARCH_Y, :])
+        found, _, x, y = self._find_new_level_button(screenshot[: config.MAX_SEARCH_Y, :])
         if found:
-            self.vision_optimizer.record_confidence("new_level", confidence)
             logger.info("newLevel.png found at (%s, %s)", x, y)
             return State.TRANSITION_LEVEL
-        self.vision_optimizer.record_miss("new_level")
-        self.red_icons, confidences, new_level_icon = self._scan_red_icons(screenshot)
+        self.red_icons, _, new_level_icon = self._scan_red_icons(screenshot)
         if not self.red_icons and new_level_icon is None and self._scrcpy_recovery(config.SCRCPY_RED_ICON_MISS_RECOVERY_DELAY):
             screenshot = self.window_capture.capture(max_y=config.EXTENDED_SEARCH_Y)
-            self.red_icons, confidences, new_level_icon = self._scan_red_icons(screenshot)
+            self.red_icons, _, new_level_icon = self._scan_red_icons(screenshot)
         if new_level_icon is not None:
             self._new_level_red_icon_verified = False
             logger.info("New level red icon detected at (%s, %s) [%.3f]", new_level_icon[1], new_level_icon[2], new_level_icon[0])
@@ -1032,24 +984,22 @@ class EatventureBot:
         return State.SEARCH_UPGRADE_STATION
 
     def handle_search_upgrade_station(self, current_state: State) -> StateResult:
-        base_threshold = self.vision_optimizer.threshold("upgrade_station")
+        base_threshold = config.UPGRADE_STATION_THRESHOLD
         relaxed_threshold = max(0.0, base_threshold - 0.05)
         for attempt in range(5):
             match = self._upgrade_station_match(base_threshold if attempt < 2 else relaxed_threshold)
             if match is not None:
-                confidence, x, y = match
+                _, x, y = match
                 self.upgrade_station_pos = (x, y)
                 self.upgrade_found_in_cycle = True
                 self.consecutive_failed_cycles = 0
                 self.cycle_counter = 0
-                self.vision_optimizer.record_confidence("upgrade_station", confidence)
                 self.tuner.record_search_result(True)
                 self._apply_tuning()
                 logger.info("Upgrade station found at (%s, %s) on attempt %s", x, y, attempt + 1)
                 return State.HOLD_UPGRADE_STATION
             if attempt < 4 and not self._sleep(self.tuner.search_interval):
                 return State.OPEN_BOXES
-        self.vision_optimizer.record_miss("upgrade_station")
         self.tuner.record_search_result(False)
         self._apply_tuning()
         self.consecutive_failed_cycles += 1
@@ -1064,14 +1014,12 @@ class EatventureBot:
         self._apply_tuning()
         if not clicked or not self._sleep(config.UPGRADE_STATION_VERIFY_SETTLE_DELAY):
             return State.OPEN_BOXES
-        base_threshold = self.vision_optimizer.threshold("upgrade_station")
+        base_threshold = config.UPGRADE_STATION_THRESHOLD
         relaxed_threshold = max(0.0, base_threshold - 0.05)
         verified = self._verify_upgrade_station(base_threshold, relaxed_threshold, True)
         if verified is None:
-            self.vision_optimizer.record_miss("upgrade_station")
             return State.OPEN_BOXES
-        confidence, x, y = verified
-        self.vision_optimizer.record_confidence("upgrade_station", confidence)
+        _, x, y = verified
         if self.current_red_icon_index < len(self.red_icons):
             self._remember_successful_y(self.red_icons[self.current_red_icon_index][2])
         hold_duration = max(0.0, float(config.CLICK_HOLD_MAX_DURATION))
@@ -1088,11 +1036,8 @@ class EatventureBot:
             match = self._verify_upgrade_station(base_threshold, relaxed_threshold, False)
             if match is None:
                 station_lost = True
-                self.vision_optimizer.record_miss("upgrade_station")
                 return True
             station_lost = False
-            confidence, _, _ = match
-            self.vision_optimizer.record_confidence("upgrade_station", confidence)
             next_verify_at = time.perf_counter() + verify_interval
             return False
 
@@ -1111,12 +1056,11 @@ class EatventureBot:
     def handle_upgrade_stats(self, current_state: State) -> StateResult:
         self._click_idle()
         screenshot = self.window_capture.capture(max_y=config.EXTENDED_SEARCH_Y)
-        found, confidence, _, _ = self._find_new_level_button(screenshot[: config.MAX_SEARCH_Y, :])
+        found, _, _, _ = self._find_new_level_button(screenshot[: config.MAX_SEARCH_Y, :])
         if found:
-            self.vision_optimizer.record_confidence("new_level", confidence)
             return State.TRANSITION_LEVEL
         zone = (config.UPGRADE_RED_ICON_X_MIN, config.UPGRADE_RED_ICON_X_MAX, config.UPGRADE_RED_ICON_Y_MIN, config.UPGRADE_RED_ICON_Y_MAX)
-        stats_icon = self._find_zone_red_icon(screenshot, zone, self.vision_optimizer.threshold("stats_upgrade"), "stats_upgrade")
+        stats_icon = self._find_zone_red_icon(screenshot, zone, config.STATS_RED_ICON_THRESHOLD)
         if stats_icon is None:
             logger.info("No stats icon detected")
             return State.SCROLL
@@ -1132,27 +1076,21 @@ class EatventureBot:
     def handle_open_boxes(self, current_state: State) -> StateResult:
         self._click_idle()
         screenshot = self.window_capture.capture(max_y=config.BOX_SEARCH_Y)
-        found, confidence, _, _ = self._find_new_level_button(screenshot[: config.MAX_SEARCH_Y, :])
+        found, _, _, _ = self._find_new_level_button(screenshot[: config.MAX_SEARCH_Y, :])
         if found:
-            self.vision_optimizer.record_confidence("new_level", confidence)
             return State.TRANSITION_LEVEL
         candidates = self._box_candidates(screenshot)
         if not candidates and self._scrcpy_recovery(config.SCRCPY_BOX_MISS_RECOVERY_DELAY):
             screenshot = self.window_capture.capture(max_y=config.BOX_SEARCH_Y)
             candidates = self._box_candidates(screenshot)
         boxes_found = 0
-        best_confidence = 0.0
-        for confidence, x, y, _, _, _ in candidates:
+        for _, x, y, _, _, _ in candidates:
             if not self.mouse_controller.is_in_forbidden_zone(x, y, relative=True) and self.mouse_controller.click(x, y, relative=True):
                 boxes_found += 1
-                best_confidence = max(best_confidence, confidence)
         if boxes_found:
             self.work_done = True
             self.cycle_counter = 0
-            self.vision_optimizer.record_confidence("box", best_confidence)
             logger.info("Opened %s boxes", boxes_found)
-        else:
-            self.vision_optimizer.record_miss("box")
         return self._next_state_after_boxes()
 
     def _next_state_after_boxes(self) -> State:
@@ -1202,9 +1140,8 @@ class EatventureBot:
     def handle_transition_level(self, current_state: State) -> StateResult:
         self._click_idle()
         for attempt in range(5):
-            found, confidence, x, y = self._find_new_level_button(self.window_capture.capture(max_y=config.MAX_SEARCH_Y))
+            found, _, x, y = self._find_new_level_button(self.window_capture.capture(max_y=config.MAX_SEARCH_Y))
             if found:
-                self.vision_optimizer.record_confidence("new_level", confidence)
                 if not self.mouse_controller.click(x, y, relative=True):
                     return State.CHECK_NEW_LEVEL
                 self._sleep(1.0)
@@ -1213,7 +1150,6 @@ class EatventureBot:
                 return State.WAIT_FOR_UNLOCK
             if attempt < 4:
                 self._sleep(0.20)
-        self.vision_optimizer.record_miss("new_level")
         self._reset_search_cycle()
         return State.FIND_RED_ICONS
 
