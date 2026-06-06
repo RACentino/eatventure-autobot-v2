@@ -69,10 +69,10 @@ ASSET_TRACKING_CAPTURE_Y = 780
 ASSET_TRACKING_FRAME_RATE = 120.0
 
 # Delay between tracker capture passes.
-ASSET_TRACKING_INTERVAL = 0.005
+ASSET_TRACKING_INTERVAL = 0.001
 
 # Maximum age in seconds for tracker snapshots used by bot actions.
-ASSET_TRACKING_MAX_SNAPSHOT_AGE = 0.005
+ASSET_TRACKING_MAX_SNAPSHOT_AGE = 0.001
 
 # Maximum detections passed through each tracking frame.
 ASSET_TRACKING_MAX_DETECTIONS = 256
@@ -234,10 +234,10 @@ STATE_DELAY = 0.0
 UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.2
 
 # Maximum attempts for upgrade station verification.
-UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 2
+UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 1
 
 # Delay between upgrade station verification attempts.
-UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.001
+UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.1
 
 # Maximum duration for holding an upgrade station click.
 CLICK_HOLD_MAX_DURATION = 8.5
