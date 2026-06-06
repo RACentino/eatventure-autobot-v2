@@ -159,7 +159,7 @@ UPGRADE_STATION_HSV_RANGES = (
 )
 
 # Minimum HSV mask ratio for accepting an upgrade station candidate.
-UPGRADE_STATION_HSV_MIN_MATCH_RATIO = 0.5
+UPGRADE_STATION_HSV_MIN_MATCH_RATIO = 0.4
 
 # Template confidence threshold for box scans.
 BOX_THRESHOLD = 0.930
