@@ -207,10 +207,10 @@ RED_ICON_HSV_MIN_MATCH_RATIO = 0.5
 # Mouse and Action Timing
 
 # Delay after normal click actions.
-CLICK_DELAY = 0.050
+CLICK_DELAY = 0.1
 
 # Delay after cursor movement.
-MOUSE_MOVE_DELAY = 0.050
+MOUSE_MOVE_DELAY = 0.1
 
 # Duration to hold the mouse button down during click actions.
 MOUSE_DOWN_DURATION = 0.15
@@ -231,7 +231,7 @@ UPGRADE_SEARCH_INTERVAL = 0.1
 STATE_DELAY = 0.001
 
 # Settling delay before verifying an upgrade station hold target.
-UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.150
+UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.2
 
 # Maximum attempts for upgrade station verification.
 UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 1
@@ -359,7 +359,7 @@ SCROLL_DURATION = 0.300
 # Adaptive Runtime Tuning
 
 # Enables adaptive runtime timing adjustments.
-ADAPTIVE_TUNER_ENABLED = False
+ADAPTIVE_TUNER_ENABLED = True
 
 # EMA alpha used by the adaptive tuner.
 ADAPTIVE_TUNER_ALPHA = 1.0
@@ -416,7 +416,7 @@ ADAPTIVE_TUNER_MAX_SEARCH_INTERVAL = 0.5
 # Historical Learning
 
 # Enables historical learning from completed levels.
-AI_LEARNING_ENABLED = False
+AI_LEARNING_ENABLED = True
 
 # Absolute file path for persisted historical learning state.
 AI_LEARNING_STATE_FILE = str(BASE_DIR / "memory" / "learning_state_stable.json")
@@ -449,7 +449,7 @@ AI_LEARNING_PROFILE_BLEND_TOP_K = 1
 AI_LEARNING_MIN_IMPROVEMENT_RATIO = 0.0
 
 # Cooldown between learned behavior applications.
-AI_LEARNING_APPLY_COOLDOWN = 0.0
+AI_LEARNING_APPLY_COOLDOWN = 0.001
 
 # Minimum click delay allowed by historical learning.
 AI_LEARNING_MIN_CLICK_DELAY = 0.0
