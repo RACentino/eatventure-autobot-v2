@@ -90,7 +90,7 @@ STATS_RED_ICON_THRESHOLD = 0.950
 UPGRADE_STATION_THRESHOLD = 0.910
 
 # Template confidence threshold for box scans.
-BOX_THRESHOLD = 0.930
+BOX_THRESHOLD = 0.935
 
 # Accepted HSV ranges for box candidate gating.
 BOX_HSV_RANGES = (
@@ -105,7 +105,7 @@ BOX_HSV_RANGES = (
 )
 
 # Minimum HSV mask ratio for accepting a box candidate.
-BOX_HSV_MIN_MATCH_RATIO = 0.5
+BOX_HSV_MIN_MATCH_RATIO = 0.6
 
 # Template confidence threshold for unlock button scans.
 UNLOCK_THRESHOLD = 0.905
@@ -281,16 +281,16 @@ SCROLL_PIXEL_STEP = 180
 SCROLL_DISTANCE_RATIO = 1.0
 
 # Maximum oscillating scroll cycles before reset.
-MAX_SCROLL_CYCLES = 2
+MAX_SCROLL_CYCLES = 3
 
 # Step increment applied to each oscillating scroll cycle.
 SCROLL_INCREMENT_STEP = 2
 
 # Delay between scroll intervals.
-SCROLL_INTERVAL_PAUSE = 0.25
+SCROLL_INTERVAL_PAUSE = 0.150
 
 # Settling delay after a scroll gesture.
-POST_SCROLL_SETTLE = 0.25
+POST_SCROLL_SETTLE = 0.150
 
 # Duration of each scroll drag gesture.
 SCROLL_DURATION = 0.250
