@@ -72,7 +72,7 @@ ASSET_TRACKING_FRAME_RATE = 120.0
 ASSET_TRACKING_INTERVAL = 0.001
 
 # Maximum age in seconds for tracker snapshots used by bot actions.
-ASSET_TRACKING_MAX_SNAPSHOT_AGE = 0.001
+ASSET_TRACKING_MAX_SNAPSHOT_AGE = 0.002
 
 # Maximum detections passed through each tracking frame.
 ASSET_TRACKING_MAX_DETECTIONS = 256
@@ -84,7 +84,7 @@ ASSET_TRACKING_TRACK_ACTIVATION_THRESHOLD = 0.25
 ASSET_TRACKING_LOST_TRACK_BUFFER = 60
 
 # ByteTrack association threshold between existing tracks and detections.
-ASSET_TRACKING_MINIMUM_MATCHING_THRESHOLD = 0.8
+ASSET_TRACKING_MINIMUM_MATCHING_THRESHOLD = 0.9
 
 # Consecutive tracked frames required before a track is considered valid.
 ASSET_TRACKING_MINIMUM_CONSECUTIVE_FRAMES = 1
