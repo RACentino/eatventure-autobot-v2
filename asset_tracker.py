@@ -9,7 +9,7 @@ from typing import Any
 import numpy as np
 
 import config
-from overlay_window import configure_overlay_canvas, configure_overlay_root, destroy_overlay_root, position_overlay_over_rect, set_overlay_visible_regions
+from window_capture import configure_overlay_canvas, configure_overlay_root, destroy_overlay_root, position_overlay_over_rect, set_overlay_visible_regions
 
 logger = logging.getLogger(__name__)
 

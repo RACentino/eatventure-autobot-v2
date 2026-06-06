@@ -1,19 +1,52 @@
+import ctypes
+import ctypes.util
 import logging
+import os
+import platform
 import threading
 import time
 from typing import Any
 
-import mss
 import numpy as np
-import pywinctl
 
-from overlay_window import configure_overlay_canvas, configure_overlay_root, destroy_overlay_root, position_overlay_over_rect, set_overlay_visible_regions
+try:
+    import mss
+except Exception as exc:
+    mss = None
+    _MSS_IMPORT_ERROR = exc
+else:
+    _MSS_IMPORT_ERROR = None
+
+try:
+    import pywinctl
+except Exception as exc:
+    pywinctl = None
+    _PYWINCTL_IMPORT_ERROR = exc
+else:
+    _PYWINCTL_IMPORT_ERROR = None
 
 logger = logging.getLogger(__name__)
 
 WindowRect = tuple[int, int, int, int]
 ForbiddenZone = tuple[int, int, int, int]
+OverlayRegion = tuple[int, int, int, int]
 FORBIDDEN_AREA_OVERLAY_LOOP_ITERATION_LIMIT = 2_147_483_647
+TRANSPARENT_OVERLAY_COLOR = "#010203"
+WINDOWS_GWL_EXSTYLE = -20
+WINDOWS_WS_EX_LAYERED = 0x00080000
+WINDOWS_WS_EX_TRANSPARENT = 0x00000020
+WINDOWS_WS_EX_TOOLWINDOW = 0x00000080
+X11_SHAPE_BOUNDING = 0
+X11_SHAPE_INPUT = 2
+
+
+class _XRectangle(ctypes.Structure):
+    _fields_ = [
+        ("x", ctypes.c_short),
+        ("y", ctypes.c_short),
+        ("width", ctypes.c_ushort),
+        ("height", ctypes.c_ushort),
+    ]
 
 
 class WindowCaptureError(RuntimeError):
@@ -57,6 +90,8 @@ class WindowCapture:
         self.hwnd = None
         self._window = None
         self._lock = threading.RLock()
+        if mss is None:
+            raise WindowCaptureError(f"Cannot initialize screenshot backend: {_MSS_IMPORT_ERROR}")
         try:
             self._screenshotter = mss.mss()
         except Exception as exc:
@@ -85,6 +120,8 @@ class WindowCapture:
         return getattr(window, "handle", None)
 
     def _find_window(self) -> Any | None:
+        if pywinctl is None:
+            raise WindowCaptureError(f"Could not initialize window backend: {_PYWINCTL_IMPORT_ERROR}")
         try:
             windows = pywinctl.getWindowsWithTitle(self.window_title) or []
         except Exception as exc:
@@ -176,6 +213,174 @@ class WindowCapture:
         close_screenshotter = getattr(self._screenshotter, "close", None)
         if callable(close_screenshotter):
             close_screenshotter()
+
+
+def configure_overlay_root(root: Any, title: str) -> str:
+    root.title(title)
+    root.resizable(False, False)
+    _call_if_supported(root, "overrideredirect", True)
+    _set_window_attribute(root, "-topmost", True)
+    root.configure(background=TRANSPARENT_OVERLAY_COLOR)
+    if not _set_platform_transparency(root):
+        _set_window_attribute(root, "-alpha", 0.85)
+    enable_overlay_click_through(root)
+    return TRANSPARENT_OVERLAY_COLOR
+
+
+def configure_overlay_canvas(canvas: Any, background: str = TRANSPARENT_OVERLAY_COLOR) -> None:
+    canvas.configure(background=background, highlightthickness=0, borderwidth=0)
+
+
+def position_overlay_over_rect(root: Any, canvas: Any, rect: WindowRect) -> bool:
+    x, y, width, height = rect
+    if width <= 0 or height <= 0:
+        return False
+    root.geometry(f"{int(width)}x{int(height)}+{int(x)}+{int(y)}")
+    canvas.config(width=int(width), height=int(height))
+    return True
+
+
+def enable_overlay_click_through(root: Any) -> bool:
+    _call_if_supported(root, "update_idletasks")
+    try:
+        window_id = int(root.winfo_id())
+    except Exception as exc:
+        logger.debug("Overlay click-through unavailable without window id: %s", exc)
+        return False
+    enabled = _enable_platform_click_through(window_id)
+    if not enabled:
+        logger.debug("Overlay click-through is unsupported on this window manager")
+    return enabled
+
+
+def set_overlay_visible_regions(root: Any, regions: list[OverlayRegion]) -> bool:
+    if platform.system() != "Linux":
+        return False
+    _call_if_supported(root, "update_idletasks")
+    try:
+        window_id = int(root.winfo_id())
+    except Exception as exc:
+        logger.debug("Overlay visible regions unavailable without window id: %s", exc)
+        return False
+    return _set_x11_shape_regions(window_id, X11_SHAPE_BOUNDING, regions)
+
+
+def destroy_overlay_root(root: Any) -> None:
+    try:
+        root.destroy()
+    except Exception:
+        logger.debug("Overlay root was already closed")
+
+
+def _set_platform_transparency(root: Any) -> bool:
+    system_name = platform.system()
+    if system_name == "Windows":
+        return _set_window_attribute(root, "-transparentcolor", TRANSPARENT_OVERLAY_COLOR)
+    if system_name == "Darwin":
+        root.configure(background="systemTransparent")
+        return _set_window_attribute(root, "-transparent", True)
+    return False
+
+
+def _enable_platform_click_through(window_id: int) -> bool:
+    system_name = platform.system()
+    if system_name == "Windows":
+        return _enable_windows_click_through(window_id)
+    if system_name == "Linux":
+        return _enable_x11_click_through(window_id)
+    return False
+
+
+def _enable_windows_click_through(window_id: int) -> bool:
+    windll = getattr(ctypes, "windll", None)
+    if windll is None:
+        return False
+    user32 = windll.user32
+    kernel32 = windll.kernel32
+    style = user32.GetWindowLongW(window_id, WINDOWS_GWL_EXSTYLE)
+    new_style = style | WINDOWS_WS_EX_LAYERED | WINDOWS_WS_EX_TRANSPARENT | WINDOWS_WS_EX_TOOLWINDOW
+    kernel32.SetLastError(0)
+    previous_style = user32.SetWindowLongW(window_id, WINDOWS_GWL_EXSTYLE, new_style)
+    return bool(previous_style) or kernel32.GetLastError() == 0
+
+
+def _enable_x11_click_through(window_id: int) -> bool:
+    return _set_x11_shape_regions(window_id, X11_SHAPE_INPUT, [])
+
+
+def _set_x11_shape_regions(window_id: int, shape_kind: int, regions: list[OverlayRegion]) -> bool:
+    display_name = os.environ.get("DISPLAY")
+    if not display_name:
+        return False
+    x11_path = ctypes.util.find_library("X11")
+    xfixes_path = ctypes.util.find_library("Xfixes")
+    if x11_path is None or xfixes_path is None:
+        return False
+    return _apply_x11_shape_regions(window_id, shape_kind, regions, display_name, x11_path, xfixes_path)
+
+
+def _apply_x11_shape_regions(
+    window_id: int,
+    shape_kind: int,
+    regions: list[OverlayRegion],
+    display_name: str,
+    x11_path: str,
+    xfixes_path: str,
+) -> bool:
+    x11 = ctypes.CDLL(x11_path)
+    xfixes = ctypes.CDLL(xfixes_path)
+    x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+    x11.XOpenDisplay.restype = ctypes.c_void_p
+    x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+    x11.XFlush.argtypes = [ctypes.c_void_p]
+    xfixes.XFixesSetWindowShapeRegion.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_void_p]
+    xfixes.XFixesCreateRegion.argtypes = [ctypes.c_void_p, ctypes.POINTER(_XRectangle), ctypes.c_int]
+    xfixes.XFixesCreateRegion.restype = ctypes.c_ulong
+    xfixes.XFixesDestroyRegion.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+    display = x11.XOpenDisplay(display_name.encode())
+    if not display:
+        return False
+    region = _create_x11_region(xfixes, display, regions)
+    try:
+        xfixes.XFixesSetWindowShapeRegion(display, ctypes.c_ulong(window_id), shape_kind, 0, 0, ctypes.c_void_p(region))
+        x11.XFlush(display)
+        return True
+    finally:
+        xfixes.XFixesDestroyRegion(display, region)
+        x11.XCloseDisplay(display)
+
+
+def _create_x11_region(xfixes: Any, display: Any, regions: list[OverlayRegion]) -> int:
+    if not regions:
+        return int(xfixes.XFixesCreateRegion(display, None, 0))
+    rectangles = (_XRectangle * len(regions))(*[_x_rectangle(region) for region in regions])
+    return int(xfixes.XFixesCreateRegion(display, rectangles, len(regions)))
+
+
+def _x_rectangle(region: OverlayRegion) -> _XRectangle:
+    x, y, width, height = region
+    return _XRectangle(int(x), int(y), max(1, int(width)), max(1, int(height)))
+
+
+def _set_window_attribute(root: Any, attribute_name: str, value: Any) -> bool:
+    try:
+        root.attributes(attribute_name, value)
+        return True
+    except Exception as exc:
+        logger.debug("Overlay window attribute %s unsupported: %s", attribute_name, exc)
+        return False
+
+
+def _call_if_supported(target: Any, method_name: str, *args: Any) -> bool:
+    method = getattr(target, method_name, None)
+    if not callable(method):
+        return False
+    try:
+        method(*args)
+        return True
+    except Exception as exc:
+        logger.debug("Overlay method %s failed: %s", method_name, exc)
+        return False
 
 
 class ForbiddenAreaOverlay:
