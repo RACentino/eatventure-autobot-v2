@@ -27,7 +27,7 @@ WINDOW_HEIGHT = 780
 DEBUG = False
 
 # Shows the forbidden click area overlay while the bot is running.
-SHOW_FORBIDDEN_AREA = True
+SHOW_FORBIDDEN_AREA = False
 
 
 # Supervision NMS
@@ -102,7 +102,7 @@ ASSET_TRACKING_BOX_ENABLED = True
 ASSET_TRACKING_THREAD_JOIN_TIMEOUT = 1.5
 
 # Enables the real-time asset tracking overlay.
-ASSET_TRACKING_OVERLAY_ENABLED = True
+ASSET_TRACKING_OVERLAY_ENABLED = False
 
 # Overlay refresh cadence in milliseconds.
 ASSET_TRACKING_OVERLAY_REFRESH_MS = 100
