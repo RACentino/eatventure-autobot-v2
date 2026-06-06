@@ -66,7 +66,7 @@ ASSET_TRACKING_ENABLED = True
 ASSET_TRACKING_CAPTURE_Y = 780
 
 # Frame rate passed to supervision ByteTrack.
-ASSET_TRACKING_FRAME_RATE = 120.0
+ASSET_TRACKING_FRAME_RATE = 60.0
 
 # Delay between tracker capture passes.
 ASSET_TRACKING_INTERVAL = 0.001
@@ -84,7 +84,7 @@ ASSET_TRACKING_TRACK_ACTIVATION_THRESHOLD = 0.25
 ASSET_TRACKING_LOST_TRACK_BUFFER = 60
 
 # ByteTrack association threshold between existing tracks and detections.
-ASSET_TRACKING_MINIMUM_MATCHING_THRESHOLD = 0.9
+ASSET_TRACKING_MINIMUM_MATCHING_THRESHOLD = 0.8
 
 # Consecutive tracked frames required before a track is considered valid.
 ASSET_TRACKING_MINIMUM_CONSECUTIVE_FRAMES = 1
