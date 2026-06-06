@@ -1,10 +1,11 @@
 import ctypes
 import ctypes.util
 import logging
+import multiprocessing as mp
 import os
 import platform
+import queue
 import threading
-import time
 from typing import Any
 
 import numpy as np
@@ -31,6 +32,9 @@ WindowRect = tuple[int, int, int, int]
 ForbiddenZone = tuple[int, int, int, int]
 OverlayRegion = tuple[int, int, int, int]
 FORBIDDEN_AREA_OVERLAY_LOOP_ITERATION_LIMIT = 2_147_483_647
+FORBIDDEN_AREA_OVERLAY_REFRESH_MS = 100
+OVERLAY_QUEUE_REPLACE_DRAIN_LIMIT = 8
+OVERLAY_PROCESS_JOIN_TIMEOUT = 1.0
 TRANSPARENT_OVERLAY_COLOR = "#010203"
 WINDOWS_GWL_EXSTYLE = -20
 WINDOWS_WS_EX_LAYERED = 0x00080000
@@ -240,6 +244,48 @@ def position_overlay_over_rect(root: Any, canvas: Any, rect: WindowRect) -> bool
     return True
 
 
+def create_overlay_queue(maxsize: int = 2) -> Any:
+    return _overlay_process_context().Queue(maxsize=max(1, int(maxsize)))
+
+
+def start_overlay_process(name: str, target: Any, *args: Any) -> tuple[Any, Any]:
+    context = _overlay_process_context()
+    stop_event = context.Event()
+    process = context.Process(target=target, name=name, args=(*args, stop_event), daemon=True)
+    process.start()
+    return process, stop_event
+
+
+def stop_overlay_process(process: Any | None, stop_event: Any | None, timeout: float = OVERLAY_PROCESS_JOIN_TIMEOUT) -> None:
+    if stop_event is not None:
+        stop_event.set()
+    if process is None:
+        return
+    if not process.is_alive():
+        process.join(timeout=0)
+        return
+    process.join(timeout=max(0.05, float(timeout)))
+    if process.is_alive():
+        process.terminate()
+        process.join(timeout=max(0.05, float(timeout)))
+
+
+def replace_queue_latest(payload_queue: Any, payload: Any) -> bool:
+    for _ in range(OVERLAY_QUEUE_REPLACE_DRAIN_LIMIT):
+        if not _discard_queue_item(payload_queue):
+            break
+    try:
+        payload_queue.put_nowait(payload)
+        return True
+    except queue.Full:
+        _discard_queue_item(payload_queue, timeout=0.02)
+    try:
+        payload_queue.put_nowait(payload)
+        return True
+    except queue.Full:
+        return False
+
+
 def enable_overlay_click_through(root: Any) -> bool:
     _call_if_supported(root, "update_idletasks")
     try:
@@ -383,65 +429,139 @@ def _call_if_supported(target: Any, method_name: str, *args: Any) -> bool:
         return False
 
 
+def _overlay_process_context() -> Any:
+    return mp.get_context("spawn")
+
+
+def _discard_queue_item(payload_queue: Any, timeout: float = 0.0) -> bool:
+    try:
+        if timeout <= 0:
+            payload_queue.get_nowait()
+        else:
+            payload_queue.get(timeout=float(timeout))
+        return True
+    except queue.Empty:
+        return False
+
+
+def _find_overlay_window_rect(window_title: str) -> WindowRect | None:
+    if pywinctl is None:
+        return None
+    try:
+        windows = pywinctl.getWindowsWithTitle(str(window_title)) or []
+    except Exception as exc:
+        logger.debug("Overlay could not search for target window '%s': %s", window_title, exc)
+        return None
+    return _first_live_window_rect(str(window_title), windows)
+
+
+def _first_live_window_rect(window_title: str, windows: list[Any]) -> WindowRect | None:
+    live_windows = [window for window in windows if WindowCapture._alive(window)]
+    for window in live_windows:
+        if getattr(window, "title", None) == window_title:
+            return _overlay_rect_from_window(window)
+    if not live_windows:
+        return None
+    return _overlay_rect_from_window(live_windows[0])
+
+
+def _overlay_rect_from_window(window: Any) -> WindowRect | None:
+    try:
+        return _bounds_from_geometry(window.getClientFrame())
+    except Exception:
+        try:
+            return _bounds_from_geometry(window.box)
+        except Exception as exc:
+            logger.debug("Overlay could not read target window bounds: %s", exc)
+            return None
+
+
+def position_overlay_over_target(root: Any, canvas: Any, window_title: str) -> bool:
+    rect = _find_overlay_window_rect(window_title)
+    if rect is None:
+        _call_if_supported(root, "withdraw")
+        return False
+    _call_if_supported(root, "deiconify")
+    return position_overlay_over_rect(root, canvas, rect)
+
+
+def _run_forbidden_area_overlay_process(window_title: str, forbidden_zones: tuple[ForbiddenZone, ...], stop_event: Any) -> None:
+    try:
+        import tkinter as tk
+
+        root = tk.Tk()
+        background = configure_overlay_root(root, "Forbidden Area Visualizer")
+        canvas = tk.Canvas(root, highlightthickness=0, background=background)
+        configure_overlay_canvas(canvas, background)
+        canvas.pack(fill="both", expand=True)
+        _schedule_forbidden_overlay_draw(root, canvas, window_title, forbidden_zones, stop_event)
+        root.mainloop()
+    except Exception as exc:
+        logger.error("Failed to create forbidden area visualizer: %s", exc)
+    finally:
+        if "root" in locals():
+            destroy_overlay_root(root)
+
+
+def _schedule_forbidden_overlay_draw(root: Any, canvas: Any, window_title: str, forbidden_zones: tuple[ForbiddenZone, ...], stop_event: Any) -> None:
+    if stop_event.is_set():
+        _call_if_supported(root, "quit")
+        return
+    _draw_forbidden_overlay(root, canvas, window_title, forbidden_zones)
+    root.after(FORBIDDEN_AREA_OVERLAY_REFRESH_MS, _schedule_forbidden_overlay_draw, root, canvas, window_title, forbidden_zones, stop_event)
+
+
+def _draw_forbidden_overlay(root: Any, canvas: Any, window_title: str, forbidden_zones: tuple[ForbiddenZone, ...]) -> None:
+    if not position_overlay_over_target(root, canvas, window_title):
+        return
+    canvas.delete("zone")
+    zones = list(forbidden_zones)
+    set_overlay_visible_regions(root, _zone_visible_regions(zones))
+    for x_min, x_max, y_min, y_max in zones:
+        canvas.create_rectangle(int(x_min), int(y_min), int(x_max), int(y_max), fill="#ff4040", stipple="gray25", outline="#ff4040", tags="zone")
+
+
 class ForbiddenAreaOverlay:
     def __init__(self, window_capture: WindowCapture, forbidden_zones: list[ForbiddenZone]) -> None:
         self.window_capture = window_capture
         self.forbidden_zones = forbidden_zones
         self.running = False
-        self.thread: threading.Thread | None = None
+        self.process: Any | None = None
+        self.stop_event: Any | None = None
 
     def start(self) -> None:
         if self.running:
             return
-        self.running = True
-        self.thread = threading.Thread(target=self._run, daemon=True)
-        self.thread.start()
+        try:
+            zones = tuple(self.forbidden_zones)
+            self.process, self.stop_event = start_overlay_process("forbidden_area_overlay", _run_forbidden_area_overlay_process, self.window_capture.window_title, zones)
+            self.running = True
+        except Exception as exc:
+            self.running = False
+            logger.error("Failed to start forbidden area visualizer process: %s", exc)
+            return
         logger.info("Forbidden area visualizer started")
 
     def stop(self) -> None:
         self.running = False
-        if self.thread is not None and self.thread.is_alive():
-            self.thread.join(timeout=1.0)
+        stop_overlay_process(self.process, self.stop_event)
+        self.process = None
+        self.stop_event = None
         logger.info("Forbidden area visualizer stopped")
 
     def _run(self) -> None:
-        try:
-            import tkinter as tk
-
-            root = tk.Tk()
-            background = configure_overlay_root(root, "Forbidden Area Visualizer")
-            canvas = tk.Canvas(root, highlightthickness=0, background=background)
-            configure_overlay_canvas(canvas, background)
-            canvas.pack(fill="both", expand=True)
-            self._overlay_loop(root, canvas)
-        except Exception as exc:
-            logger.error("Failed to create forbidden area visualizer: %s", exc)
-        finally:
-            self.running = False
-
-    def _overlay_loop(self, root: Any, canvas: Any) -> None:
-        for _ in range(FORBIDDEN_AREA_OVERLAY_LOOP_ITERATION_LIMIT):
-            if not self.running:
-                break
-            if not self._draw(root, canvas):
-                break
-            root.update_idletasks()
-            root.update()
-            time.sleep(0.1)
-        destroy_overlay_root(root)
+        if self.stop_event is None:
+            return
+        _ = (configure_overlay_root, configure_overlay_canvas)
+        _run_forbidden_area_overlay_process(self.window_capture.window_title, tuple(self.forbidden_zones), self.stop_event)
 
     def _draw(self, root: Any, canvas: Any) -> bool:
         try:
-            if not position_overlay_over_rect(root, canvas, self.window_capture.get_window_rect()):
-                return False
-            canvas.delete("zone")
-            set_overlay_visible_regions(root, _zone_visible_regions(self.forbidden_zones))
-            for x_min, x_max, y_min, y_max in self.forbidden_zones:
-                canvas.create_rectangle(int(x_min), int(y_min), int(x_max), int(y_max), fill="#ff4040", stipple="gray25", outline="#ff4040", tags="zone")
+            _ = (position_overlay_over_rect, set_overlay_visible_regions)
+            _draw_forbidden_overlay(root, canvas, self.window_capture.window_title, tuple(self.forbidden_zones))
             return True
         except Exception as exc:
             logger.error("Error in forbidden area visualizer loop: %s", exc)
-            self.running = False
             return False
 
 

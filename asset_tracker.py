@@ -1,4 +1,5 @@
 import logging
+import queue
 import threading
 import time
 import warnings
@@ -9,7 +10,18 @@ from typing import Any
 import numpy as np
 
 import config
-from window_capture import configure_overlay_canvas, configure_overlay_root, destroy_overlay_root, position_overlay_over_rect, set_overlay_visible_regions
+from window_capture import (
+    configure_overlay_canvas,
+    configure_overlay_root,
+    create_overlay_queue,
+    destroy_overlay_root,
+    position_overlay_over_rect,
+    position_overlay_over_target,
+    replace_queue_latest,
+    set_overlay_visible_regions,
+    start_overlay_process,
+    stop_overlay_process,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -23,8 +35,10 @@ else:
 
 ASSET_TRACKING_LOOP_ITERATION_LIMIT = 2_147_483_647
 ASSET_TRACKING_OVERLAY_LOOP_ITERATION_LIMIT = 2_147_483_647
+ASSET_TRACKING_OVERLAY_QUEUE_DRAIN_LIMIT = 32
 ASSET_CLASS_IDS = {"red_icon": 0, "upgrade_station": 1, "box": 2}
 ASSET_CLASS_NAMES = {value: key for key, value in ASSET_CLASS_IDS.items()}
+AssetOverlayItem = tuple[str, int, float, int, int, int, int]
 
 
 @dataclass(frozen=True)
@@ -421,74 +435,155 @@ class AssetTrackingOverlay:
         self.tracker = tracker
         self.running = False
         self.thread: threading.Thread | None = None
+        self.process: Any | None = None
+        self.stop_event: Any | None = None
+        self.payload_queue: Any | None = None
 
     def start(self) -> None:
         if self.running:
             return
-        self.running = True
-        self.thread = threading.Thread(target=self._run, name="asset_tracking_overlay", daemon=True)
-        self.thread.start()
+        try:
+            self.payload_queue = create_overlay_queue(maxsize=2)
+            refresh_ms = max(20, int(config.ASSET_TRACKING_OVERLAY_REFRESH_MS))
+            self.process, self.stop_event = start_overlay_process(
+                "asset_tracking_overlay",
+                _run_asset_tracking_overlay_process,
+                self.window_capture.window_title,
+                self.payload_queue,
+                refresh_ms,
+            )
+            self.running = True
+            self.thread = threading.Thread(target=self._feed_overlay_queue, name="asset_tracking_overlay_feeder", daemon=True)
+            self.thread.start()
+        except Exception as exc:
+            self.running = False
+            logger.error("Failed to start asset tracking overlay process: %s", exc)
+            self.stop()
+            return
         logger.info("Asset tracking overlay started")
 
     def stop(self) -> None:
         self.running = False
         if self.thread is not None and self.thread.is_alive():
             self.thread.join(timeout=1.0)
+        stop_overlay_process(self.process, self.stop_event)
+        self.process = None
+        self.stop_event = None
+        self.payload_queue = None
+        self.thread = None
         logger.info("Asset tracking overlay stopped")
 
-    def _run(self) -> None:
-        try:
-            import tkinter as tk
-
-            root = tk.Tk()
-            background = configure_overlay_root(root, "Asset Tracking Overlay")
-            canvas = tk.Canvas(root, highlightthickness=0, background=background)
-            configure_overlay_canvas(canvas, background)
-            canvas.pack(fill="both", expand=True)
-            self._overlay_loop(root, canvas)
-        except Exception as exc:
-            logger.error("Failed to create asset tracking overlay: %s", exc)
-        finally:
-            self.running = False
-
-    def _overlay_loop(self, root: Any, canvas: Any) -> None:
+    def _feed_overlay_queue(self) -> None:
         refresh_seconds = max(0.02, float(config.ASSET_TRACKING_OVERLAY_REFRESH_MS) / 1000.0)
         for _ in range(ASSET_TRACKING_OVERLAY_LOOP_ITERATION_LIMIT):
             if not self.running:
-                break
-            if not self._draw(root, canvas):
-                break
-            root.update_idletasks()
-            root.update()
+                return
+            if self.payload_queue is not None:
+                payload = _asset_overlay_payload(self.tracker.assets())
+                replace_queue_latest(self.payload_queue, payload)
+            if self.stop_event is not None and self.stop_event.is_set():
+                return
             time.sleep(refresh_seconds)
-        self._destroy(root)
+        logger.error("Asset tracking overlay feeder reached iteration limit")
+
+    def _run(self) -> None:
+        if self.payload_queue is None or self.stop_event is None:
+            return
+        _ = (configure_overlay_root, configure_overlay_canvas)
+        refresh_ms = max(20, int(config.ASSET_TRACKING_OVERLAY_REFRESH_MS))
+        _run_asset_tracking_overlay_process(self.window_capture.window_title, self.payload_queue, refresh_ms, self.stop_event)
 
     def _draw(self, root: Any, canvas: Any) -> bool:
         try:
-            if not position_overlay_over_rect(root, canvas, self.window_capture.get_window_rect()):
-                return False
-            canvas.delete("asset")
-            assets = self.tracker.assets()[: int(config.ASSET_TRACKING_OVERLAY_MAX_ITEMS)]
-            set_overlay_visible_regions(root, _asset_visible_regions(assets))
-            for asset in assets:
-                self._draw_asset(canvas, asset)
+            _ = (position_overlay_over_rect, set_overlay_visible_regions)
+            items = _asset_overlay_payload(self.tracker.assets())
+            _draw_asset_overlay(root, canvas, self.window_capture.window_title, items)
             return True
         except Exception as exc:
             logger.error("Error in asset tracking overlay loop: %s", exc)
             return False
 
-    @staticmethod
-    def _draw_asset(canvas: Any, asset: TrackedAsset) -> None:
-        color = _asset_color(asset.asset_type)
-        x1, y1, x2, y2 = _asset_bounds(asset)
-        label = _asset_label(asset)
-        canvas.create_rectangle(x1, y1, x2, y2, outline=color, width=2, tags="asset")
-        canvas.create_oval(asset.center_x - 2, asset.center_y - 2, asset.center_x + 2, asset.center_y + 2, fill=color, outline=color, tags="asset")
-        canvas.create_text(x1 + 3, max(8, y1 - 8), text=label, anchor="w", fill=color, tags="asset")
 
-    @staticmethod
-    def _destroy(root: Any) -> None:
-        destroy_overlay_root(root)
+def _run_asset_tracking_overlay_process(window_title: str, payload_queue: Any, refresh_ms: int, stop_event: Any) -> None:
+    try:
+        import tkinter as tk
+
+        root = tk.Tk()
+        background = configure_overlay_root(root, "Asset Tracking Overlay")
+        canvas = tk.Canvas(root, highlightthickness=0, background=background)
+        configure_overlay_canvas(canvas, background)
+        canvas.pack(fill="both", expand=True)
+        latest_items: tuple[AssetOverlayItem, ...] = ()
+        _schedule_asset_overlay_draw(root, canvas, window_title, payload_queue, latest_items, max(20, int(refresh_ms)), stop_event)
+        root.mainloop()
+    except Exception as exc:
+        logger.error("Failed to create asset tracking overlay: %s", exc)
+    finally:
+        if "root" in locals():
+            destroy_overlay_root(root)
+
+
+def _schedule_asset_overlay_draw(
+    root: Any,
+    canvas: Any,
+    window_title: str,
+    payload_queue: Any,
+    latest_items: tuple[AssetOverlayItem, ...],
+    refresh_ms: int,
+    stop_event: Any,
+) -> None:
+    if stop_event.is_set():
+        root.quit()
+        return
+    next_items = _latest_asset_overlay_payload(payload_queue, latest_items)
+    _draw_asset_overlay(root, canvas, window_title, next_items)
+    root.after(refresh_ms, _schedule_asset_overlay_draw, root, canvas, window_title, payload_queue, next_items, refresh_ms, stop_event)
+
+
+def _latest_asset_overlay_payload(payload_queue: Any, fallback: tuple[AssetOverlayItem, ...]) -> tuple[AssetOverlayItem, ...]:
+    latest_items = fallback
+    for _ in range(ASSET_TRACKING_OVERLAY_QUEUE_DRAIN_LIMIT):
+        try:
+            latest_items = tuple(payload_queue.get_nowait())
+        except queue.Empty:
+            break
+    return latest_items
+
+
+def _draw_asset_overlay(root: Any, canvas: Any, window_title: str, items: tuple[AssetOverlayItem, ...]) -> None:
+    if not position_overlay_over_target(root, canvas, window_title):
+        return
+    canvas.delete("asset")
+    set_overlay_visible_regions(root, _asset_item_visible_regions(items))
+    for item in items:
+        _draw_asset_item(canvas, item)
+
+
+def _draw_asset_item(canvas: Any, item: AssetOverlayItem) -> None:
+    asset_type, tracker_id, confidence, center_x, center_y, width, height = item
+    color = _asset_color(asset_type)
+    x1, y1, x2, y2 = _asset_item_bounds(item)
+    label = _asset_item_label(asset_type, tracker_id, confidence)
+    canvas.create_rectangle(x1, y1, x2, y2, outline=color, width=2, tags="asset")
+    canvas.create_oval(center_x - 2, center_y - 2, center_x + 2, center_y + 2, fill=color, outline=color, tags="asset")
+    canvas.create_text(x1 + 3, max(8, y1 - 8), text=label, anchor="w", fill=color, tags="asset")
+
+
+def _asset_overlay_payload(assets: list[TrackedAsset]) -> tuple[AssetOverlayItem, ...]:
+    max_items = max(1, int(config.ASSET_TRACKING_OVERLAY_MAX_ITEMS))
+    return tuple(_asset_overlay_item(asset) for asset in assets[:max_items])
+
+
+def _asset_overlay_item(asset: TrackedAsset) -> AssetOverlayItem:
+    return (
+        str(asset.asset_type),
+        int(asset.tracker_id),
+        float(asset.confidence),
+        int(asset.center_x),
+        int(asset.center_y),
+        max(1, int(asset.width)),
+        max(1, int(asset.height)),
+    )
 
 
 def _asset_bounds(asset: TrackedAsset) -> tuple[int, int, int, int]:
@@ -510,6 +605,31 @@ def _asset_visible_regions(assets: list[TrackedAsset]) -> list[tuple[int, int, i
         height = max(1, int(y2 - y1))
         regions.extend(_outlined_regions(x1, y1, width, height, 3))
         regions.append((int(asset.center_x) - 3, int(asset.center_y) - 3, 6, 6))
+        regions.append((x1, max(0, y1 - 18), min(180, max(48, width + 80)), 18))
+    return regions
+
+
+def _asset_item_bounds(item: AssetOverlayItem) -> tuple[int, int, int, int]:
+    _, _, _, center_x, center_y, width, height = item
+    half_width = max(1, int(width)) // 2
+    half_height = max(1, int(height)) // 2
+    return (
+        int(center_x) - half_width,
+        int(center_y) - half_height,
+        int(center_x) + half_width,
+        int(center_y) + half_height,
+    )
+
+
+def _asset_item_visible_regions(items: tuple[AssetOverlayItem, ...]) -> list[tuple[int, int, int, int]]:
+    regions = []
+    for item in items:
+        _, _, _, center_x, center_y, _, _ = item
+        x1, y1, x2, y2 = _asset_item_bounds(item)
+        width = max(1, int(x2 - x1))
+        height = max(1, int(y2 - y1))
+        regions.extend(_outlined_regions(x1, y1, width, height, 3))
+        regions.append((int(center_x) - 3, int(center_y) - 3, 6, 6))
         regions.append((x1, max(0, y1 - 18), min(180, max(48, width + 80)), 18))
     return regions
 
@@ -536,3 +656,8 @@ def _asset_color(asset_type: str) -> str:
 def _asset_label(asset: TrackedAsset) -> str:
     track_label = f"#{asset.tracker_id}" if asset.tracker_id >= 0 else "#raw"
     return f"{asset.asset_type} {track_label} {asset.confidence:.2f}"
+
+
+def _asset_item_label(asset_type: str, tracker_id: int, confidence: float) -> str:
+    track_label = f"#{tracker_id}" if tracker_id >= 0 else "#raw"
+    return f"{asset_type} {track_label} {confidence:.2f}"
