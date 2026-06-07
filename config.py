@@ -244,7 +244,7 @@ UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 2
 UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.3
 
 # Maximum duration for holding an upgrade station click.
-CLICK_HOLD_MAX_DURATION = 8.5
+CLICK_HOLD_MAX_DURATION = 10.0
 
 # Duration for stats upgrade click bursts.
 STATS_UPGRADE_CLICK_DURATION = 1.25
