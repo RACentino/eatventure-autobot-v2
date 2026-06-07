@@ -31,7 +31,11 @@ def _log_window_relative_cursor_position(logger: logging.Logger) -> None:
         return
     screen_x, screen_y = bot_instance.mouse_controller.get_cursor_position()
     window_x, window_y, _, _ = bot_instance.window_capture.get_window_rect()
-    logger.info("[X pressed] Window position: (%s, %s)", screen_x - window_x, screen_y - window_y)
+    logger.info(
+        "[X pressed] Window position: (%s, %s)",
+        screen_x - window_x,
+        screen_y - window_y,
+    )
 
 
 def _toggle_bot_running(logger: logging.Logger) -> None:

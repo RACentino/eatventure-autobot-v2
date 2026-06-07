@@ -25,6 +25,8 @@ from window_capture import (
 
 logger = logging.getLogger(__name__)
 
+_SUPERVISION_IMPORT_ERROR: Exception | None
+
 try:
     import supervision as sv
 except Exception as exc:
@@ -91,22 +93,42 @@ DetectionProvider = Callable[[np.ndarray], list[AssetDetection]]
 
 def _configured_forbidden_zones() -> tuple[ForbiddenZone, ...]:
     zones = [
-        ForbiddenZone("FORBIDDEN_CLICK", config.FORBIDDEN_CLICK_X_MIN, config.FORBIDDEN_CLICK_X_MAX, config.FORBIDDEN_CLICK_Y_MIN, None),
+        ForbiddenZone(
+            "FORBIDDEN_CLICK",
+            config.FORBIDDEN_CLICK_X_MIN,
+            config.FORBIDDEN_CLICK_X_MAX,
+            config.FORBIDDEN_CLICK_Y_MIN,
+            None,
+        ),
     ]
-    for index, (x_min, x_max, y_min, y_max) in enumerate(config.NUMBERED_FORBIDDEN_ZONE_BOUNDS, start=1):
-        zones.append(ForbiddenZone(f"FORBIDDEN_ZONE_{index}", int(x_min), int(x_max), int(y_min), int(y_max)))
+    for index, (x_min, x_max, y_min, y_max) in enumerate(
+        config.NUMBERED_FORBIDDEN_ZONE_BOUNDS, start=1
+    ):
+        zones.append(
+            ForbiddenZone(
+                f"FORBIDDEN_ZONE_{index}",
+                int(x_min),
+                int(x_max),
+                int(y_min),
+                int(y_max),
+            )
+        )
     return tuple(zones)
 
 
 def _candidate_xyxy(candidate: AssetDetection) -> tuple[float, float, float, float]:
-    return _centered_xyxy(candidate.center_x, candidate.center_y, candidate.width, candidate.height)
+    return _centered_xyxy(
+        candidate.center_x, candidate.center_y, candidate.width, candidate.height
+    )
 
 
 def _asset_xyxy(asset: TrackedAsset) -> tuple[float, float, float, float]:
     return _centered_xyxy(asset.center_x, asset.center_y, asset.width, asset.height)
 
 
-def _centered_xyxy(center_x: int, center_y: int, width: int, height: int) -> tuple[float, float, float, float]:
+def _centered_xyxy(
+    center_x: int, center_y: int, width: int, height: int
+) -> tuple[float, float, float, float]:
     half_width = max(1.0, float(width)) / 2.0
     half_height = max(1.0, float(height)) / 2.0
     return (
@@ -118,13 +140,33 @@ def _centered_xyxy(center_x: int, center_y: int, width: int, height: int) -> tup
 
 
 def _valid_detection(candidate: AssetDetection) -> bool:
-    values = (candidate.confidence, candidate.center_x, candidate.center_y, candidate.width, candidate.height)
-    return all(np.isfinite(float(value)) for value in values) and candidate.width > 0 and candidate.height > 0
+    values = (
+        candidate.confidence,
+        candidate.center_x,
+        candidate.center_y,
+        candidate.width,
+        candidate.height,
+    )
+    return (
+        all(np.isfinite(float(value)) for value in values)
+        and candidate.width > 0
+        and candidate.height > 0
+    )
 
 
 def _valid_asset(asset: TrackedAsset) -> bool:
-    values = (asset.confidence, asset.center_x, asset.center_y, asset.width, asset.height)
-    return all(np.isfinite(float(value)) for value in values) and asset.width > 0 and asset.height > 0
+    values = (
+        asset.confidence,
+        asset.center_x,
+        asset.center_y,
+        asset.width,
+        asset.height,
+    )
+    return (
+        all(np.isfinite(float(value)) for value in values)
+        and asset.width > 0
+        and asset.height > 0
+    )
 
 
 def _sequence_value(values: Any, index: int) -> Any:
@@ -163,13 +205,25 @@ def _target_coordinate(value: int | None, fallback: int) -> int:
     return int(fallback if value is None else value)
 
 
-def _bounded_forbidden_zone(zone: ForbiddenZone, frame_width: int, frame_height: int) -> tuple[int, int, int, int] | None:
+def _bounded_forbidden_zone(
+    zone: ForbiddenZone, frame_width: int, frame_height: int
+) -> tuple[int, int, int, int] | None:
     if frame_width <= 0 or frame_height <= 0:
         return None
     raw_y_max = frame_height - 1 if zone.y_max is None else int(zone.y_max)
-    if zone.x_max < 0 or zone.x_min >= frame_width or raw_y_max < 0 or zone.y_min >= frame_height:
+    if (
+        zone.x_max < 0
+        or zone.x_min >= frame_width
+        or raw_y_max < 0
+        or zone.y_min >= frame_height
+    ):
         return None
-    return max(0, zone.x_min), min(frame_width - 1, zone.x_max), max(0, zone.y_min), min(frame_height - 1, raw_y_max)
+    return (
+        max(0, zone.x_min),
+        min(frame_width - 1, zone.x_max),
+        max(0, zone.y_min),
+        min(frame_height - 1, raw_y_max),
+    )
 
 
 def _point_blocked_by_forbidden_zones(
@@ -202,18 +256,28 @@ def _box_intersects_forbidden_zones(
     left, top, right, bottom = box
     for zone in zones:
         bounds = _bounded_forbidden_zone(zone, frame_width, frame_height)
-        if bounds is not None and _box_intersects_bounds(left, top, right, bottom, bounds):
+        if bounds is not None and _box_intersects_bounds(
+            left, top, right, bottom, bounds
+        ):
             return True
     return False
 
 
-def _box_intersects_bounds(left: float, top: float, right: float, bottom: float, bounds: tuple[int, int, int, int]) -> bool:
+def _box_intersects_bounds(
+    left: float,
+    top: float,
+    right: float,
+    bottom: float,
+    bounds: tuple[int, int, int, int],
+) -> bool:
     x_min, x_max, y_min, y_max = bounds
     return left <= x_max and right >= x_min and top <= y_max and bottom >= y_min
 
 
 class AssetTracker:
-    def __init__(self, window_capture: Any, detection_provider: DetectionProvider) -> None:
+    def __init__(
+        self, window_capture: Any, detection_provider: DetectionProvider
+    ) -> None:
         self.window_capture = window_capture
         self.detection_provider = detection_provider
         self.interval = max(0.01, float(config.ASSET_TRACKING_INTERVAL))
@@ -232,7 +296,9 @@ class AssetTracker:
     def _create_tracker(self) -> Any | None:
         if not self.available():
             if _SUPERVISION_IMPORT_ERROR is not None:
-                logger.warning("Supervision ByteTrack unavailable: %s", _SUPERVISION_IMPORT_ERROR)
+                logger.warning(
+                    "Supervision ByteTrack unavailable: %s", _SUPERVISION_IMPORT_ERROR
+                )
             return None
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
@@ -241,11 +307,17 @@ class AssetTracker:
             if supervision_module is None:
                 return None
             return supervision_module.ByteTrack(
-                track_activation_threshold=float(config.ASSET_TRACKING_TRACK_ACTIVATION_THRESHOLD),
+                track_activation_threshold=float(
+                    config.ASSET_TRACKING_TRACK_ACTIVATION_THRESHOLD
+                ),
                 lost_track_buffer=int(config.ASSET_TRACKING_LOST_TRACK_BUFFER),
-                minimum_matching_threshold=float(config.ASSET_TRACKING_MINIMUM_MATCHING_THRESHOLD),
+                minimum_matching_threshold=float(
+                    config.ASSET_TRACKING_MINIMUM_MATCHING_THRESHOLD
+                ),
                 frame_rate=float(config.ASSET_TRACKING_FRAME_RATE),
-                minimum_consecutive_frames=int(config.ASSET_TRACKING_MINIMUM_CONSECUTIVE_FRAMES),
+                minimum_consecutive_frames=int(
+                    config.ASSET_TRACKING_MINIMUM_CONSECUTIVE_FRAMES
+                ),
             )
 
     def start(self) -> bool:
@@ -254,7 +326,9 @@ class AssetTracker:
         if self._thread is not None and self._thread.is_alive():
             return True
         self._stop.clear()
-        self._thread = threading.Thread(target=self._run, name="asset_tracker", daemon=True)
+        self._thread = threading.Thread(
+            target=self._run, name="asset_tracker", daemon=True
+        )
         self._thread.start()
         logger.info("Asset tracker started")
         return True
@@ -275,9 +349,13 @@ class AssetTracker:
     def assets(self, asset_type: str | None = None) -> list[TrackedAsset]:
         with self._lock:
             snapshot = self._snapshot
-        if snapshot.timestamp <= 0 or time.time() - snapshot.timestamp > float(config.ASSET_TRACKING_MAX_SNAPSHOT_AGE):
+        if snapshot.timestamp <= 0 or time.time() - snapshot.timestamp > float(
+            config.ASSET_TRACKING_MAX_SNAPSHOT_AGE
+        ):
             return []
-        assets = self._filter_trackable_assets(list(snapshot.assets), snapshot.width, snapshot.height)
+        assets = self._filter_trackable_assets(
+            list(snapshot.assets), snapshot.width, snapshot.height
+        )
         if asset_type is None:
             return assets
         return [asset for asset in assets if asset.asset_type == asset_type]
@@ -285,10 +363,20 @@ class AssetTracker:
     def snapshot(self) -> AssetTrackingSnapshot:
         with self._lock:
             snapshot = self._snapshot
-        assets = tuple(self._filter_trackable_assets(list(snapshot.assets), snapshot.width, snapshot.height))
+        assets = tuple(
+            self._filter_trackable_assets(
+                list(snapshot.assets), snapshot.width, snapshot.height
+            )
+        )
         if len(assets) == len(snapshot.assets):
             return snapshot
-        return AssetTrackingSnapshot(snapshot.frame_number, snapshot.timestamp, snapshot.width, snapshot.height, assets)
+        return AssetTrackingSnapshot(
+            snapshot.frame_number,
+            snapshot.timestamp,
+            snapshot.width,
+            snapshot.height,
+            assets,
+        )
 
     def _run(self) -> None:
         for _ in range(ASSET_TRACKING_LOOP_ITERATION_LIMIT):
@@ -305,39 +393,85 @@ class AssetTracker:
     def _process_frame(self) -> None:
         screenshot = self.window_capture.capture(max_y=config.ASSET_TRACKING_CAPTURE_Y)
         height, width = screenshot.shape[:2]
-        detections = self._filter_trackable_detections(self.detection_provider(screenshot), width, height)
-        detections = sorted(detections, key=lambda item: item.confidence, reverse=True)[: self.max_detections]
-        assets = tuple(self._filter_trackable_assets(self._track_detections(detections), width, height))
+        detections = self._filter_trackable_detections(
+            self.detection_provider(screenshot), width, height
+        )
+        detections = sorted(detections, key=lambda item: item.confidence, reverse=True)[
+            : self.max_detections
+        ]
+        assets = tuple(
+            self._filter_trackable_assets(
+                self._track_detections(detections), width, height
+            )
+        )
         with self._lock:
-            self._snapshot = AssetTrackingSnapshot(self._snapshot.frame_number + 1, time.time(), width, height, assets)
+            self._snapshot = AssetTrackingSnapshot(
+                self._snapshot.frame_number + 1, time.time(), width, height, assets
+            )
 
-    def _filter_trackable_detections(self, detections: list[AssetDetection], frame_width: int, frame_height: int) -> list[AssetDetection]:
-        return [candidate for candidate in detections if self._detection_is_trackable(candidate, frame_width, frame_height)]
+    def _filter_trackable_detections(
+        self, detections: list[AssetDetection], frame_width: int, frame_height: int
+    ) -> list[AssetDetection]:
+        return [
+            candidate
+            for candidate in detections
+            if self._detection_is_trackable(candidate, frame_width, frame_height)
+        ]
 
-    def _detection_is_trackable(self, candidate: AssetDetection, frame_width: int, frame_height: int) -> bool:
+    def _detection_is_trackable(
+        self, candidate: AssetDetection, frame_width: int, frame_height: int
+    ) -> bool:
         if not _valid_detection(candidate):
             return False
         target_x = _target_coordinate(candidate.target_x, candidate.center_x)
         target_y = _target_coordinate(candidate.target_y, candidate.center_y)
-        if _point_blocked_by_forbidden_zones(candidate.center_x, candidate.center_y, self._forbidden_zones, frame_width, frame_height):
+        if _point_blocked_by_forbidden_zones(
+            candidate.center_x,
+            candidate.center_y,
+            self._forbidden_zones,
+            frame_width,
+            frame_height,
+        ):
             return False
-        if _point_blocked_by_forbidden_zones(target_x, target_y, self._forbidden_zones, frame_width, frame_height):
+        if _point_blocked_by_forbidden_zones(
+            target_x, target_y, self._forbidden_zones, frame_width, frame_height
+        ):
             return False
-        return not _box_intersects_forbidden_zones(_candidate_xyxy(candidate), self._forbidden_zones, frame_width, frame_height)
+        return not _box_intersects_forbidden_zones(
+            _candidate_xyxy(candidate), self._forbidden_zones, frame_width, frame_height
+        )
 
-    def _filter_trackable_assets(self, assets: list[TrackedAsset], frame_width: int, frame_height: int) -> list[TrackedAsset]:
-        return [asset for asset in assets if self._asset_is_trackable(asset, frame_width, frame_height)]
+    def _filter_trackable_assets(
+        self, assets: list[TrackedAsset], frame_width: int, frame_height: int
+    ) -> list[TrackedAsset]:
+        return [
+            asset
+            for asset in assets
+            if self._asset_is_trackable(asset, frame_width, frame_height)
+        ]
 
-    def _asset_is_trackable(self, asset: TrackedAsset, frame_width: int, frame_height: int) -> bool:
+    def _asset_is_trackable(
+        self, asset: TrackedAsset, frame_width: int, frame_height: int
+    ) -> bool:
         if not _valid_asset(asset):
             return False
         target_x = _target_coordinate(asset.target_x, asset.center_x)
         target_y = _target_coordinate(asset.target_y, asset.center_y)
-        if _point_blocked_by_forbidden_zones(asset.center_x, asset.center_y, self._forbidden_zones, frame_width, frame_height):
+        if _point_blocked_by_forbidden_zones(
+            asset.center_x,
+            asset.center_y,
+            self._forbidden_zones,
+            frame_width,
+            frame_height,
+        ):
             return False
-        if _point_blocked_by_forbidden_zones(target_x, target_y, self._forbidden_zones, frame_width, frame_height):
+        if _point_blocked_by_forbidden_zones(
+            target_x, target_y, self._forbidden_zones, frame_width, frame_height
+        ):
             return False
-        return not _box_intersects_forbidden_zones(_asset_xyxy(asset), self._forbidden_zones, frame_width, frame_height)
+        return not _box_intersects_forbidden_zones(
+            _asset_xyxy(asset), self._forbidden_zones, frame_width, frame_height
+        )
 
     def _track_detections(self, detections: list[AssetDetection]) -> list[TrackedAsset]:
         if self._tracker is None:
@@ -355,23 +489,56 @@ class AssetTracker:
         if supervision_module is None:
             raise RuntimeError("supervision is unavailable")
         valid = [candidate for candidate in detections if _valid_detection(candidate)]
-        boxes = np.asarray([_candidate_xyxy(candidate) for candidate in valid], dtype=np.float32).reshape((-1, 4))
-        confidences = np.asarray([candidate.confidence for candidate in valid], dtype=np.float32)
-        class_ids = np.asarray([ASSET_CLASS_IDS.get(candidate.asset_type, 0) for candidate in valid], dtype=np.int32)
+        boxes = np.asarray(
+            [_candidate_xyxy(candidate) for candidate in valid], dtype=np.float32
+        ).reshape((-1, 4))
+        confidences = np.asarray(
+            [candidate.confidence for candidate in valid], dtype=np.float32
+        )
+        class_ids = np.asarray(
+            [ASSET_CLASS_IDS.get(candidate.asset_type, 0) for candidate in valid],
+            dtype=np.int32,
+        )
         data = self._supervision_data(valid)
-        return supervision_module.Detections(xyxy=boxes, confidence=confidences, class_id=class_ids, data=data)
+        return supervision_module.Detections(
+            xyxy=boxes, confidence=confidences, class_id=class_ids, data=data
+        )
 
     @staticmethod
     def _supervision_data(detections: list[AssetDetection]) -> dict[str, Any]:
         return {
-            "asset_type": np.asarray([candidate.asset_type for candidate in detections], dtype=object),
-            "template_name": np.asarray([candidate.template_name for candidate in detections], dtype=object),
-            "center_x": np.asarray([candidate.center_x for candidate in detections], dtype=np.int32),
-            "center_y": np.asarray([candidate.center_y for candidate in detections], dtype=np.int32),
-            "width": np.asarray([candidate.width for candidate in detections], dtype=np.int32),
-            "height": np.asarray([candidate.height for candidate in detections], dtype=np.int32),
-            "target_x": np.asarray([_target_coordinate(candidate.target_x, candidate.center_x) for candidate in detections], dtype=np.int32),
-            "target_y": np.asarray([_target_coordinate(candidate.target_y, candidate.center_y) for candidate in detections], dtype=np.int32),
+            "asset_type": np.asarray(
+                [candidate.asset_type for candidate in detections], dtype=object
+            ),
+            "template_name": np.asarray(
+                [candidate.template_name for candidate in detections], dtype=object
+            ),
+            "center_x": np.asarray(
+                [candidate.center_x for candidate in detections], dtype=np.int32
+            ),
+            "center_y": np.asarray(
+                [candidate.center_y for candidate in detections], dtype=np.int32
+            ),
+            "width": np.asarray(
+                [candidate.width for candidate in detections], dtype=np.int32
+            ),
+            "height": np.asarray(
+                [candidate.height for candidate in detections], dtype=np.int32
+            ),
+            "target_x": np.asarray(
+                [
+                    _target_coordinate(candidate.target_x, candidate.center_x)
+                    for candidate in detections
+                ],
+                dtype=np.int32,
+            ),
+            "target_y": np.asarray(
+                [
+                    _target_coordinate(candidate.target_y, candidate.center_y)
+                    for candidate in detections
+                ],
+                dtype=np.int32,
+            ),
         }
 
     def _from_supervision_detections(self, detections: Any) -> list[TrackedAsset]:
@@ -381,18 +548,48 @@ class AssetTracker:
         tracker_values = getattr(detections, "tracker_id", None)
         tracked_assets = []
         for index in range(min(len(detections), self.max_detections)):
-            tracked_assets.append(self._tracked_asset_from_detection(detections, data, confidence_values, class_values, tracker_values, index))
+            tracked_assets.append(
+                self._tracked_asset_from_detection(
+                    detections,
+                    data,
+                    confidence_values,
+                    class_values,
+                    tracker_values,
+                    index,
+                )
+            )
         return sorted(tracked_assets, key=lambda item: item.confidence, reverse=True)
 
-    def _tracked_asset_from_detection(self, detections: Any, data: dict[str, Any], confidences: Any, class_ids: Any, tracker_ids: Any, index: int) -> TrackedAsset:
+    def _tracked_asset_from_detection(
+        self,
+        detections: Any,
+        data: dict[str, Any],
+        confidences: Any,
+        class_ids: Any,
+        tracker_ids: Any,
+        index: int,
+    ) -> TrackedAsset:
         xyxy = detections.xyxy[index]
         class_id = _int_value(_sequence_value(class_ids, index), 0)
-        asset_type = _string_value(_sequence_value(data.get("asset_type"), index), ASSET_CLASS_NAMES.get(class_id, "red_icon"))
-        template_name = _string_value(_sequence_value(data.get("template_name"), index), asset_type)
-        width = _int_value(_sequence_value(data.get("width"), index), int(xyxy[2] - xyxy[0]))
-        height = _int_value(_sequence_value(data.get("height"), index), int(xyxy[3] - xyxy[1]))
-        center_x = _int_value(_sequence_value(data.get("center_x"), index), int((xyxy[0] + xyxy[2]) / 2))
-        center_y = _int_value(_sequence_value(data.get("center_y"), index), int((xyxy[1] + xyxy[3]) / 2))
+        asset_type = _string_value(
+            _sequence_value(data.get("asset_type"), index),
+            ASSET_CLASS_NAMES.get(class_id, "red_icon"),
+        )
+        template_name = _string_value(
+            _sequence_value(data.get("template_name"), index), asset_type
+        )
+        width = _int_value(
+            _sequence_value(data.get("width"), index), int(xyxy[2] - xyxy[0])
+        )
+        height = _int_value(
+            _sequence_value(data.get("height"), index), int(xyxy[3] - xyxy[1])
+        )
+        center_x = _int_value(
+            _sequence_value(data.get("center_x"), index), int((xyxy[0] + xyxy[2]) / 2)
+        )
+        center_y = _int_value(
+            _sequence_value(data.get("center_y"), index), int((xyxy[1] + xyxy[3]) / 2)
+        )
         target_x = _int_value(_sequence_value(data.get("target_x"), index), center_x)
         target_y = _int_value(_sequence_value(data.get("target_y"), index), center_y)
         return TrackedAsset(
@@ -453,7 +650,11 @@ class AssetTrackingOverlay:
                 refresh_ms,
             )
             self.running = True
-            self.thread = threading.Thread(target=self._feed_overlay_queue, name="asset_tracking_overlay_feeder", daemon=True)
+            self.thread = threading.Thread(
+                target=self._feed_overlay_queue,
+                name="asset_tracking_overlay_feeder",
+                daemon=True,
+            )
             self.thread.start()
         except Exception as exc:
             self.running = False
@@ -474,7 +675,9 @@ class AssetTrackingOverlay:
         logger.info("Asset tracking overlay stopped")
 
     def _feed_overlay_queue(self) -> None:
-        refresh_seconds = max(0.02, float(config.ASSET_TRACKING_OVERLAY_REFRESH_MS) / 1000.0)
+        refresh_seconds = max(
+            0.02, float(config.ASSET_TRACKING_OVERLAY_REFRESH_MS) / 1000.0
+        )
         for _ in range(ASSET_TRACKING_OVERLAY_LOOP_ITERATION_LIMIT):
             if not self.running:
                 return
@@ -491,7 +694,12 @@ class AssetTrackingOverlay:
             return
         _ = (configure_overlay_root, configure_overlay_canvas)
         refresh_ms = max(20, int(config.ASSET_TRACKING_OVERLAY_REFRESH_MS))
-        _run_asset_tracking_overlay_process(self.window_capture.window_title, self.payload_queue, refresh_ms, self.stop_event)
+        _run_asset_tracking_overlay_process(
+            self.window_capture.window_title,
+            self.payload_queue,
+            refresh_ms,
+            self.stop_event,
+        )
 
     def _draw(self, root: Any, canvas: Any) -> bool:
         try:
@@ -504,7 +712,9 @@ class AssetTrackingOverlay:
             return False
 
 
-def _run_asset_tracking_overlay_process(window_title: str, payload_queue: Any, refresh_ms: int, stop_event: Any) -> None:
+def _run_asset_tracking_overlay_process(
+    window_title: str, payload_queue: Any, refresh_ms: int, stop_event: Any
+) -> None:
     try:
         import tkinter as tk
 
@@ -514,7 +724,15 @@ def _run_asset_tracking_overlay_process(window_title: str, payload_queue: Any, r
         configure_overlay_canvas(canvas, background)
         canvas.pack(fill="both", expand=True)
         latest_items: tuple[AssetOverlayItem, ...] = ()
-        _schedule_asset_overlay_draw(root, canvas, window_title, payload_queue, latest_items, max(20, int(refresh_ms)), stop_event)
+        _schedule_asset_overlay_draw(
+            root,
+            canvas,
+            window_title,
+            payload_queue,
+            latest_items,
+            max(20, int(refresh_ms)),
+            stop_event,
+        )
         root.mainloop()
     except Exception as exc:
         logger.error("Failed to create asset tracking overlay: %s", exc)
@@ -537,10 +755,22 @@ def _schedule_asset_overlay_draw(
         return
     next_items = _latest_asset_overlay_payload(payload_queue, latest_items)
     _draw_asset_overlay(root, canvas, window_title, next_items)
-    root.after(refresh_ms, _schedule_asset_overlay_draw, root, canvas, window_title, payload_queue, next_items, refresh_ms, stop_event)
+    root.after(
+        refresh_ms,
+        _schedule_asset_overlay_draw,
+        root,
+        canvas,
+        window_title,
+        payload_queue,
+        next_items,
+        refresh_ms,
+        stop_event,
+    )
 
 
-def _latest_asset_overlay_payload(payload_queue: Any, fallback: tuple[AssetOverlayItem, ...]) -> tuple[AssetOverlayItem, ...]:
+def _latest_asset_overlay_payload(
+    payload_queue: Any, fallback: tuple[AssetOverlayItem, ...]
+) -> tuple[AssetOverlayItem, ...]:
     latest_items = fallback
     for _ in range(ASSET_TRACKING_OVERLAY_QUEUE_DRAIN_LIMIT):
         try:
@@ -550,7 +780,9 @@ def _latest_asset_overlay_payload(payload_queue: Any, fallback: tuple[AssetOverl
     return latest_items
 
 
-def _draw_asset_overlay(root: Any, canvas: Any, window_title: str, items: tuple[AssetOverlayItem, ...]) -> None:
+def _draw_asset_overlay(
+    root: Any, canvas: Any, window_title: str, items: tuple[AssetOverlayItem, ...]
+) -> None:
     if not position_overlay_over_target(root, canvas, window_title):
         return
     canvas.delete("asset")
@@ -565,8 +797,18 @@ def _draw_asset_item(canvas: Any, item: AssetOverlayItem) -> None:
     x1, y1, x2, y2 = _asset_item_bounds(item)
     label = _asset_item_label(asset_type, tracker_id, confidence)
     canvas.create_rectangle(x1, y1, x2, y2, outline=color, width=2, tags="asset")
-    canvas.create_oval(center_x - 2, center_y - 2, center_x + 2, center_y + 2, fill=color, outline=color, tags="asset")
-    canvas.create_text(x1 + 3, max(8, y1 - 8), text=label, anchor="w", fill=color, tags="asset")
+    canvas.create_oval(
+        center_x - 2,
+        center_y - 2,
+        center_x + 2,
+        center_y + 2,
+        fill=color,
+        outline=color,
+        tags="asset",
+    )
+    canvas.create_text(
+        x1 + 3, max(8, y1 - 8), text=label, anchor="w", fill=color, tags="asset"
+    )
 
 
 def _asset_overlay_payload(assets: list[TrackedAsset]) -> tuple[AssetOverlayItem, ...]:
@@ -597,7 +839,9 @@ def _asset_bounds(asset: TrackedAsset) -> tuple[int, int, int, int]:
     )
 
 
-def _asset_visible_regions(assets: list[TrackedAsset]) -> list[tuple[int, int, int, int]]:
+def _asset_visible_regions(
+    assets: list[TrackedAsset],
+) -> list[tuple[int, int, int, int]]:
     regions = []
     for asset in assets:
         x1, y1, x2, y2 = _asset_bounds(asset)
@@ -621,7 +865,9 @@ def _asset_item_bounds(item: AssetOverlayItem) -> tuple[int, int, int, int]:
     )
 
 
-def _asset_item_visible_regions(items: tuple[AssetOverlayItem, ...]) -> list[tuple[int, int, int, int]]:
+def _asset_item_visible_regions(
+    items: tuple[AssetOverlayItem, ...],
+) -> list[tuple[int, int, int, int]]:
     regions = []
     for item in items:
         _, _, _, center_x, center_y, _, _ = item
@@ -634,7 +880,9 @@ def _asset_item_visible_regions(items: tuple[AssetOverlayItem, ...]) -> list[tup
     return regions
 
 
-def _outlined_regions(x: int, y: int, width: int, height: int, border: int) -> list[tuple[int, int, int, int]]:
+def _outlined_regions(
+    x: int, y: int, width: int, height: int, border: int
+) -> list[tuple[int, int, int, int]]:
     border = max(1, int(border))
     return [
         (x, y, width, border),

@@ -192,7 +192,11 @@ RED_ICON_MIN_MATCHES = 3
 RED_ICON_FAST_MODE_ENABLED = False
 
 # Red icon template names used when fast mode is enabled.
-RED_ICON_FAST_TEMPLATE_NAMES = ("RedIcon6","RedIcon15", "RedIcon12",)
+RED_ICON_FAST_TEMPLATE_NAMES = (
+    "RedIcon6",
+    "RedIcon15",
+    "RedIcon12",
+)
 
 # Minimum pixel distance between fast-mode red icon matches.
 RED_ICON_FAST_MIN_DISTANCE = 64
@@ -281,7 +285,7 @@ BOX_SEARCH_Y = 780
 # Click Coordinates
 
 # Relative idle click coordinate used before scan actions.
-IDLE_CLICK_POS = (2 , 690)
+IDLE_CLICK_POS = (2, 690)
 
 # Relative coordinate for opening the stats upgrade panel.
 STATS_UPGRADE_BUTTON_POS = (310, 698)

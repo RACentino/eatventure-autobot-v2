@@ -23,11 +23,9 @@ MAX_STATS_UPGRADE_CLICKS = 500
 
 
 class StopEventLike(Protocol):
-    def is_set(self) -> bool:
-        ...
+    def is_set(self) -> bool: ...
 
-    def wait(self, timeout: float) -> bool:
-        ...
+    def wait(self, timeout: float) -> bool: ...
 
 
 def _duration(value: Any, default: float = 0.0) -> float:
@@ -67,15 +65,24 @@ def wait_event(stop_event: StopEventLike | None, duration: Any) -> bool:
 
 def _sleep_iterations(deadline: float) -> int:
     remaining = max(0.0, deadline - time.perf_counter())
-    return min(MAX_SLEEP_ITERATIONS, max(1, int(math.ceil(remaining / MIN_SLEEP_SLICE)) + 3))
+    return min(
+        MAX_SLEEP_ITERATIONS, max(1, int(math.ceil(remaining / MIN_SLEEP_SLICE)) + 3)
+    )
 
 
 def _as_bounds(bounds: Any) -> WindowBounds:
     if isinstance(bounds, (str, bytes, bytearray)) or not isinstance(bounds, Sequence):
-        raise TypeError(f"expected a 4-item window bounds sequence, got {type(bounds).__name__}")
+        raise TypeError(
+            f"expected a 4-item window bounds sequence, got {type(bounds).__name__}"
+        )
     if len(bounds) != 4:
         raise ValueError(f"expected 4 window bounds values, got {len(bounds)}")
-    x, y, width, height = (int(bounds[0]), int(bounds[1]), int(bounds[2]), int(bounds[3]))
+    x, y, width, height = (
+        int(bounds[0]),
+        int(bounds[1]),
+        int(bounds[2]),
+        int(bounds[3]),
+    )
     if width <= 0 or height <= 0:
         raise ValueError(f"Target window has invalid client size: {width}x{height}")
     return x, y, width, height
@@ -98,13 +105,23 @@ class MouseController:
         hover_duration: Any = None,
         mouse_device: Any = None,
     ) -> None:
-        self._mouse = mouse_device if mouse_device is not None else pynput_mouse.Controller()
+        self._mouse = (
+            mouse_device if mouse_device is not None else pynput_mouse.Controller()
+        )
         self._left_button = pynput_mouse.Button.left
         self._window_bounds_source = window_bounds_source
-        self.click_delay = _duration(config.CLICK_DELAY if click_delay is None else click_delay, 0.08)
-        self.move_delay = _duration(config.MOUSE_MOVE_DELAY if move_delay is None else move_delay, 0.025)
-        self.hover_enabled = bool(config.HOVER_ENABLED if hover_enabled is None else hover_enabled)
-        self.hover_duration = _duration(config.HOVER_DURATION if hover_duration is None else hover_duration)
+        self.click_delay = _duration(
+            config.CLICK_DELAY if click_delay is None else click_delay, 0.08
+        )
+        self.move_delay = _duration(
+            config.MOUSE_MOVE_DELAY if move_delay is None else move_delay, 0.025
+        )
+        self.hover_enabled = bool(
+            config.HOVER_ENABLED if hover_enabled is None else hover_enabled
+        )
+        self.hover_duration = _duration(
+            config.HOVER_DURATION if hover_duration is None else hover_duration
+        )
         self._input_lock = threading.RLock()
         self._left_button_is_down = False
         self._forbidden_zones = self._configured_forbidden_zones()
@@ -112,9 +129,17 @@ class MouseController:
     @staticmethod
     def _configured_forbidden_zones() -> list[ForbiddenZone]:
         zones: list[ForbiddenZone] = [
-            ("FORBIDDEN_CLICK", config.FORBIDDEN_CLICK_X_MIN, config.FORBIDDEN_CLICK_X_MAX, config.FORBIDDEN_CLICK_Y_MIN, None),
+            (
+                "FORBIDDEN_CLICK",
+                config.FORBIDDEN_CLICK_X_MIN,
+                config.FORBIDDEN_CLICK_X_MAX,
+                config.FORBIDDEN_CLICK_Y_MIN,
+                None,
+            ),
         ]
-        for index, (x_min, x_max, y_min, y_max) in enumerate(config.NUMBERED_FORBIDDEN_ZONE_BOUNDS, start=1):
+        for index, (x_min, x_max, y_min, y_max) in enumerate(
+            config.NUMBERED_FORBIDDEN_ZONE_BOUNDS, start=1
+        ):
             zones.append((f"FORBIDDEN_ZONE_{index}", x_min, x_max, y_min, y_max))
         return zones
 
@@ -124,7 +149,11 @@ class MouseController:
 
     def get_window_bounds(self) -> WindowBounds:
         try:
-            source = self._window_bounds_source() if callable(self._window_bounds_source) else self._window_bounds_source
+            source = (
+                self._window_bounds_source()
+                if callable(self._window_bounds_source)
+                else self._window_bounds_source
+            )
             return _as_bounds(source)
         except Exception as exc:
             raise RuntimeError(str(exc)) from exc
@@ -133,7 +162,9 @@ class MouseController:
         x, y, _, _ = self.get_window_bounds()
         return x, y
 
-    def _relative_position(self, x: Any, y: Any, relative: bool) -> tuple[int, int, int, int, int, int] | None:
+    def _relative_position(
+        self, x: Any, y: Any, relative: bool
+    ) -> tuple[int, int, int, int, int, int] | None:
         try:
             window_x, window_y, width, height = self.get_window_bounds()
             if relative:
@@ -144,11 +175,19 @@ class MouseController:
             logger.error("Cannot resolve input position: %s", exc)
             return None
         if not (0 <= rel_x < width and 0 <= rel_y < height):
-            logger.warning("Rejected input outside target window: relative=(%s, %s), bounds=%sx%s", rel_x, rel_y, width, height)
+            logger.warning(
+                "Rejected input outside target window: relative=(%s, %s), bounds=%sx%s",
+                rel_x,
+                rel_y,
+                width,
+                height,
+            )
             return None
         return rel_x, rel_y, window_x, window_y, width, height
 
-    def _screen_position(self, x: Any, y: Any, relative: bool = True, check_forbidden: bool = True) -> Point | None:
+    def _screen_position(
+        self, x: Any, y: Any, relative: bool = True, check_forbidden: bool = True
+    ) -> Point | None:
         position = self._relative_position(x, y, relative)
         if position is None:
             return None
@@ -157,8 +196,12 @@ class MouseController:
             return None
         return window_x + rel_x, window_y + rel_y
 
-    def _resolve_screen_position(self, x: Any, y: Any, relative: bool = True, check_forbidden: bool = True) -> Point | None:
-        return self._screen_position(x, y, relative=relative, check_forbidden=check_forbidden)
+    def _resolve_screen_position(
+        self, x: Any, y: Any, relative: bool = True, check_forbidden: bool = True
+    ) -> Point | None:
+        return self._screen_position(
+            x, y, relative=relative, check_forbidden=check_forbidden
+        )
 
     def is_in_forbidden_zone(self, x: Any, y: Any, relative: bool = True) -> bool:
         position = self._relative_position(x, y, relative)
@@ -167,7 +210,9 @@ class MouseController:
         rel_x, rel_y, _, _, _, _ = position
         for zone in self._forbidden_zones:
             if _inside_forbidden_zone(rel_x, rel_y, zone):
-                logger.debug("Coordinates (%s, %s) blocked by %s", rel_x, rel_y, zone[0])
+                logger.debug(
+                    "Coordinates (%s, %s) blocked by %s", rel_x, rel_y, zone[0]
+                )
                 return True
         return False
 
@@ -182,13 +227,20 @@ class MouseController:
                 if abs(current_x - screen_x) <= 1 and abs(current_y - screen_y) <= 1:
                     return True
             except Exception as exc:
-                logger.warning("Cursor positioning failed on attempt %s/%s: %s", attempt, CURSOR_ATTEMPTS, exc)
+                logger.warning(
+                    "Cursor positioning failed on attempt %s/%s: %s",
+                    attempt,
+                    CURSOR_ATTEMPTS,
+                    exc,
+                )
             if attempt < CURSOR_ATTEMPTS:
                 precise_sleep(CURSOR_RETRY_DELAY)
         logger.error("Cursor positioning failed at (%s, %s)", screen_x, screen_y)
         return False
 
-    def _button(self, action_name: str, action: Callable[[], Any], x: int, y: int) -> bool:
+    def _button(
+        self, action_name: str, action: Callable[[], Any], x: int, y: int
+    ) -> bool:
         try:
             action()
             return True
@@ -196,37 +248,72 @@ class MouseController:
             logger.error("%s failed at (%s, %s): %s", action_name, x, y, exc)
             return False
 
-    def _press_left(self, x: int, y: int, duration: Any = None, interrupt_check: Callable[[], bool] | None = None) -> bool:
-        if not self._button("left down", lambda: self._mouse.press(self._left_button), x, y):
+    def _press_left(
+        self,
+        x: int,
+        y: int,
+        duration: Any = None,
+        interrupt_check: Callable[[], bool] | None = None,
+    ) -> bool:
+        if not self._button(
+            "left down", lambda: self._mouse.press(self._left_button), x, y
+        ):
             return False
         self._left_button_is_down = True
-        wait_time = _duration(config.MOUSE_DOWN_DURATION if duration is None else duration, config.MOUSE_DOWN_DURATION)
+        wait_time = _duration(
+            config.MOUSE_DOWN_DURATION if duration is None else duration,
+            config.MOUSE_DOWN_DURATION,
+        )
         if wait_time > 0 and not self._interruptible_delay(wait_time, interrupt_check):
             self._release_after_failed_sequence(x, y)
             return False
         return True
 
-    def _release_left(self, x: int, y: int, duration: Any = None, interrupt_check: Callable[[], bool] | None = None) -> bool:
-        if not self._button("left up", lambda: self._mouse.release(self._left_button), x, y):
+    def _release_left(
+        self,
+        x: int,
+        y: int,
+        duration: Any = None,
+        interrupt_check: Callable[[], bool] | None = None,
+    ) -> bool:
+        if not self._button(
+            "left up", lambda: self._mouse.release(self._left_button), x, y
+        ):
             self._left_button_is_down = False
             return False
         self._left_button_is_down = False
-        wait_time = _duration(config.MOUSE_UP_DURATION if duration is None else duration, config.MOUSE_UP_DURATION)
+        wait_time = _duration(
+            config.MOUSE_UP_DURATION if duration is None else duration,
+            config.MOUSE_UP_DURATION,
+        )
         return self._interruptible_delay(wait_time, interrupt_check)
 
     def _release_after_failed_sequence(self, x: int, y: int) -> None:
         if not self._release_left(x, y):
-            logger.error("Could not release left button after interrupted sequence at (%s, %s)", x, y)
+            logger.error(
+                "Could not release left button after interrupted sequence at (%s, %s)",
+                x,
+                y,
+            )
 
     @staticmethod
-    def _interruptible_delay(duration: Any, interrupt_check: Callable[[], bool] | None = None) -> bool:
+    def _interruptible_delay(
+        duration: Any, interrupt_check: Callable[[], bool] | None = None
+    ) -> bool:
         wait_time = _duration(duration)
         if interrupt_check is None:
             precise_sleep(wait_time)
             return True
         return wait_event(_InterruptAdapter(interrupt_check), wait_time)
 
-    def _click_screen(self, screen_x: int, screen_y: int, down_duration: Any = None, up_duration: Any = None, interrupt_check: Callable[[], bool] | None = None) -> bool:
+    def _click_screen(
+        self,
+        screen_x: int,
+        screen_y: int,
+        down_duration: Any = None,
+        up_duration: Any = None,
+        interrupt_check: Callable[[], bool] | None = None,
+    ) -> bool:
         if not self._press_left(screen_x, screen_y, down_duration, interrupt_check):
             return False
         if not self._release_left(screen_x, screen_y, up_duration, interrupt_check):
@@ -246,7 +333,9 @@ class MouseController:
     def click(self, x: Any, y: Any, relative: bool = True, delay: Any = None) -> bool:
         return self._click(x, y, relative, delay, precise=False)
 
-    def precise_click(self, x: Any, y: Any, relative: bool = True, delay: Any = None) -> bool:
+    def precise_click(
+        self, x: Any, y: Any, relative: bool = True, delay: Any = None
+    ) -> bool:
         return self._click(x, y, relative, delay, precise=True)
 
     def _click(self, x: Any, y: Any, relative: bool, delay: Any, precise: bool) -> bool:
@@ -262,10 +351,21 @@ class MouseController:
                 precise_sleep(self.hover_duration)
             if not self._click_screen(screen_x, screen_y):
                 return False
-            precise_sleep(self.click_delay if delay is None else _duration(delay, self.click_delay))
+            precise_sleep(
+                self.click_delay
+                if delay is None
+                else _duration(delay, self.click_delay)
+            )
             return True
 
-    def hold_at(self, x: Any, y: Any, duration: Any = None, relative: bool = True, interrupt_check: Callable[[], bool] | None = None) -> bool:
+    def hold_at(
+        self,
+        x: Any,
+        y: Any,
+        duration: Any = None,
+        relative: bool = True,
+        interrupt_check: Callable[[], bool] | None = None,
+    ) -> bool:
         with self._input_lock:
             screen_pos = self._screen_position(x, y, relative=relative)
             if screen_pos is None:
@@ -274,51 +374,105 @@ class MouseController:
             if not self._set_cursor(screen_x, screen_y):
                 return False
             precise_sleep(self.move_delay)
-            if not self._press_left(screen_x, screen_y, duration=0.0, interrupt_check=interrupt_check):
+            if not self._press_left(
+                screen_x, screen_y, duration=0.0, interrupt_check=interrupt_check
+            ):
                 return False
-            if not self._interruptible_delay(_duration(4.0 if duration is None else duration, 4.0), interrupt_check):
+            if not self._interruptible_delay(
+                _duration(4.0 if duration is None else duration, 4.0), interrupt_check
+            ):
                 self._release_after_failed_sequence(screen_x, screen_y)
                 return False
-            if not self._release_left(screen_x, screen_y, interrupt_check=interrupt_check):
+            if not self._release_left(
+                screen_x, screen_y, interrupt_check=interrupt_check
+            ):
                 return False
             precise_sleep(self.click_delay)
             return True
 
-    def click_stats_upgrade_at(self, x: Any, y: Any, duration: Any, click_delay: Any, relative: bool = True, interrupt_check: Callable[[], bool] | None = None) -> bool:
+    def click_stats_upgrade_at(
+        self,
+        x: Any,
+        y: Any,
+        duration: Any,
+        click_delay: Any,
+        relative: bool = True,
+        interrupt_check: Callable[[], bool] | None = None,
+    ) -> bool:
         duration = _duration(duration)
         click_delay = _duration(click_delay)
         if duration <= 0 or click_delay <= 0:
-            logger.warning("Rejected stats upgrade click loop: duration=%.3f delay=%.3f", duration, click_delay)
+            logger.warning(
+                "Rejected stats upgrade click loop: duration=%.3f delay=%.3f",
+                duration,
+                click_delay,
+            )
             return False
         with self._input_lock:
             screen_pos = self._screen_position(x, y, relative=relative)
             if screen_pos is None or not self._set_cursor(*screen_pos):
                 return False
             precise_sleep(self.move_delay)
-            click_count = 0
-            start = time.perf_counter()
-            limit = min(MAX_STATS_UPGRADE_CLICKS, max(1, int(math.ceil(duration / click_delay))))
-            for index in range(limit):
-                if interrupt_check and interrupt_check():
-                    return False
-                target_time = start + index * click_delay
-                if target_time >= start + duration:
-                    break
-                if not sleep_until(target_time):
-                    return False
-                if not self._click_screen(screen_pos[0], screen_pos[1], down_duration=0.0, up_duration=0.0, interrupt_check=interrupt_check):
-                    return False
-                click_count += 1
+            click_count = self._stats_upgrade_click_loop(
+                screen_pos, duration, click_delay, interrupt_check
+            )
+            if click_count is None:
+                return False
             logger.debug("Stats upgrade clicking complete: %s clicks", click_count)
             return click_count > 0
 
-    def drag(self, from_x: Any, from_y: Any, to_x: Any, to_y: Any, duration: Any = None, relative: bool = True) -> bool:
+    def _stats_upgrade_click_loop(
+        self,
+        screen_pos: Point,
+        duration: float,
+        click_delay: float,
+        interrupt_check: Callable[[], bool] | None,
+    ) -> int | None:
+        click_count = 0
+        start = time.perf_counter()
+        limit = min(
+            MAX_STATS_UPGRADE_CLICKS, max(1, int(math.ceil(duration / click_delay)))
+        )
+        for index in range(limit):
+            if interrupt_check and interrupt_check():
+                return None
+            target_time = start + index * click_delay
+            if target_time >= start + duration:
+                break
+            if not sleep_until(target_time):
+                return None
+            if not self._click_screen(
+                screen_pos[0],
+                screen_pos[1],
+                down_duration=0.0,
+                up_duration=0.0,
+                interrupt_check=interrupt_check,
+            ):
+                return None
+            click_count += 1
+        return click_count
+
+    def drag(
+        self,
+        from_x: Any,
+        from_y: Any,
+        to_x: Any,
+        to_y: Any,
+        duration: Any = None,
+        relative: bool = True,
+    ) -> bool:
         with self._input_lock:
             start_pos = self._screen_position(from_x, from_y, relative=relative)
             end_pos = self._screen_position(to_x, to_y, relative=relative)
             if start_pos is None or end_pos is None:
                 return False
-            duration = max(0.01, _duration(config.SCROLL_DURATION if duration is None else duration, config.SCROLL_DURATION))
+            duration = max(
+                0.01,
+                _duration(
+                    config.SCROLL_DURATION if duration is None else duration,
+                    config.SCROLL_DURATION,
+                ),
+            )
             steps = min(MAX_DRAG_STEPS, 20)
             path = self._drag_path(start_pos, end_pos, steps)
             if path is None or not self._set_cursor(*start_pos):
@@ -327,19 +481,28 @@ class MouseController:
             if not self._press_left(*start_pos):
                 return False
             start_time = time.perf_counter()
-            for index, (screen_x, screen_y) in enumerate(path):
-                if not self._set_cursor(screen_x, screen_y, verify=index == steps):
-                    self._release_after_failed_sequence(screen_x, screen_y)
-                    return False
-                if not sleep_until(start_time + ((index + 1) * duration / steps)):
-                    self._release_after_failed_sequence(screen_x, screen_y)
-                    return False
+            if not self._move_along_drag_path(path, duration, steps, start_time):
+                return False
             if not self._release_left(*end_pos):
                 return False
             precise_sleep(self.click_delay)
             return True
 
-    def _drag_path(self, start_pos: Point, end_pos: Point, steps: int) -> list[Point] | None:
+    def _move_along_drag_path(
+        self, path: list[Point], duration: float, steps: int, start_time: float
+    ) -> bool:
+        for index, (screen_x, screen_y) in enumerate(path):
+            if not self._set_cursor(screen_x, screen_y, verify=index == steps):
+                self._release_after_failed_sequence(screen_x, screen_y)
+                return False
+            if not sleep_until(start_time + ((index + 1) * duration / steps)):
+                self._release_after_failed_sequence(screen_x, screen_y)
+                return False
+        return True
+
+    def _drag_path(
+        self, start_pos: Point, end_pos: Point, steps: int
+    ) -> list[Point] | None:
         path = []
         start_x, start_y = start_pos
         end_x, end_y = end_pos

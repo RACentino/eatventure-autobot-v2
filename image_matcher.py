@@ -48,7 +48,9 @@ def _as_bgr(image: Any, label: str) -> np.ndarray:
     raise ValueError(f"{label} has unsupported shape {image.shape}")
 
 
-def _normalized_mask(mask: Any, template_shape: tuple[int, ...], label: str) -> np.ndarray | None:
+def _normalized_mask(
+    mask: Any, template_shape: tuple[int, ...], label: str
+) -> np.ndarray | None:
     if mask is None:
         return None
     if not hasattr(mask, "shape") or mask.size == 0:
@@ -63,12 +65,19 @@ def _normalized_mask(mask: Any, template_shape: tuple[int, ...], label: str) -> 
     return normalized if np.any(normalized) else None
 
 
-def _match_template(screenshot: np.ndarray, template: np.ndarray, mask: np.ndarray | None, label: str) -> np.ndarray | None:
-    if template.shape[0] > screenshot.shape[0] or template.shape[1] > screenshot.shape[1]:
+def _match_template(
+    screenshot: np.ndarray, template: np.ndarray, mask: np.ndarray | None, label: str
+) -> np.ndarray | None:
+    if (
+        template.shape[0] > screenshot.shape[0]
+        or template.shape[1] > screenshot.shape[1]
+    ):
         logger.debug("[%s] Template larger than screenshot", label)
         return None
     try:
-        result = cv2.matchTemplate(screenshot, template, cv2.TM_SQDIFF_NORMED, mask=mask)
+        result = cv2.matchTemplate(
+            screenshot, template, cv2.TM_SQDIFF_NORMED, mask=mask
+        )
     except cv2.error as exc:
         logger.warning("[%s] Template matching failed: %s", label, exc)
         return None
@@ -82,15 +91,31 @@ def _center(location: Point, template: np.ndarray) -> Point:
     return location[0] + width // 2, location[1] + height // 2
 
 
-def _candidate_box(candidate: tuple[Any, ...]) -> tuple[float, float, float, float] | None:
+def _candidate_box(
+    candidate: tuple[Any, ...],
+) -> tuple[float, float, float, float] | None:
     try:
         _, center_x, center_y, width, height = candidate[:5]
-        center_x, center_y, width, height = float(center_x), float(center_y), float(width), float(height)
+        center_x, center_y, width, height = (
+            float(center_x),
+            float(center_y),
+            float(width),
+            float(height),
+        )
     except (TypeError, ValueError):
         return None
-    if not all(np.isfinite(value) for value in (center_x, center_y, width, height)) or width <= 0 or height <= 0:
+    if (
+        not all(np.isfinite(value) for value in (center_x, center_y, width, height))
+        or width <= 0
+        or height <= 0
+    ):
         return None
-    return center_x - width / 2, center_y - height / 2, center_x + width / 2, center_y + height / 2
+    return (
+        center_x - width / 2,
+        center_y - height / 2,
+        center_x + width / 2,
+        center_y + height / 2,
+    )
 
 
 class ImageMatcher:
@@ -136,10 +161,14 @@ class ImageMatcher:
             return False, 0.0, 0, 0
         min_value, _, min_location, _ = cv2.minMaxLoc(result)
         confidence = float(1.0 - min_value)
-        if not np.isfinite(confidence) or confidence < _threshold(threshold, self.threshold):
+        if not np.isfinite(confidence) or confidence < _threshold(
+            threshold, self.threshold
+        ):
             return False, confidence if np.isfinite(confidence) else 0.0, 0, 0
         center_x, center_y = _center(min_location, template)
-        if hsv_ranges and not self._check_hsv_gate(screenshot, template, min_location, mask, hsv_ranges, hsv_match_threshold):
+        if hsv_ranges and not self._check_hsv_gate(
+            screenshot, template, min_location, mask, hsv_ranges, hsv_match_threshold
+        ):
             return False, confidence, 0, 0
         return True, confidence, center_x, center_y
 
@@ -156,7 +185,9 @@ class ImageMatcher:
         supervision_iou_threshold: float = 0.5,
         supervision_class_agnostic: bool = True,
     ) -> list[tuple[float, int, int]]:
-        matches = self.find_template_candidates(screenshot, template, mask, threshold, min_distance, scales, template_name)
+        matches = self.find_template_candidates(
+            screenshot, template, mask, threshold, min_distance, scales, template_name
+        )
         matches = self._non_max_suppression(matches, min_distance)
         if use_supervision_nms:
             filtered = self.filter_candidates_with_supervision_nms(
@@ -186,17 +217,48 @@ class ImageMatcher:
             logger.warning("[%s] Invalid multi-match input: %s", template_name, exc)
             return []
         matches: list[MatchCandidate] = []
+        max_score = 1.0 - _threshold(threshold, self.threshold)
         for scale in self._valid_scales(scales):
-            scaled_template, scaled_mask = self._scaled(template, mask, scale)
-            result = _match_template(screenshot, scaled_template, scaled_mask, template_name)
-            if result is None:
-                continue
-            height, width = scaled_template.shape[:2]
-            for x, y in self._candidate_points(result, 1.0 - _threshold(threshold, self.threshold), min_distance):
-                confidence = float(1.0 - result[y, x])
-                if np.isfinite(confidence):
-                    matches.append((confidence, x + width // 2, y + height // 2, width, height))
-        return sorted(matches, key=lambda match: match[0], reverse=True)[:MAX_TEMPLATE_CANDIDATES]
+            matches.extend(
+                self._template_candidates_for_scale(
+                    screenshot,
+                    template,
+                    mask,
+                    scale,
+                    max_score,
+                    min_distance,
+                    template_name,
+                )
+            )
+        return sorted(matches, key=lambda match: match[0], reverse=True)[
+            :MAX_TEMPLATE_CANDIDATES
+        ]
+
+    def _template_candidates_for_scale(
+        self,
+        screenshot: np.ndarray,
+        template: np.ndarray,
+        mask: np.ndarray | None,
+        scale: float,
+        max_score: float,
+        min_distance: int,
+        template_name: str,
+    ) -> list[MatchCandidate]:
+        scaled_template, scaled_mask = self._scaled(template, mask, scale)
+        result = _match_template(
+            screenshot, scaled_template, scaled_mask, template_name
+        )
+        if result is None:
+            return []
+        height, width = scaled_template.shape[:2]
+        candidates = []
+        for x, y in self._candidate_points(result, max_score, min_distance):
+            confidence = float(1.0 - result[y, x])
+            if np.isfinite(confidence):
+                candidates.append(
+                    (confidence, x + width // 2, y + height // 2, width, height)
+                )
+        return candidates
 
     def filter_candidates_with_supervision_nms(
         self,
@@ -216,16 +278,25 @@ class ImageMatcher:
             return []
         boxes, confidences, normalized_class_ids, indexes = arrays
         try:
-            detections = sv.Detections(xyxy=boxes, confidence=confidences, class_id=normalized_class_ids)
+            detections = sv.Detections(
+                xyxy=boxes, confidence=confidences, class_id=normalized_class_ids
+            )
             detections["candidate_index"] = indexes
-            retained = detections.with_nms(threshold=_threshold(iou_threshold, 0.5), class_agnostic=bool(class_agnostic))
+            retained = detections.with_nms(
+                threshold=_threshold(iou_threshold, 0.5),
+                class_agnostic=bool(class_agnostic),
+            )
         except Exception as exc:
             logger.debug("Supervision NMS failed: %s", exc)
             return None
         data = getattr(retained, "data", None)
         if isinstance(data, dict) and "candidate_index" in data:
             retained_indexes = [int(index) for index in data["candidate_index"]]
-            return sorted((candidates[index] for index in retained_indexes), key=lambda item: item[0], reverse=True)
+            return sorted(
+                (candidates[index] for index in retained_indexes),
+                key=lambda item: item[0],
+                reverse=True,
+            )
         return None
 
     @staticmethod
@@ -242,18 +313,26 @@ class ImageMatcher:
         return normalized or [1.0]
 
     @staticmethod
-    def _scaled(template: np.ndarray, mask: np.ndarray | None, scale: float) -> tuple[np.ndarray, np.ndarray | None]:
+    def _scaled(
+        template: np.ndarray, mask: np.ndarray | None, scale: float
+    ) -> tuple[np.ndarray, np.ndarray | None]:
         if scale == 1.0:
             return template, mask
-        scaled_template = cv2.resize(template, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+        scaled_template = cv2.resize(
+            template, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA
+        )
         if mask is None:
             return scaled_template, None
-        scaled_mask = cv2.resize(mask, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+        scaled_mask = cv2.resize(
+            mask, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST
+        )
         scaled_mask[scaled_mask > 0] = 255
         return scaled_template, scaled_mask
 
     @staticmethod
-    def _candidate_points(result: np.ndarray, max_score: float, min_distance: int) -> list[Point]:
+    def _candidate_points(
+        result: np.ndarray, max_score: float, min_distance: int
+    ) -> list[Point]:
         window = max(3, int(min_distance))
         if window % 2 == 0:
             window += 1
@@ -261,7 +340,10 @@ class ImageMatcher:
         points = np.argwhere((result <= max_score) & (result <= local_min + 1e-6))
         if points.size == 0:
             return []
-        scored = sorted(((float(result[y, x]), int(x), int(y)) for y, x in points), key=lambda item: item[0])
+        scored = sorted(
+            ((float(result[y, x]), int(x), int(y)) for y, x in points),
+            key=lambda item: item[0],
+        )
         return [(x, y) for _, x, y in scored[:MAX_TEMPLATE_CANDIDATES]]
 
     @staticmethod
@@ -276,15 +358,24 @@ class ImageMatcher:
         union = aw * ah + bw * bh - intersection
         return intersection / union if union > 0 else 0.0
 
-    def _non_max_suppression(self, matches: list[MatchCandidate], min_distance: int) -> list[MatchCandidate]:
+    def _non_max_suppression(
+        self, matches: list[MatchCandidate], min_distance: int
+    ) -> list[MatchCandidate]:
         filtered: list[MatchCandidate] = []
         for candidate in sorted(matches, key=lambda match: match[0], reverse=True):
-            if all(abs(candidate[1] - kept[1]) >= min_distance or abs(candidate[2] - kept[2]) >= min_distance or self._iou(candidate, kept) <= 0.2 for kept in filtered):
+            if all(
+                abs(candidate[1] - kept[1]) >= min_distance
+                or abs(candidate[2] - kept[2]) >= min_distance
+                or self._iou(candidate, kept) <= 0.2
+                for kept in filtered
+            ):
                 filtered.append(candidate)
         return filtered
 
     @staticmethod
-    def _supervision_arrays(candidates: list[tuple[Any, ...]], class_ids: list[int] | tuple[int, ...] | None) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
+    def _supervision_arrays(
+        candidates: list[tuple[Any, ...]], class_ids: list[int] | tuple[int, ...] | None
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
         boxes = []
         confidences = []
         normalized_class_ids = []
@@ -326,19 +417,38 @@ class ImageMatcher:
             return None
         if lower.shape != (3,) or upper.shape != (3,):
             return None
-        lower = np.array([max(0, min(179, int(lower[0]))), max(0, min(255, int(lower[1]))), max(0, min(255, int(lower[2])))], dtype=np.uint8)
-        upper = np.array([max(0, min(179, int(upper[0]))), max(0, min(255, int(upper[1]))), max(0, min(255, int(upper[2])))], dtype=np.uint8)
+        lower = np.array(
+            [
+                max(0, min(179, int(lower[0]))),
+                max(0, min(255, int(lower[1]))),
+                max(0, min(255, int(lower[2]))),
+            ],
+            dtype=np.uint8,
+        )
+        upper = np.array(
+            [
+                max(0, min(179, int(upper[0]))),
+                max(0, min(255, int(upper[1]))),
+                max(0, min(255, int(upper[2]))),
+            ],
+            dtype=np.uint8,
+        )
         return lower, upper
 
     @staticmethod
-    def _hsv_mask(hsv_region: np.ndarray, lower: np.ndarray, upper: np.ndarray) -> np.ndarray:
+    def _hsv_mask(
+        hsv_region: np.ndarray, lower: np.ndarray, upper: np.ndarray
+    ) -> np.ndarray:
         if int(lower[0]) <= int(upper[0]):
             return cv2.inRange(hsv_region, lower, upper)
         lower_wrap = lower.copy()
         upper_wrap = upper.copy()
         lower_wrap[0] = 0
         upper_wrap[0] = 179
-        return cv2.bitwise_or(cv2.inRange(hsv_region, lower, upper_wrap), cv2.inRange(hsv_region, lower_wrap, upper))
+        return cv2.bitwise_or(
+            cv2.inRange(hsv_region, lower, upper_wrap),
+            cv2.inRange(hsv_region, lower_wrap, upper),
+        )
 
     def _check_hsv_gate(
         self,
@@ -360,12 +470,18 @@ class ImageMatcher:
         active_count = int(np.count_nonzero(active_mask))
         if active_count <= 0:
             return False
-        ranges = [item for value in hsv_ranges if (item := self._normalize_hsv_range(value)) is not None]
+        ranges = [
+            item
+            for value in hsv_ranges
+            if (item := self._normalize_hsv_range(value)) is not None
+        ]
         if not ranges:
             return False
         hsv_region = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
         combined = np.zeros((height, width), dtype=np.uint8)
         for lower, upper in ranges[:32]:
-            combined = cv2.bitwise_or(combined, self._hsv_mask(hsv_region, lower, upper))
+            combined = cv2.bitwise_or(
+                combined, self._hsv_mask(hsv_region, lower, upper)
+            )
         matched_count = int(np.count_nonzero((combined > 0) & active_mask))
         return matched_count / active_count >= _threshold(hsv_match_threshold, 0.9)

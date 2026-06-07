@@ -57,7 +57,9 @@ class TelegramNotifier:
     def notify_new_level(self, level_number: int, time_spent: float) -> None:
         minutes = int(time_spent // 60)
         seconds = int(time_spent % 60)
-        self._notify(f"{level_number}. restaurant completed! Time spent: {minutes:02d}:{seconds:02d}")
+        self._notify(
+            f"{level_number}. restaurant completed! Time spent: {minutes:02d}:{seconds:02d}"
+        )
 
     def notify_level_milestone(self, total_levels: int) -> None:
         self._notify(f"Milestone Reached\nTotal cities completed: {total_levels}")
