@@ -211,10 +211,10 @@ RED_ICON_HSV_MIN_MATCH_RATIO = 0.5
 # Mouse and Action Timing
 
 # Delay after normal click actions.
-CLICK_DELAY = 0.3
+CLICK_DELAY = 0.1
 
 # Delay after cursor movement.
-MOUSE_MOVE_DELAY = 0.3
+MOUSE_MOVE_DELAY = 0.1
 
 # Duration to hold the mouse button down during click actions.
 MOUSE_DOWN_DURATION = 0.15
@@ -229,7 +229,7 @@ HOVER_ENABLED = True
 HOVER_DURATION = 0.15
 
 # Delay between upgrade station search attempts.
-UPGRADE_SEARCH_INTERVAL = 0.3
+UPGRADE_SEARCH_INTERVAL = 0.1
 
 # Delay between state-machine actions.
 STATE_DELAY = 0.0
@@ -241,7 +241,7 @@ UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.2
 UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 2
 
 # Delay between upgrade station verification attempts.
-UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.3
+UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.1
 
 # Maximum duration for holding an upgrade station click.
 CLICK_HOLD_MAX_DURATION = 10.0
@@ -250,7 +250,7 @@ CLICK_HOLD_MAX_DURATION = 10.0
 STATS_UPGRADE_CLICK_DURATION = 1.25
 
 # Delay between stats upgrade click actions.
-STATS_UPGRADE_CLICK_DELAY = 0.01
+STATS_UPGRADE_CLICK_DELAY = 0.010
 
 # Telegram Notifications
 
@@ -351,10 +351,10 @@ MAX_SCROLL_CYCLES = 3
 SCROLL_INCREMENT_STEP = 2
 
 # Delay between scroll intervals.
-SCROLL_INTERVAL_PAUSE = 0.150
+SCROLL_INTERVAL_PAUSE = 0.100
 
 # Settling delay after a scroll gesture.
-POST_SCROLL_SETTLE = 0.150
+POST_SCROLL_SETTLE = 0.100
 
 # Duration of each scroll drag gesture.
 SCROLL_DURATION = 0.300
@@ -402,19 +402,19 @@ ADAPTIVE_TUNER_SEARCH_DECREMENT = 0.1
 ADAPTIVE_TUNER_MIN_CLICK_DELAY = 0.1
 
 # Maximum click delay allowed by adaptive tuning.
-ADAPTIVE_TUNER_MAX_CLICK_DELAY = 0.5
+ADAPTIVE_TUNER_MAX_CLICK_DELAY = 0.3
 
 # Minimum move delay allowed by adaptive tuning.
 ADAPTIVE_TUNER_MIN_MOVE_DELAY = 0.1
 
 # Maximum move delay allowed by adaptive tuning.
-ADAPTIVE_TUNER_MAX_MOVE_DELAY = 0.5
+ADAPTIVE_TUNER_MAX_MOVE_DELAY = 0.3
 
 # Minimum search interval allowed by adaptive tuning.
 ADAPTIVE_TUNER_MIN_SEARCH_INTERVAL = 0.1
 
 # Maximum search interval allowed by adaptive tuning.
-ADAPTIVE_TUNER_MAX_SEARCH_INTERVAL = 0.5
+ADAPTIVE_TUNER_MAX_SEARCH_INTERVAL = 0.3
 
 
 # Historical Learning
