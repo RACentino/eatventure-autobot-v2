@@ -238,7 +238,7 @@ STATE_DELAY = 0.0
 UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.2
 
 # Maximum attempts for upgrade station verification.
-UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 4
+UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 4\
 
 # Delay between upgrade station verification attempts.
 UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.2
@@ -285,7 +285,7 @@ BOX_SEARCH_Y = 780
 # Click Coordinates
 
 # Relative idle click coordinate used before scan actions.
-IDLE_CLICK_POS = (2, 690)
+IDLE_CLICK_POS = (2, 390)
 
 # Relative coordinate for opening the stats upgrade panel.
 STATS_UPGRADE_BUTTON_POS = (310, 698)
