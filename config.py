@@ -247,10 +247,10 @@ UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.2
 CLICK_HOLD_MAX_DURATION = 10.0
 
 # Duration for stats upgrade click bursts.
-STATS_UPGRADE_CLICK_DURATION = 2.0
+STATS_UPGRADE_CLICK_DURATION = 2
 
 # Delay between stats upgrade click actions.
-STATS_UPGRADE_CLICK_DELAY = 0.010
+STATS_UPGRADE_CLICK_DELAY = 0.020
 
 # Telegram Notifications
 
