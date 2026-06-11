@@ -1,4 +1,6 @@
 import logging
+import multiprocessing
+import multiprocessing.queues
 import queue
 import threading
 import time
@@ -28,18 +30,30 @@ logger = logging.getLogger(__name__)
 _SUPERVISION_IMPORT_ERROR: Exception | None
 
 try:
-    import supervision as sv
-except Exception as exc:
-    sv = None
-    _SUPERVISION_IMPORT_ERROR = exc
+    import supervision as supervision_module
+except Exception as supervision_import_exception:
+    supervision_module = None  # type: ignore[assignment]
+    _SUPERVISION_IMPORT_ERROR = supervision_import_exception
 else:
     _SUPERVISION_IMPORT_ERROR = None
 
 ASSET_TRACKING_LOOP_ITERATION_LIMIT = 2_147_483_647
 ASSET_TRACKING_OVERLAY_LOOP_ITERATION_LIMIT = 2_147_483_647
 ASSET_TRACKING_OVERLAY_QUEUE_DRAIN_LIMIT = 32
+
+# Minimum inter-frame interval for the detection worker (caps at ~30 FPS).
+# Prevents runaway CPU consumption when ASSET_TRACKING_INTERVAL is near zero.
+DETECTION_WORKER_MIN_FRAME_INTERVAL_SECONDS = 0.033
+
+# Seconds to wait for the detection worker process to stop gracefully.
+DETECTION_WORKER_STOP_TIMEOUT_SECONDS = 2.0
+
+# Maximum results drained from the detection result queue per tracker tick.
+DETECTION_RESULT_DRAIN_LIMIT = 8
+
 ASSET_CLASS_IDS = {"red_icon": 0, "upgrade_station": 1, "box": 2}
-ASSET_CLASS_NAMES = {value: key for key, value in ASSET_CLASS_IDS.items()}
+ASSET_CLASS_NAMES = {class_id: name for name, class_id in ASSET_CLASS_IDS.items()}
+
 AssetOverlayItem = tuple[str, int, float, int, int, int, int]
 
 
@@ -92,28 +106,26 @@ DetectionProvider = Callable[[np.ndarray], list[AssetDetection]]
 
 
 def _configured_forbidden_zones() -> tuple[ForbiddenZone, ...]:
-    zones = [
+    base_zone = ForbiddenZone(
+        "FORBIDDEN_CLICK",
+        config.FORBIDDEN_CLICK_X_MIN,
+        config.FORBIDDEN_CLICK_X_MAX,
+        config.FORBIDDEN_CLICK_Y_MIN,
+        None,
+    )
+    numbered_zones = [
         ForbiddenZone(
-            "FORBIDDEN_CLICK",
-            config.FORBIDDEN_CLICK_X_MIN,
-            config.FORBIDDEN_CLICK_X_MAX,
-            config.FORBIDDEN_CLICK_Y_MIN,
-            None,
-        ),
-    ]
-    for index, (x_min, x_max, y_min, y_max) in enumerate(
-        config.NUMBERED_FORBIDDEN_ZONE_BOUNDS, start=1
-    ):
-        zones.append(
-            ForbiddenZone(
-                f"FORBIDDEN_ZONE_{index}",
-                int(x_min),
-                int(x_max),
-                int(y_min),
-                int(y_max),
-            )
+            f"FORBIDDEN_ZONE_{zone_index}",
+            int(x_min),
+            int(x_max),
+            int(y_min),
+            int(y_max),
         )
-    return tuple(zones)
+        for zone_index, (x_min, x_max, y_min, y_max) in enumerate(
+            config.NUMBERED_FORBIDDEN_ZONE_BOUNDS, start=1
+        )
+    ]
+    return (base_zone, *numbered_zones)
 
 
 def _candidate_xyxy(candidate: AssetDetection) -> tuple[float, float, float, float]:
@@ -139,33 +151,38 @@ def _centered_xyxy(
     )
 
 
+def _has_finite_positive_dimensions(
+    confidence: float,
+    width: int,
+    height: int,
+    center_x: int,
+    center_y: int,
+) -> bool:
+    numeric_values = (confidence, center_x, center_y, width, height)
+    return (
+        all(np.isfinite(float(numeric_value)) for numeric_value in numeric_values)
+        and width > 0
+        and height > 0
+    )
+
+
 def _valid_detection(candidate: AssetDetection) -> bool:
-    values = (
+    return _has_finite_positive_dimensions(
         candidate.confidence,
-        candidate.center_x,
-        candidate.center_y,
         candidate.width,
         candidate.height,
-    )
-    return (
-        all(np.isfinite(float(value)) for value in values)
-        and candidate.width > 0
-        and candidate.height > 0
+        candidate.center_x,
+        candidate.center_y,
     )
 
 
 def _valid_asset(asset: TrackedAsset) -> bool:
-    values = (
+    return _has_finite_positive_dimensions(
         asset.confidence,
-        asset.center_x,
-        asset.center_y,
         asset.width,
         asset.height,
-    )
-    return (
-        all(np.isfinite(float(value)) for value in values)
-        and asset.width > 0
-        and asset.height > 0
+        asset.center_x,
+        asset.center_y,
     )
 
 
@@ -187,10 +204,9 @@ def _string_value(value: Any, default: str) -> str:
 
 def _int_value(value: Any, default: int) -> int:
     try:
-        number = int(value)
+        return int(value)
     except (TypeError, ValueError):
         return int(default)
-    return number
 
 
 def _float_value(value: Any, default: float = 0.0) -> float:
@@ -211,12 +227,13 @@ def _bounded_forbidden_zone(
     if frame_width <= 0 or frame_height <= 0:
         return None
     raw_y_max = frame_height - 1 if zone.y_max is None else int(zone.y_max)
-    if (
+    outside_frame = (
         zone.x_max < 0
         or zone.x_min >= frame_width
         or raw_y_max < 0
         or zone.y_min >= frame_height
-    ):
+    )
+    if outside_frame:
         return None
     return (
         max(0, zone.x_min),
@@ -256,9 +273,7 @@ def _box_intersects_forbidden_zones(
     left, top, right, bottom = box
     for zone in zones:
         bounds = _bounded_forbidden_zone(zone, frame_width, frame_height)
-        if bounds is not None and _box_intersects_bounds(
-            left, top, right, bottom, bounds
-        ):
+        if bounds is not None and _box_intersects_bounds(left, top, right, bottom, bounds):
             return True
     return False
 
@@ -274,26 +289,217 @@ def _box_intersects_bounds(
     return left <= x_max and right >= x_min and top <= y_max and bottom >= y_min
 
 
+def _detection_passes_zone_check(
+    center_x: int,
+    center_y: int,
+    target_x: int,
+    target_y: int,
+    bounding_box: tuple[float, float, float, float],
+    forbidden_zones: tuple[ForbiddenZone, ...],
+    frame_width: int,
+    frame_height: int,
+) -> bool:
+    """Return True when none of the three zone checks block this detection."""
+    center_blocked = _point_blocked_by_forbidden_zones(
+        center_x, center_y, forbidden_zones, frame_width, frame_height
+    )
+    if center_blocked:
+        return False
+    target_blocked = _point_blocked_by_forbidden_zones(
+        target_x, target_y, forbidden_zones, frame_width, frame_height
+    )
+    if target_blocked:
+        return False
+    return not _box_intersects_forbidden_zones(
+        bounding_box, forbidden_zones, frame_width, frame_height
+    )
+
+
+# ---------------------------------------------------------------------------
+# Detection worker subprocess — runs vision pipeline in an isolated process
+# to bypass the Python GIL entirely.
+# ---------------------------------------------------------------------------
+
+def _detection_worker_process_main(
+    window_title: str,
+    capture_max_y: int,
+    frame_queue: multiprocessing.queues.Queue,
+    result_queue: multiprocessing.queues.Queue,
+    stop_event: Any,
+    min_frame_interval: float,
+    detection_provider_function: Any,
+) -> None:
+    """Entry point for the isolated detection subprocess.
+
+    Captures frames from the target window, runs the detection pipeline, and
+    enqueues results. Frames are captured at most once per *min_frame_interval*
+    seconds. A maxsize=1 *frame_queue* ensures only the latest frame is passed
+    to the detection pipeline; stale frames are silently dropped. Results are
+    placed on *result_queue* for the tracker thread to consume.
+    """
+    try:
+        import mss as mss_module
+        import pywinctl as pywinctl_module
+    except Exception as import_error:
+        logger.error("Detection worker cannot import capture dependencies: %s", import_error)
+        return
+
+    try:
+        screenshotter = mss_module.mss()
+    except Exception as init_error:
+        logger.error("Detection worker cannot initialise mss: %s", init_error)
+        return
+
+    last_frame_time = 0.0
+
+    for _ in range(ASSET_TRACKING_LOOP_ITERATION_LIMIT):
+        if stop_event.is_set():
+            return
+
+        now = time.monotonic()
+        elapsed_since_last_frame = now - last_frame_time
+        if elapsed_since_last_frame < min_frame_interval:
+            time.sleep(min_frame_interval - elapsed_since_last_frame)
+            continue
+
+        screenshot = _capture_worker_frame(
+            screenshotter, pywinctl_module, window_title, capture_max_y
+        )
+        if screenshot is None:
+            time.sleep(min_frame_interval)
+            continue
+
+        last_frame_time = time.monotonic()
+
+        detections = _safe_run_detection_provider(detection_provider_function, screenshot)
+        frame_height, frame_width = screenshot.shape[:2]
+
+        payload = (detections, frame_width, frame_height)
+        _drop_and_enqueue(result_queue, payload)
+
+    logger.error("Detection worker loop reached iteration limit")
+
+
+def _capture_worker_frame(
+    screenshotter: Any,
+    pywinctl_module: Any,
+    window_title: str,
+    capture_max_y: int,
+) -> np.ndarray | None:
+    """Capture a single frame in the worker process. Returns None on failure."""
+    try:
+        windows = pywinctl_module.getWindowsWithTitle(window_title) or []
+    except Exception as capture_error:
+        logger.debug("Detection worker window lookup failed: %s", capture_error)
+        return None
+
+    live_windows = [window for window in windows if _worker_window_alive(window)]
+    if not live_windows:
+        return None
+
+    target_window = None
+    for window in live_windows:
+        if getattr(window, "title", None) == window_title:
+            target_window = window
+            break
+    if target_window is None:
+        target_window = live_windows[0]
+
+    try:
+        box = target_window.box
+        window_left = int(box.left if hasattr(box, "left") else box[0])
+        window_top = int(box.top if hasattr(box, "top") else box[1])
+        window_width = int(box.width if hasattr(box, "width") else box[2])
+        window_height = int(box.height if hasattr(box, "height") else box[3])
+    except Exception as bounds_error:
+        logger.debug("Detection worker cannot read window bounds: %s", bounds_error)
+        return None
+
+    capture_height = min(window_height, int(capture_max_y))
+    if window_width <= 0 or capture_height <= 0:
+        return None
+
+    try:
+        raw_screenshot = screenshotter.grab({
+            "left": window_left,
+            "top": window_top,
+            "width": window_width,
+            "height": capture_height,
+        })
+        image_array = np.asarray(raw_screenshot)
+    except Exception as grab_error:
+        logger.debug("Detection worker frame grab failed: %s", grab_error)
+        return None
+
+    if image_array.ndim != 3 or image_array.shape[2] < 3:
+        return None
+
+    bgr_image = image_array[:, :, :3].astype(np.uint8, copy=False)
+    if not bgr_image.flags.c_contiguous:
+        bgr_image = np.ascontiguousarray(bgr_image)
+    return bgr_image
+
+
+def _worker_window_alive(window: Any) -> bool:
+    alive_attribute = getattr(window, "isAlive", None)
+    try:
+        if callable(alive_attribute):
+            return bool(alive_attribute())
+        return alive_attribute is None or bool(alive_attribute)
+    except Exception:
+        return False
+
+
+def _safe_run_detection_provider(
+    detection_provider: Any, screenshot: np.ndarray
+) -> list[AssetDetection]:
+    try:
+        result = detection_provider(screenshot)
+        return result if isinstance(result, list) else []
+    except Exception as provider_error:
+        logger.debug("Detection worker provider failed: %s", provider_error)
+        return []
+
+
+def _drop_and_enqueue(target_queue: multiprocessing.queues.Queue, payload: Any) -> None:
+    """Drain the queue and enqueue only the freshest payload."""
+    for _ in range(DETECTION_RESULT_DRAIN_LIMIT):
+        try:
+            target_queue.get_nowait()
+        except queue.Empty:
+            break
+    try:
+        target_queue.put_nowait(payload)
+    except queue.Full:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# AssetTracker — orchestrates the worker process and applies ByteTrack locally
+# ---------------------------------------------------------------------------
+
 class AssetTracker:
     def __init__(
         self, window_capture: Any, detection_provider: DetectionProvider
     ) -> None:
         self.window_capture = window_capture
         self.detection_provider = detection_provider
-        self.interval = max(0.01, float(config.ASSET_TRACKING_INTERVAL))
         self.max_detections = max(1, int(config.ASSET_TRACKING_MAX_DETECTIONS))
-        self._tracker = self._create_tracker()
+        self._byte_tracker = self._create_byte_tracker()
         self._forbidden_zones = _configured_forbidden_zones()
-        self._stop = threading.Event()
-        self._lock = threading.RLock()
-        self._thread: threading.Thread | None = None
+        self._stop_flag = threading.Event()
+        self._snapshot_lock = threading.RLock()
+        self._consumer_thread: threading.Thread | None = None
+        self._worker_process: Any | None = None
+        self._worker_stop_event: Any | None = None
+        self._result_queue: multiprocessing.queues.Queue | None = None
         self._snapshot = AssetTrackingSnapshot(0, 0.0, 0, 0, ())
 
     @staticmethod
     def available() -> bool:
-        return sv is not None and hasattr(sv, "ByteTrack")
+        return supervision_module is not None and hasattr(supervision_module, "ByteTrack")
 
-    def _create_tracker(self) -> Any | None:
+    def _create_byte_tracker(self) -> Any | None:
         if not self.available():
             if _SUPERVISION_IMPORT_ERROR is not None:
                 logger.warning(
@@ -303,7 +509,6 @@ class AssetTracker:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
             warnings.simplefilter("ignore", FutureWarning)
-            supervision_module = sv
             if supervision_module is None:
                 return None
             return supervision_module.ByteTrack(
@@ -323,90 +528,149 @@ class AssetTracker:
     def start(self) -> bool:
         if not config.ASSET_TRACKING_ENABLED:
             return False
-        if self._thread is not None and self._thread.is_alive():
+        if self._consumer_thread is not None and self._consumer_thread.is_alive():
             return True
-        self._stop.clear()
-        self._thread = threading.Thread(
-            target=self._run, name="asset_tracker", daemon=True
+        self._stop_flag.clear()
+        self._result_queue = self._spawn_detection_worker()
+        self._consumer_thread = threading.Thread(
+            target=self._consume_detection_results,
+            name="asset_tracker_consumer",
+            daemon=True,
         )
-        self._thread.start()
-        logger.info("Asset tracker started")
+        self._consumer_thread.start()
+        logger.info("Asset tracker started (multiprocessing detection worker)")
         return True
 
+    def _spawn_detection_worker(self) -> multiprocessing.queues.Queue:
+        spawn_context = multiprocessing.get_context("spawn")
+        result_queue: multiprocessing.queues.Queue = spawn_context.Queue(maxsize=1)
+        self._worker_stop_event = spawn_context.Event()
+        min_frame_interval = max(
+            DETECTION_WORKER_MIN_FRAME_INTERVAL_SECONDS,
+            float(config.ASSET_TRACKING_INTERVAL),
+        )
+        self._worker_process = spawn_context.Process(
+            target=_detection_worker_process_main,
+            name="asset_detection_worker",
+            args=(
+                self.window_capture.window_title,
+                int(config.ASSET_TRACKING_CAPTURE_Y),
+                spawn_context.Queue(maxsize=1),
+                result_queue,
+                self._worker_stop_event,
+                min_frame_interval,
+                self.detection_provider,
+            ),
+            daemon=True,
+        )
+        self._worker_process.start()
+        return result_queue
+
     def stop(self) -> None:
-        self._stop.set()
-        if self._thread is not None and self._thread.is_alive():
-            self._thread.join(timeout=float(config.ASSET_TRACKING_THREAD_JOIN_TIMEOUT))
+        self._stop_flag.set()
+        self._stop_detection_worker()
+        if self._consumer_thread is not None and self._consumer_thread.is_alive():
+            self._consumer_thread.join(
+                timeout=float(config.ASSET_TRACKING_THREAD_JOIN_TIMEOUT)
+            )
         logger.info("Asset tracker stopped")
 
+    def _stop_detection_worker(self) -> None:
+        if self._worker_stop_event is not None:
+            self._worker_stop_event.set()
+        if self._worker_process is not None and self._worker_process.is_alive():
+            self._worker_process.join(timeout=DETECTION_WORKER_STOP_TIMEOUT_SECONDS)
+            if self._worker_process.is_alive():
+                self._worker_process.terminate()
+                self._worker_process.join(timeout=DETECTION_WORKER_STOP_TIMEOUT_SECONDS)
+        self._worker_process = None
+        self._worker_stop_event = None
+
     def reset(self) -> None:
-        tracker_reset = getattr(self._tracker, "reset", None)
-        if callable(tracker_reset):
-            tracker_reset()
-        with self._lock:
+        byte_tracker_reset = getattr(self._byte_tracker, "reset", None)
+        if callable(byte_tracker_reset):
+            byte_tracker_reset()
+        with self._snapshot_lock:
             self._snapshot = AssetTrackingSnapshot(0, 0.0, 0, 0, ())
 
     def assets(self, asset_type: str | None = None) -> list[TrackedAsset]:
-        with self._lock:
+        with self._snapshot_lock:
             snapshot = self._snapshot
-        if snapshot.timestamp <= 0 or time.time() - snapshot.timestamp > float(
-            config.ASSET_TRACKING_MAX_SNAPSHOT_AGE
-        ):
+        snapshot_is_stale = (
+            snapshot.timestamp <= 0
+            or time.time() - snapshot.timestamp > float(config.ASSET_TRACKING_MAX_SNAPSHOT_AGE)
+        )
+        if snapshot_is_stale:
             return []
-        assets = self._filter_trackable_assets(
+        filtered_assets = self._filter_trackable_assets(
             list(snapshot.assets), snapshot.width, snapshot.height
         )
         if asset_type is None:
-            return assets
-        return [asset for asset in assets if asset.asset_type == asset_type]
+            return filtered_assets
+        return [asset for asset in filtered_assets if asset.asset_type == asset_type]
 
     def snapshot(self) -> AssetTrackingSnapshot:
-        with self._lock:
+        with self._snapshot_lock:
             snapshot = self._snapshot
-        assets = tuple(
+        filtered_assets = tuple(
             self._filter_trackable_assets(
                 list(snapshot.assets), snapshot.width, snapshot.height
             )
         )
-        if len(assets) == len(snapshot.assets):
+        if len(filtered_assets) == len(snapshot.assets):
             return snapshot
         return AssetTrackingSnapshot(
             snapshot.frame_number,
             snapshot.timestamp,
             snapshot.width,
             snapshot.height,
-            assets,
+            filtered_assets,
         )
 
-    def _run(self) -> None:
+    def _consume_detection_results(self) -> None:
+        """Consumer thread: drains the result queue and applies ByteTrack."""
         for _ in range(ASSET_TRACKING_LOOP_ITERATION_LIMIT):
-            if self._stop.is_set():
+            if self._stop_flag.is_set():
                 return
-            try:
-                self._process_frame()
-            except Exception:
-                logger.exception("Asset tracking frame failed")
-            if self._stop.wait(self.interval):
+            self._drain_and_apply_latest_result()
+            if self._stop_flag.wait(timeout=0.005):
                 return
-        logger.error("Asset tracker loop reached iteration limit")
+        logger.error("Asset tracker consumer loop reached iteration limit")
 
-    def _process_frame(self) -> None:
-        screenshot = self.window_capture.capture(max_y=config.ASSET_TRACKING_CAPTURE_Y)
-        height, width = screenshot.shape[:2]
-        detections = self._filter_trackable_detections(
-            self.detection_provider(screenshot), width, height
+    def _drain_and_apply_latest_result(self) -> None:
+        latest_payload: tuple[list[AssetDetection], int, int] | None = None
+        for _ in range(DETECTION_RESULT_DRAIN_LIMIT):
+            try:
+                candidate = self._result_queue.get_nowait()  # type: ignore[union-attr]
+                latest_payload = candidate
+            except queue.Empty:
+                break
+        if latest_payload is None:
+            return
+        raw_detections, frame_width, frame_height = latest_payload
+        self._apply_detections(raw_detections, frame_width, frame_height)
+
+    def _apply_detections(
+        self,
+        raw_detections: list[AssetDetection],
+        frame_width: int,
+        frame_height: int,
+    ) -> None:
+        filtered_detections = self._filter_trackable_detections(
+            raw_detections, frame_width, frame_height
         )
-        detections = sorted(detections, key=lambda item: item.confidence, reverse=True)[
-            : self.max_detections
-        ]
-        assets = tuple(
+        prioritized_detections = sorted(
+            filtered_detections, key=lambda detection: detection.confidence, reverse=True
+        )[: self.max_detections]
+        tracked_assets = tuple(
             self._filter_trackable_assets(
-                self._track_detections(detections), width, height
+                self._track_detections(prioritized_detections), frame_width, frame_height
             )
         )
-        with self._lock:
+        with self._snapshot_lock:
+            new_frame_number = self._snapshot.frame_number + 1
             self._snapshot = AssetTrackingSnapshot(
-                self._snapshot.frame_number + 1, time.time(), width, height, assets
+                new_frame_number, time.time(), frame_width, frame_height, tracked_assets
             )
 
     def _filter_trackable_detections(
@@ -425,20 +689,15 @@ class AssetTracker:
             return False
         target_x = _target_coordinate(candidate.target_x, candidate.center_x)
         target_y = _target_coordinate(candidate.target_y, candidate.center_y)
-        if _point_blocked_by_forbidden_zones(
+        return _detection_passes_zone_check(
             candidate.center_x,
             candidate.center_y,
+            target_x,
+            target_y,
+            _candidate_xyxy(candidate),
             self._forbidden_zones,
             frame_width,
             frame_height,
-        ):
-            return False
-        if _point_blocked_by_forbidden_zones(
-            target_x, target_y, self._forbidden_zones, frame_width, frame_height
-        ):
-            return False
-        return not _box_intersects_forbidden_zones(
-            _candidate_xyxy(candidate), self._forbidden_zones, frame_width, frame_height
         )
 
     def _filter_trackable_assets(
@@ -457,55 +716,54 @@ class AssetTracker:
             return False
         target_x = _target_coordinate(asset.target_x, asset.center_x)
         target_y = _target_coordinate(asset.target_y, asset.center_y)
-        if _point_blocked_by_forbidden_zones(
+        return _detection_passes_zone_check(
             asset.center_x,
             asset.center_y,
+            target_x,
+            target_y,
+            _asset_xyxy(asset),
             self._forbidden_zones,
             frame_width,
             frame_height,
-        ):
-            return False
-        if _point_blocked_by_forbidden_zones(
-            target_x, target_y, self._forbidden_zones, frame_width, frame_height
-        ):
-            return False
-        return not _box_intersects_forbidden_zones(
-            _asset_xyxy(asset), self._forbidden_zones, frame_width, frame_height
         )
 
     def _track_detections(self, detections: list[AssetDetection]) -> list[TrackedAsset]:
-        if self._tracker is None:
-            return self._fallback_assets(detections)
+        if self._byte_tracker is None:
+            return self._build_fallback_assets(detections)
         supervision_detections = self._to_supervision_detections(detections)
         try:
-            tracked = self._tracker.update_with_detections(supervision_detections)
-        except Exception as exc:
-            logger.debug("ByteTrack update failed: %s", exc)
-            return self._fallback_assets(detections)
+            tracked = self._byte_tracker.update_with_detections(supervision_detections)
+        except Exception as tracking_error:
+            logger.debug("ByteTrack update failed: %s", tracking_error)
+            return self._build_fallback_assets(detections)
         return self._from_supervision_detections(tracked)
 
     def _to_supervision_detections(self, detections: list[AssetDetection]) -> Any:
-        supervision_module = sv
         if supervision_module is None:
             raise RuntimeError("supervision is unavailable")
-        valid = [candidate for candidate in detections if _valid_detection(candidate)]
-        boxes = np.asarray(
-            [_candidate_xyxy(candidate) for candidate in valid], dtype=np.float32
+        valid_detections = [
+            candidate for candidate in detections if _valid_detection(candidate)
+        ]
+        bounding_boxes = np.asarray(
+            [_candidate_xyxy(candidate) for candidate in valid_detections], dtype=np.float32
         ).reshape((-1, 4))
-        confidences = np.asarray(
-            [candidate.confidence for candidate in valid], dtype=np.float32
+        confidence_values = np.asarray(
+            [candidate.confidence for candidate in valid_detections], dtype=np.float32
         )
-        class_ids = np.asarray(
-            [ASSET_CLASS_IDS.get(candidate.asset_type, 0) for candidate in valid],
+        class_id_values = np.asarray(
+            [ASSET_CLASS_IDS.get(candidate.asset_type, 0) for candidate in valid_detections],
             dtype=np.int32,
         )
-        data = self._supervision_data(valid)
+        supervision_data = self._build_supervision_data(valid_detections)
         return supervision_module.Detections(
-            xyxy=boxes, confidence=confidences, class_id=class_ids, data=data
+            xyxy=bounding_boxes,
+            confidence=confidence_values,
+            class_id=class_id_values,
+            data=supervision_data,
         )
 
     @staticmethod
-    def _supervision_data(detections: list[AssetDetection]) -> dict[str, Any]:
+    def _build_supervision_data(detections: list[AssetDetection]) -> dict[str, Any]:
         return {
             "asset_type": np.asarray(
                 [candidate.asset_type for candidate in detections], dtype=object
@@ -542,61 +800,67 @@ class AssetTracker:
         }
 
     def _from_supervision_detections(self, detections: Any) -> list[TrackedAsset]:
-        data = getattr(detections, "data", {}) or {}
-        confidence_values = getattr(detections, "confidence", None)
-        class_values = getattr(detections, "class_id", None)
-        tracker_values = getattr(detections, "tracker_id", None)
-        tracked_assets = []
-        for index in range(min(len(detections), self.max_detections)):
-            tracked_assets.append(
-                self._tracked_asset_from_detection(
-                    detections,
-                    data,
-                    confidence_values,
-                    class_values,
-                    tracker_values,
-                    index,
-                )
+        detection_data = getattr(detections, "data", {}) or {}
+        confidence_array = getattr(detections, "confidence", None)
+        class_id_array = getattr(detections, "class_id", None)
+        tracker_id_array = getattr(detections, "tracker_id", None)
+        tracked_assets = [
+            self._build_tracked_asset(
+                detections, detection_data, confidence_array,
+                class_id_array, tracker_id_array, detection_index,
             )
-        return sorted(tracked_assets, key=lambda item: item.confidence, reverse=True)
+            for detection_index in range(min(len(detections), self.max_detections))
+        ]
+        return sorted(tracked_assets, key=lambda asset: asset.confidence, reverse=True)
 
-    def _tracked_asset_from_detection(
+    def _build_tracked_asset(
         self,
         detections: Any,
-        data: dict[str, Any],
-        confidences: Any,
-        class_ids: Any,
-        tracker_ids: Any,
-        index: int,
+        detection_data: dict[str, Any],
+        confidence_array: Any,
+        class_id_array: Any,
+        tracker_id_array: Any,
+        detection_index: int,
     ) -> TrackedAsset:
-        xyxy = detections.xyxy[index]
-        class_id = _int_value(_sequence_value(class_ids, index), 0)
+        xyxy_box = detections.xyxy[detection_index]
+        class_id = _int_value(_sequence_value(class_id_array, detection_index), 0)
         asset_type = _string_value(
-            _sequence_value(data.get("asset_type"), index),
+            _sequence_value(detection_data.get("asset_type"), detection_index),
             ASSET_CLASS_NAMES.get(class_id, "red_icon"),
         )
         template_name = _string_value(
-            _sequence_value(data.get("template_name"), index), asset_type
+            _sequence_value(detection_data.get("template_name"), detection_index),
+            asset_type,
         )
         width = _int_value(
-            _sequence_value(data.get("width"), index), int(xyxy[2] - xyxy[0])
+            _sequence_value(detection_data.get("width"), detection_index),
+            int(xyxy_box[2] - xyxy_box[0]),
         )
         height = _int_value(
-            _sequence_value(data.get("height"), index), int(xyxy[3] - xyxy[1])
+            _sequence_value(detection_data.get("height"), detection_index),
+            int(xyxy_box[3] - xyxy_box[1]),
         )
         center_x = _int_value(
-            _sequence_value(data.get("center_x"), index), int((xyxy[0] + xyxy[2]) / 2)
+            _sequence_value(detection_data.get("center_x"), detection_index),
+            int((xyxy_box[0] + xyxy_box[2]) / 2),
         )
         center_y = _int_value(
-            _sequence_value(data.get("center_y"), index), int((xyxy[1] + xyxy[3]) / 2)
+            _sequence_value(detection_data.get("center_y"), detection_index),
+            int((xyxy_box[1] + xyxy_box[3]) / 2),
         )
-        target_x = _int_value(_sequence_value(data.get("target_x"), index), center_x)
-        target_y = _int_value(_sequence_value(data.get("target_y"), index), center_y)
+        target_x = _int_value(
+            _sequence_value(detection_data.get("target_x"), detection_index), center_x
+        )
+        target_y = _int_value(
+            _sequence_value(detection_data.get("target_y"), detection_index), center_y
+        )
         return TrackedAsset(
             asset_type=asset_type,
             template_name=template_name,
-            tracker_id=_int_value(_sequence_value(tracker_ids, index), -1),
-            confidence=_float_value(_sequence_value(confidences, index)),
+            tracker_id=_int_value(
+                _sequence_value(tracker_id_array, detection_index), -1
+            ),
+            confidence=_float_value(_sequence_value(confidence_array, detection_index)),
             center_x=center_x,
             center_y=center_y,
             width=max(1, width),
@@ -605,26 +869,33 @@ class AssetTracker:
             target_y=target_y,
         )
 
-    def _fallback_assets(self, detections: list[AssetDetection]) -> list[TrackedAsset]:
-        assets = []
+    def _build_fallback_assets(
+        self, detections: list[AssetDetection]
+    ) -> list[TrackedAsset]:
+        fallback_assets = []
         for candidate in detections[: self.max_detections]:
-            if _valid_detection(candidate):
-                assets.append(
-                    TrackedAsset(
-                        candidate.asset_type,
-                        candidate.template_name,
-                        -1,
-                        float(candidate.confidence),
-                        int(candidate.center_x),
-                        int(candidate.center_y),
-                        int(candidate.width),
-                        int(candidate.height),
-                        _target_coordinate(candidate.target_x, candidate.center_x),
-                        _target_coordinate(candidate.target_y, candidate.center_y),
-                    )
+            if not _valid_detection(candidate):
+                continue
+            fallback_assets.append(
+                TrackedAsset(
+                    candidate.asset_type,
+                    candidate.template_name,
+                    -1,
+                    float(candidate.confidence),
+                    int(candidate.center_x),
+                    int(candidate.center_y),
+                    int(candidate.width),
+                    int(candidate.height),
+                    _target_coordinate(candidate.target_x, candidate.center_x),
+                    _target_coordinate(candidate.target_y, candidate.center_y),
                 )
-        return assets
+            )
+        return fallback_assets
 
+
+# ---------------------------------------------------------------------------
+# Overlay subsystems (unchanged API; internal cleanup only)
+# ---------------------------------------------------------------------------
 
 class AssetTrackingOverlay:
     def __init__(self, window_capture: Any, tracker: AssetTracker) -> None:
@@ -641,13 +912,13 @@ class AssetTrackingOverlay:
             return
         try:
             self.payload_queue = create_overlay_queue(maxsize=2)
-            refresh_ms = max(20, int(config.ASSET_TRACKING_OVERLAY_REFRESH_MS))
+            refresh_milliseconds = max(20, int(config.ASSET_TRACKING_OVERLAY_REFRESH_MS))
             self.process, self.stop_event = start_overlay_process(
                 "asset_tracking_overlay",
                 _run_asset_tracking_overlay_process,
                 self.window_capture.window_title,
                 self.payload_queue,
-                refresh_ms,
+                refresh_milliseconds,
             )
             self.running = True
             self.thread = threading.Thread(
@@ -656,9 +927,11 @@ class AssetTrackingOverlay:
                 daemon=True,
             )
             self.thread.start()
-        except Exception as exc:
+        except Exception as startup_error:
             self.running = False
-            logger.error("Failed to start asset tracking overlay process: %s", exc)
+            logger.error(
+                "Failed to start asset tracking overlay process: %s", startup_error
+            )
             self.stop()
             return
         logger.info("Asset tracking overlay started")
@@ -682,8 +955,8 @@ class AssetTrackingOverlay:
             if not self.running:
                 return
             if self.payload_queue is not None:
-                payload = _asset_overlay_payload(self.tracker.assets())
-                replace_queue_latest(self.payload_queue, payload)
+                overlay_payload = _asset_overlay_payload(self.tracker.assets())
+                replace_queue_latest(self.payload_queue, overlay_payload)
             if self.stop_event is not None and self.stop_event.is_set():
                 return
             time.sleep(refresh_seconds)
@@ -693,22 +966,24 @@ class AssetTrackingOverlay:
         if self.payload_queue is None or self.stop_event is None:
             return
         _ = (configure_overlay_root, configure_overlay_canvas)
-        refresh_ms = max(20, int(config.ASSET_TRACKING_OVERLAY_REFRESH_MS))
+        refresh_milliseconds = max(20, int(config.ASSET_TRACKING_OVERLAY_REFRESH_MS))
         _run_asset_tracking_overlay_process(
             self.window_capture.window_title,
             self.payload_queue,
-            refresh_ms,
+            refresh_milliseconds,
             self.stop_event,
         )
 
     def _draw(self, root: Any, canvas: Any) -> bool:
         try:
             _ = (position_overlay_over_rect, set_overlay_visible_regions)
-            items = _asset_overlay_payload(self.tracker.assets())
-            _draw_asset_overlay(root, canvas, self.window_capture.window_title, items)
+            overlay_items = _asset_overlay_payload(self.tracker.assets())
+            _draw_asset_overlay(
+                root, canvas, self.window_capture.window_title, overlay_items
+            )
             return True
-        except Exception as exc:
-            logger.error("Error in asset tracking overlay loop: %s", exc)
+        except Exception as draw_error:
+            logger.error("Error in asset tracking overlay loop: %s", draw_error)
             return False
 
 
@@ -734,8 +1009,8 @@ def _run_asset_tracking_overlay_process(
             stop_event,
         )
         root.mainloop()
-    except Exception as exc:
-        logger.error("Failed to create asset tracking overlay: %s", exc)
+    except Exception as overlay_error:
+        logger.error("Failed to create asset tracking overlay: %s", overlay_error)
     finally:
         if "root" in locals():
             destroy_overlay_root(root)
@@ -787,8 +1062,8 @@ def _draw_asset_overlay(
         return
     canvas.delete("asset")
     set_overlay_visible_regions(root, _asset_item_visible_regions(items))
-    for item in items:
-        _draw_asset_item(canvas, item)
+    for overlay_item in items:
+        _draw_asset_item(canvas, overlay_item)
 
 
 def _draw_asset_item(canvas: Any, item: AssetOverlayItem) -> None:
@@ -845,11 +1120,11 @@ def _asset_visible_regions(
     regions = []
     for asset in assets:
         x1, y1, x2, y2 = _asset_bounds(asset)
-        width = max(1, int(x2 - x1))
-        height = max(1, int(y2 - y1))
-        regions.extend(_outlined_regions(x1, y1, width, height, 3))
+        region_width = max(1, int(x2 - x1))
+        region_height = max(1, int(y2 - y1))
+        regions.extend(_outlined_regions(x1, y1, region_width, region_height, 3))
         regions.append((int(asset.center_x) - 3, int(asset.center_y) - 3, 6, 6))
-        regions.append((x1, max(0, y1 - 18), min(180, max(48, width + 80)), 18))
+        regions.append((x1, max(0, y1 - 18), min(180, max(48, region_width + 80)), 18))
     return regions
 
 
@@ -869,14 +1144,16 @@ def _asset_item_visible_regions(
     items: tuple[AssetOverlayItem, ...],
 ) -> list[tuple[int, int, int, int]]:
     regions = []
-    for item in items:
-        _, _, _, center_x, center_y, _, _ = item
-        x1, y1, x2, y2 = _asset_item_bounds(item)
-        width = max(1, int(x2 - x1))
-        height = max(1, int(y2 - y1))
-        regions.extend(_outlined_regions(x1, y1, width, height, 3))
+    for overlay_item in items:
+        _, _, _, center_x, center_y, _, _ = overlay_item
+        x1, y1, x2, y2 = _asset_item_bounds(overlay_item)
+        region_width = max(1, int(x2 - x1))
+        region_height = max(1, int(y2 - y1))
+        regions.extend(_outlined_regions(x1, y1, region_width, region_height, 3))
         regions.append((int(center_x) - 3, int(center_y) - 3, 6, 6))
-        regions.append((x1, max(0, y1 - 18), min(180, max(48, width + 80)), 18))
+        regions.append(
+            (x1, max(0, y1 - 18), min(180, max(48, region_width + 80)), 18)
+        )
     return regions
 
 
@@ -893,12 +1170,12 @@ def _outlined_regions(
 
 
 def _asset_color(asset_type: str) -> str:
-    colors = {
+    color_map = {
         "red_icon": config.ASSET_TRACKING_RED_ICON_COLOR,
         "upgrade_station": config.ASSET_TRACKING_UPGRADE_STATION_COLOR,
         "box": config.ASSET_TRACKING_BOX_COLOR,
     }
-    return str(colors.get(asset_type, "#ffffff"))
+    return str(color_map.get(asset_type, "#ffffff"))
 
 
 def _asset_label(asset: TrackedAsset) -> str:
