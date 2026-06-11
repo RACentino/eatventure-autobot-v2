@@ -66,7 +66,7 @@ ASSET_TRACKING_ENABLED = True
 ASSET_TRACKING_CAPTURE_Y = 780
 
 # Frame rate passed to supervision ByteTrack.
-ASSET_TRACKING_FRAME_RATE = 60.0
+ASSET_TRACKING_FRAME_RATE = 120.0
 
 # Delay between tracker capture passes.
 ASSET_TRACKING_INTERVAL = 0.001
@@ -81,7 +81,7 @@ ASSET_TRACKING_MAX_DETECTIONS = 256
 ASSET_TRACKING_TRACK_ACTIVATION_THRESHOLD = 0.25
 
 # Number of lost frames ByteTrack keeps before removing a track.
-ASSET_TRACKING_LOST_TRACK_BUFFER = 60
+ASSET_TRACKING_LOST_TRACK_BUFFER = 120
 
 # ByteTrack association threshold between existing tracks and detections.
 ASSET_TRACKING_MINIMUM_MATCHING_THRESHOLD = 0.8
@@ -211,10 +211,10 @@ RED_ICON_HSV_MIN_MATCH_RATIO = 0.5
 # Mouse and Action Timing
 
 # Delay after normal click actions.
-CLICK_DELAY = 0.2
+CLICK_DELAY = 0.15
 
 # Delay after cursor movement.
-MOUSE_MOVE_DELAY = 0.2
+MOUSE_MOVE_DELAY = 0.075
 
 # Duration to hold the mouse button down during click actions.
 MOUSE_DOWN_DURATION = 0.15
@@ -247,7 +247,7 @@ UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.1
 CLICK_HOLD_MAX_DURATION = 10.0
 
 # Duration for stats upgrade click bursts.
-STATS_UPGRADE_CLICK_DURATION = 1.5
+STATS_UPGRADE_CLICK_DURATION = 1.75
 
 # Delay between stats upgrade click actions.
 STATS_UPGRADE_CLICK_DELAY = 0.020
@@ -285,7 +285,7 @@ BOX_SEARCH_Y = 780
 # Click Coordinates
 
 # Relative idle click coordinate used before scan actions.
-IDLE_CLICK_POS = (2, 690)
+IDLE_CLICK_POS = (2, 390)
 
 # Relative coordinate for opening the stats upgrade panel.
 STATS_UPGRADE_BUTTON_POS = (310, 698)
@@ -345,10 +345,10 @@ SCROLL_PIXEL_STEP = 180
 SCROLL_DISTANCE_RATIO = 1.0
 
 # Maximum oscillating scroll cycles before reset.
-MAX_SCROLL_CYCLES = 3
+MAX_SCROLL_CYCLES = 6
 
 # Step increment applied to each oscillating scroll cycle.
-SCROLL_INCREMENT_STEP = 2
+SCROLL_INCREMENT_STEP = 1
 
 # Delay between scroll intervals.
 SCROLL_INTERVAL_PAUSE = 0.100
@@ -363,7 +363,7 @@ SCROLL_DURATION = 0.300
 # Adaptive Runtime Tuning
 
 # Enables adaptive runtime timing adjustments.
-ADAPTIVE_TUNER_ENABLED = True
+ADAPTIVE_TUNER_ENABLED = False
 
 # EMA alpha used by the adaptive tuner.
 ADAPTIVE_TUNER_ALPHA = 1.0
@@ -420,7 +420,7 @@ ADAPTIVE_TUNER_MAX_SEARCH_INTERVAL = 0.3
 # Historical Learning
 
 # Enables historical learning from completed levels.
-AI_LEARNING_ENABLED = True
+AI_LEARNING_ENABLED = False
 
 # Absolute file path for persisted historical learning state.
 AI_LEARNING_STATE_FILE = str(BASE_DIR / "memory" / "learning_state_stable.json")
