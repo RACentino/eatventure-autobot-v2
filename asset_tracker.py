@@ -1,6 +1,4 @@
 import logging
-import multiprocessing
-import multiprocessing.queues
 import queue
 import threading
 import time
@@ -41,14 +39,8 @@ ASSET_TRACKING_LOOP_ITERATION_LIMIT = 2_147_483_647
 ASSET_TRACKING_OVERLAY_LOOP_ITERATION_LIMIT = 2_147_483_647
 ASSET_TRACKING_OVERLAY_QUEUE_DRAIN_LIMIT = 32
 
-# Minimum inter-frame interval for the detection worker (caps at ~30 FPS).
-# Prevents runaway CPU consumption when ASSET_TRACKING_INTERVAL is near zero.
-DETECTION_WORKER_MIN_FRAME_INTERVAL_SECONDS = 0.033
+FRAME_MIN_INTERVAL_SECONDS = 0.033
 
-# Seconds to wait for the detection worker process to stop gracefully.
-DETECTION_WORKER_STOP_TIMEOUT_SECONDS = 2.0
-
-# Maximum results drained from the detection result queue per tracker tick.
 DETECTION_RESULT_DRAIN_LIMIT = 8
 
 ASSET_CLASS_IDS = {"red_icon": 0, "upgrade_station": 1, "box": 2}
@@ -299,7 +291,6 @@ def _detection_passes_zone_check(
     frame_width: int,
     frame_height: int,
 ) -> bool:
-    """Return True when none of the three zone checks block this detection."""
     center_blocked = _point_blocked_by_forbidden_zones(
         center_x, center_y, forbidden_zones, frame_width, frame_height
     )
@@ -315,168 +306,20 @@ def _detection_passes_zone_check(
     )
 
 
-# ---------------------------------------------------------------------------
-# Detection worker subprocess — runs vision pipeline in an isolated process
-# to bypass the Python GIL entirely.
-# ---------------------------------------------------------------------------
-
-def _detection_worker_process_main(
-    window_title: str,
-    capture_max_y: int,
-    frame_queue: multiprocessing.queues.Queue,
-    result_queue: multiprocessing.queues.Queue,
-    stop_event: Any,
-    min_frame_interval: float,
-    detection_provider_function: Any,
+def _drop_and_replace_frame_queue(
+    frame_queue: queue.Queue,  # type: ignore[type-arg]
+    frame: np.ndarray,
 ) -> None:
-    """Entry point for the isolated detection subprocess.
-
-    Captures frames from the target window, runs the detection pipeline, and
-    enqueues results. Frames are captured at most once per *min_frame_interval*
-    seconds. A maxsize=1 *frame_queue* ensures only the latest frame is passed
-    to the detection pipeline; stale frames are silently dropped. Results are
-    placed on *result_queue* for the tracker thread to consume.
-    """
-    try:
-        import mss as mss_module
-        import pywinctl as pywinctl_module
-    except Exception as import_error:
-        logger.error("Detection worker cannot import capture dependencies: %s", import_error)
-        return
-
-    try:
-        screenshotter = mss_module.mss()
-    except Exception as init_error:
-        logger.error("Detection worker cannot initialise mss: %s", init_error)
-        return
-
-    last_frame_time = 0.0
-
-    for _ in range(ASSET_TRACKING_LOOP_ITERATION_LIMIT):
-        if stop_event.is_set():
-            return
-
-        now = time.monotonic()
-        elapsed_since_last_frame = now - last_frame_time
-        if elapsed_since_last_frame < min_frame_interval:
-            time.sleep(min_frame_interval - elapsed_since_last_frame)
-            continue
-
-        screenshot = _capture_worker_frame(
-            screenshotter, pywinctl_module, window_title, capture_max_y
-        )
-        if screenshot is None:
-            time.sleep(min_frame_interval)
-            continue
-
-        last_frame_time = time.monotonic()
-
-        detections = _safe_run_detection_provider(detection_provider_function, screenshot)
-        frame_height, frame_width = screenshot.shape[:2]
-
-        payload = (detections, frame_width, frame_height)
-        _drop_and_enqueue(result_queue, payload)
-
-    logger.error("Detection worker loop reached iteration limit")
-
-
-def _capture_worker_frame(
-    screenshotter: Any,
-    pywinctl_module: Any,
-    window_title: str,
-    capture_max_y: int,
-) -> np.ndarray | None:
-    """Capture a single frame in the worker process. Returns None on failure."""
-    try:
-        windows = pywinctl_module.getWindowsWithTitle(window_title) or []
-    except Exception as capture_error:
-        logger.debug("Detection worker window lookup failed: %s", capture_error)
-        return None
-
-    live_windows = [window for window in windows if _worker_window_alive(window)]
-    if not live_windows:
-        return None
-
-    target_window = None
-    for window in live_windows:
-        if getattr(window, "title", None) == window_title:
-            target_window = window
-            break
-    if target_window is None:
-        target_window = live_windows[0]
-
-    try:
-        box = target_window.box
-        window_left = int(box.left if hasattr(box, "left") else box[0])
-        window_top = int(box.top if hasattr(box, "top") else box[1])
-        window_width = int(box.width if hasattr(box, "width") else box[2])
-        window_height = int(box.height if hasattr(box, "height") else box[3])
-    except Exception as bounds_error:
-        logger.debug("Detection worker cannot read window bounds: %s", bounds_error)
-        return None
-
-    capture_height = min(window_height, int(capture_max_y))
-    if window_width <= 0 or capture_height <= 0:
-        return None
-
-    try:
-        raw_screenshot = screenshotter.grab({
-            "left": window_left,
-            "top": window_top,
-            "width": window_width,
-            "height": capture_height,
-        })
-        image_array = np.asarray(raw_screenshot)
-    except Exception as grab_error:
-        logger.debug("Detection worker frame grab failed: %s", grab_error)
-        return None
-
-    if image_array.ndim != 3 or image_array.shape[2] < 3:
-        return None
-
-    bgr_image = image_array[:, :, :3].astype(np.uint8, copy=False)
-    if not bgr_image.flags.c_contiguous:
-        bgr_image = np.ascontiguousarray(bgr_image)
-    return bgr_image
-
-
-def _worker_window_alive(window: Any) -> bool:
-    alive_attribute = getattr(window, "isAlive", None)
-    try:
-        if callable(alive_attribute):
-            return bool(alive_attribute())
-        return alive_attribute is None or bool(alive_attribute)
-    except Exception:
-        return False
-
-
-def _safe_run_detection_provider(
-    detection_provider: Any, screenshot: np.ndarray
-) -> list[AssetDetection]:
-    try:
-        result = detection_provider(screenshot)
-        return result if isinstance(result, list) else []
-    except Exception as provider_error:
-        logger.debug("Detection worker provider failed: %s", provider_error)
-        return []
-
-
-def _drop_and_enqueue(target_queue: multiprocessing.queues.Queue, payload: Any) -> None:
-    """Drain the queue and enqueue only the freshest payload."""
     for _ in range(DETECTION_RESULT_DRAIN_LIMIT):
         try:
-            target_queue.get_nowait()
+            frame_queue.get_nowait()
         except queue.Empty:
             break
     try:
-        target_queue.put_nowait(payload)
+        frame_queue.put_nowait(frame)
     except queue.Full:
         pass
 
-
-# ---------------------------------------------------------------------------
-# AssetTracker — orchestrates the worker process and applies ByteTrack locally
-# ---------------------------------------------------------------------------
 
 class AssetTracker:
     def __init__(
@@ -489,10 +332,9 @@ class AssetTracker:
         self._forbidden_zones = _configured_forbidden_zones()
         self._stop_flag = threading.Event()
         self._snapshot_lock = threading.RLock()
-        self._consumer_thread: threading.Thread | None = None
-        self._worker_process: Any | None = None
-        self._worker_stop_event: Any | None = None
-        self._result_queue: multiprocessing.queues.Queue | None = None
+        self._frame_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=1)
+        self._capture_thread: threading.Thread | None = None
+        self._detection_thread: threading.Thread | None = None
         self._snapshot = AssetTrackingSnapshot(0, 0.0, 0, 0, ())
 
     @staticmethod
@@ -528,63 +370,32 @@ class AssetTracker:
     def start(self) -> bool:
         if not config.ASSET_TRACKING_ENABLED:
             return False
-        if self._consumer_thread is not None and self._consumer_thread.is_alive():
+        if self._capture_thread is not None and self._capture_thread.is_alive():
             return True
         self._stop_flag.clear()
-        self._result_queue = self._spawn_detection_worker()
-        self._consumer_thread = threading.Thread(
-            target=self._consume_detection_results,
-            name="asset_tracker_consumer",
+        self._capture_thread = threading.Thread(
+            target=self._run_capture_thread,
+            name="asset_capture",
             daemon=True,
         )
-        self._consumer_thread.start()
-        logger.info("Asset tracker started (multiprocessing detection worker)")
+        self._detection_thread = threading.Thread(
+            target=self._run_detection_thread,
+            name="asset_detection",
+            daemon=True,
+        )
+        self._capture_thread.start()
+        self._detection_thread.start()
+        logger.info("Asset tracker started (dual-thread pipeline)")
         return True
-
-    def _spawn_detection_worker(self) -> multiprocessing.queues.Queue:
-        spawn_context = multiprocessing.get_context("spawn")
-        result_queue: multiprocessing.queues.Queue = spawn_context.Queue(maxsize=1)
-        self._worker_stop_event = spawn_context.Event()
-        min_frame_interval = max(
-            DETECTION_WORKER_MIN_FRAME_INTERVAL_SECONDS,
-            float(config.ASSET_TRACKING_INTERVAL),
-        )
-        self._worker_process = spawn_context.Process(
-            target=_detection_worker_process_main,
-            name="asset_detection_worker",
-            args=(
-                self.window_capture.window_title,
-                int(config.ASSET_TRACKING_CAPTURE_Y),
-                spawn_context.Queue(maxsize=1),
-                result_queue,
-                self._worker_stop_event,
-                min_frame_interval,
-                self.detection_provider,
-            ),
-            daemon=True,
-        )
-        self._worker_process.start()
-        return result_queue
 
     def stop(self) -> None:
         self._stop_flag.set()
-        self._stop_detection_worker()
-        if self._consumer_thread is not None and self._consumer_thread.is_alive():
-            self._consumer_thread.join(
-                timeout=float(config.ASSET_TRACKING_THREAD_JOIN_TIMEOUT)
-            )
+        join_timeout = float(config.ASSET_TRACKING_THREAD_JOIN_TIMEOUT)
+        if self._capture_thread is not None and self._capture_thread.is_alive():
+            self._capture_thread.join(timeout=join_timeout)
+        if self._detection_thread is not None and self._detection_thread.is_alive():
+            self._detection_thread.join(timeout=join_timeout)
         logger.info("Asset tracker stopped")
-
-    def _stop_detection_worker(self) -> None:
-        if self._worker_stop_event is not None:
-            self._worker_stop_event.set()
-        if self._worker_process is not None and self._worker_process.is_alive():
-            self._worker_process.join(timeout=DETECTION_WORKER_STOP_TIMEOUT_SECONDS)
-            if self._worker_process.is_alive():
-                self._worker_process.terminate()
-                self._worker_process.join(timeout=DETECTION_WORKER_STOP_TIMEOUT_SECONDS)
-        self._worker_process = None
-        self._worker_stop_event = None
 
     def reset(self) -> None:
         byte_tracker_reset = getattr(self._byte_tracker, "reset", None)
@@ -627,28 +438,105 @@ class AssetTracker:
             filtered_assets,
         )
 
-    def _consume_detection_results(self) -> None:
-        """Consumer thread: drains the result queue and applies ByteTrack."""
+    def _run_capture_thread(self) -> None:
+        screenshotter = self._create_private_screenshotter()
+        if screenshotter is None:
+            logger.error("Asset capture thread could not initialise screenshotter; exiting")
+            return
+        frame_interval = max(
+            FRAME_MIN_INTERVAL_SECONDS, float(config.ASSET_TRACKING_INTERVAL)
+        )
+        last_capture_time = 0.0
         for _ in range(ASSET_TRACKING_LOOP_ITERATION_LIMIT):
             if self._stop_flag.is_set():
                 return
-            self._drain_and_apply_latest_result()
-            if self._stop_flag.wait(timeout=0.005):
-                return
-        logger.error("Asset tracker consumer loop reached iteration limit")
+            now = time.monotonic()
+            elapsed = now - last_capture_time
+            if elapsed < frame_interval:
+                time.sleep(frame_interval - elapsed)
+                continue
+            frame = self._capture_frame(screenshotter)
+            if frame is not None:
+                _drop_and_replace_frame_queue(self._frame_queue, frame)
+                last_capture_time = time.monotonic()
+            else:
+                time.sleep(frame_interval)
+        logger.error("Asset capture thread reached iteration limit")
 
-    def _drain_and_apply_latest_result(self) -> None:
-        latest_payload: tuple[list[AssetDetection], int, int] | None = None
+    def _create_private_screenshotter(self) -> Any | None:
+        try:
+            import mss as mss_module
+            return mss_module.mss()
+        except Exception as screenshotter_error:
+            logger.error("Asset tracker cannot create screenshotter: %s", screenshotter_error)
+            return None
+
+    def _capture_frame(self, screenshotter: Any) -> np.ndarray | None:
+        try:
+            window_x, window_y, window_width, window_height = (
+                self.window_capture.get_window_rect()
+            )
+        except Exception as bounds_error:
+            logger.debug("Asset capture could not read window bounds: %s", bounds_error)
+            return None
+        capture_height = min(window_height, int(config.ASSET_TRACKING_CAPTURE_Y))
+        if window_width <= 0 or capture_height <= 0:
+            return None
+        try:
+            raw_capture = screenshotter.grab({
+                "left": window_x,
+                "top": window_y,
+                "width": window_width,
+                "height": capture_height,
+            })
+            image_array = np.asarray(raw_capture)
+        except Exception as grab_error:
+            logger.debug("Asset capture frame grab failed: %s", grab_error)
+            return None
+        if image_array.ndim != 3 or image_array.shape[2] < 3:
+            return None
+        bgr_frame = image_array[:, :, :3].astype(np.uint8, copy=False)
+        if not bgr_frame.flags.c_contiguous:
+            bgr_frame = np.ascontiguousarray(bgr_frame)
+        return bgr_frame
+
+    def _run_detection_thread(self) -> None:
+        frame_interval = max(
+            FRAME_MIN_INTERVAL_SECONDS, float(config.ASSET_TRACKING_INTERVAL)
+        )
+        for _ in range(ASSET_TRACKING_LOOP_ITERATION_LIMIT):
+            if self._stop_flag.is_set():
+                return
+            frame = self._read_latest_frame(frame_interval)
+            if frame is None:
+                continue
+            frame_height, frame_width = frame.shape[:2]
+            raw_detections = self._safe_call_detection_provider(frame)
+            self._apply_detections(raw_detections, frame_width, frame_height)
+        logger.error("Asset detection thread reached iteration limit")
+
+    def _read_latest_frame(self, timeout: float) -> np.ndarray | None:
+        latest_frame: np.ndarray | None = None
+        try:
+            latest_frame = self._frame_queue.get(timeout=timeout)
+        except queue.Empty:
+            return None
         for _ in range(DETECTION_RESULT_DRAIN_LIMIT):
             try:
-                candidate = self._result_queue.get_nowait()  # type: ignore[union-attr]
-                latest_payload = candidate
+                latest_frame = self._frame_queue.get_nowait()
             except queue.Empty:
                 break
-        if latest_payload is None:
-            return
-        raw_detections, frame_width, frame_height = latest_payload
-        self._apply_detections(raw_detections, frame_width, frame_height)
+        return latest_frame
+
+    def _safe_call_detection_provider(
+        self, frame: np.ndarray
+    ) -> list[AssetDetection]:
+        try:
+            result = self.detection_provider(frame)
+            return result if isinstance(result, list) else []
+        except Exception as provider_error:
+            logger.debug("Detection provider raised an exception: %s", provider_error)
+            return []
 
     def _apply_detections(
         self,
@@ -893,10 +781,6 @@ class AssetTracker:
         return fallback_assets
 
 
-# ---------------------------------------------------------------------------
-# Overlay subsystems (unchanged API; internal cleanup only)
-# ---------------------------------------------------------------------------
-
 class AssetTrackingOverlay:
     def __init__(self, window_capture: Any, tracker: AssetTracker) -> None:
         self.window_capture = window_capture
@@ -961,30 +845,6 @@ class AssetTrackingOverlay:
                 return
             time.sleep(refresh_seconds)
         logger.error("Asset tracking overlay feeder reached iteration limit")
-
-    def _run(self) -> None:
-        if self.payload_queue is None or self.stop_event is None:
-            return
-        _ = (configure_overlay_root, configure_overlay_canvas)
-        refresh_milliseconds = max(20, int(config.ASSET_TRACKING_OVERLAY_REFRESH_MS))
-        _run_asset_tracking_overlay_process(
-            self.window_capture.window_title,
-            self.payload_queue,
-            refresh_milliseconds,
-            self.stop_event,
-        )
-
-    def _draw(self, root: Any, canvas: Any) -> bool:
-        try:
-            _ = (position_overlay_over_rect, set_overlay_visible_regions)
-            overlay_items = _asset_overlay_payload(self.tracker.assets())
-            _draw_asset_overlay(
-                root, canvas, self.window_capture.window_title, overlay_items
-            )
-            return True
-        except Exception as draw_error:
-            logger.error("Error in asset tracking overlay loop: %s", draw_error)
-            return False
 
 
 def _run_asset_tracking_overlay_process(
@@ -1103,31 +963,6 @@ def _asset_overlay_item(asset: TrackedAsset) -> AssetOverlayItem:
     )
 
 
-def _asset_bounds(asset: TrackedAsset) -> tuple[int, int, int, int]:
-    half_width = max(1, int(asset.width)) // 2
-    half_height = max(1, int(asset.height)) // 2
-    return (
-        int(asset.center_x) - half_width,
-        int(asset.center_y) - half_height,
-        int(asset.center_x) + half_width,
-        int(asset.center_y) + half_height,
-    )
-
-
-def _asset_visible_regions(
-    assets: list[TrackedAsset],
-) -> list[tuple[int, int, int, int]]:
-    regions = []
-    for asset in assets:
-        x1, y1, x2, y2 = _asset_bounds(asset)
-        region_width = max(1, int(x2 - x1))
-        region_height = max(1, int(y2 - y1))
-        regions.extend(_outlined_regions(x1, y1, region_width, region_height, 3))
-        regions.append((int(asset.center_x) - 3, int(asset.center_y) - 3, 6, 6))
-        regions.append((x1, max(0, y1 - 18), min(180, max(48, region_width + 80)), 18))
-    return regions
-
-
 def _asset_item_bounds(item: AssetOverlayItem) -> tuple[int, int, int, int]:
     _, _, _, center_x, center_y, width, height = item
     half_width = max(1, int(width)) // 2
@@ -1176,11 +1011,6 @@ def _asset_color(asset_type: str) -> str:
         "box": config.ASSET_TRACKING_BOX_COLOR,
     }
     return str(color_map.get(asset_type, "#ffffff"))
-
-
-def _asset_label(asset: TrackedAsset) -> str:
-    track_label = f"#{asset.tracker_id}" if asset.tracker_id >= 0 else "#raw"
-    return f"{asset.asset_type} {track_label} {asset.confidence:.2f}"
 
 
 def _asset_item_label(asset_type: str, tracker_id: int, confidence: float) -> str:
