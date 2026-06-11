@@ -358,7 +358,7 @@ SCROLL_INTERVAL_PAUSE = 0.100
 POST_SCROLL_SETTLE = 0.100
 
 # Duration of each scroll drag gesture.
-SCROLL_DURATION = 0.300
+SCROLL_DURATION = 0.250
 
 
 # Adaptive Runtime Tuning
