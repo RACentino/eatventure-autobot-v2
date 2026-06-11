@@ -69,10 +69,10 @@ ASSET_TRACKING_CAPTURE_Y = 780
 ASSET_TRACKING_FRAME_RATE = 120.0
 
 # Delay between tracker capture passes.
-ASSET_TRACKING_INTERVAL = 0.001
+ASSET_TRACKING_INTERVAL = 0.0
 
 # Maximum age in seconds for tracker snapshots used by bot actions.
-ASSET_TRACKING_MAX_SNAPSHOT_AGE = 0.002
+ASSET_TRACKING_MAX_SNAPSHOT_AGE = 0.1
 
 # Maximum detections passed through each tracking frame.
 ASSET_TRACKING_MAX_DETECTIONS = 256
@@ -99,13 +99,13 @@ ASSET_TRACKING_UPGRADE_STATION_ENABLED = True
 ASSET_TRACKING_BOX_ENABLED = True
 
 # Maximum wait for the background tracker thread to stop.
-ASSET_TRACKING_THREAD_JOIN_TIMEOUT = 1.5
+ASSET_TRACKING_THREAD_JOIN_TIMEOUT = 0.1
 
 # Enables the real-time asset tracking overlay.
 ASSET_TRACKING_OVERLAY_ENABLED = False
 
 # Overlay refresh cadence in milliseconds.
-ASSET_TRACKING_OVERLAY_REFRESH_MS = 100
+ASSET_TRACKING_OVERLAY_REFRESH_MS = 20
 
 # Maximum tracked assets drawn by the overlay per refresh.
 ASSET_TRACKING_OVERLAY_MAX_ITEMS = 200
@@ -126,13 +126,13 @@ ASSET_TRACKING_BOX_COLOR = "#ffd24a"
 SCRCPY_MISS_RECOVERY_ENABLED = False
 
 # Retry delay after a red icon scan miss.
-SCRCPY_RED_ICON_MISS_RECOVERY_DELAY = 0.035
+SCRCPY_RED_ICON_MISS_RECOVERY_DELAY = 0.0
 
 # Retry delay after a box scan miss.
-SCRCPY_BOX_MISS_RECOVERY_DELAY = 0.040
+SCRCPY_BOX_MISS_RECOVERY_DELAY = 0.0
 
 # Retry delay after an upgrade station scan miss.
-SCRCPY_UPGRADE_MISS_RECOVERY_DELAY = 0.040
+SCRCPY_UPGRADE_MISS_RECOVERY_DELAY = 0.0
 
 
 # Vision Matching
@@ -189,7 +189,7 @@ NEW_LEVEL_THRESHOLD = 0.965
 RED_ICON_MIN_MATCHES = 3
 
 # Enables single-template red icon_scan mode for faster passes.
-RED_ICON_FAST_MODE_ENABLED = False
+RED_ICON_FAST_MODE_ENABLED = True
 
 # Red icon template names used when fast mode is enabled.
 RED_ICON_FAST_TEMPLATE_NAMES = (
@@ -211,10 +211,10 @@ RED_ICON_HSV_MIN_MATCH_RATIO = 0.5
 # Mouse and Action Timing
 
 # Delay after normal click actions.
-CLICK_DELAY = 0.1
+CLICK_DELAY = 0.2
 
 # Delay after cursor movement.
-MOUSE_MOVE_DELAY = 0.075
+MOUSE_MOVE_DELAY = 0.2
 
 # Duration to hold the mouse button down during click actions.
 MOUSE_DOWN_DURATION = 0.15
@@ -223,7 +223,7 @@ MOUSE_DOWN_DURATION = 0.15
 MOUSE_UP_DURATION = 0.12
 
 # Enables hover movement before click actions.
-HOVER_ENABLED = True
+HOVER_ENABLED = False
 
 # Duration for hover movement before click actions.
 HOVER_DURATION = 0.15
@@ -235,7 +235,7 @@ UPGRADE_SEARCH_INTERVAL = 0.1
 STATE_DELAY = 0.0
 
 # Settling delay before verifying an upgrade station hold target.
-UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.2
+UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.15
 
 # Maximum attempts for upgrade station verification.
 UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 8
@@ -247,10 +247,11 @@ UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.1
 CLICK_HOLD_MAX_DURATION = 10.0
 
 # Duration for stats upgrade click bursts.
-STATS_UPGRADE_CLICK_DURATION = 1.75
+STATS_UPGRADE_CLICK_DURATION = 2.0
 
 # Delay between stats upgrade click actions.
-STATS_UPGRADE_CLICK_DELAY = 0.020
+STATS_UPGRADE_CLICK_DELAY = 0.001
+
 
 # Telegram Notifications
 
@@ -264,7 +265,7 @@ TELEGRAM_BOT_TOKEN = ""
 TELEGRAM_CHAT_ID = ""
 
 # Maximum Telegram request timeout in seconds.
-TELEGRAM_CLOSE_TIMEOUT = 5.0
+TELEGRAM_CLOSE_TIMEOUT = 0.1
 
 
 # Capture Regions
@@ -381,40 +382,40 @@ ADAPTIVE_TUNER_SEARCH_LOW_THRESHOLD = 1.0
 ADAPTIVE_TUNER_SEARCH_HIGH_THRESHOLD = 0.0
 
 # Amount added to click delay after low click success.
-ADAPTIVE_TUNER_CLICK_DELAY_STEP = 0.1
+ADAPTIVE_TUNER_CLICK_DELAY_STEP = 0.0
 
 # Amount added to move delay after low click success.
-ADAPTIVE_TUNER_MOVE_DELAY_STEP = 0.1
+ADAPTIVE_TUNER_MOVE_DELAY_STEP = 0.0
 
 # Amount subtracted from click delay after high click success.
-ADAPTIVE_TUNER_CLICK_DECREMENT = 0.1
+ADAPTIVE_TUNER_CLICK_DECREMENT = 0.0
 
 # Amount subtracted from move delay after high click success.
-ADAPTIVE_TUNER_MOVE_DECREMENT = 0.1
+ADAPTIVE_TUNER_MOVE_DECREMENT = 0.0
 
 # Amount added to search interval after low search success.
-ADAPTIVE_TUNER_SEARCH_INTERVAL_STEP = 0.1
+ADAPTIVE_TUNER_SEARCH_INTERVAL_STEP = 0.0
 
 # Amount subtracted from search interval after high search success.
-ADAPTIVE_TUNER_SEARCH_DECREMENT = 0.1
+ADAPTIVE_TUNER_SEARCH_DECREMENT = 0.0
 
 # Minimum click delay allowed by adaptive tuning.
-ADAPTIVE_TUNER_MIN_CLICK_DELAY = 0.1
+ADAPTIVE_TUNER_MIN_CLICK_DELAY = 0.0
 
 # Maximum click delay allowed by adaptive tuning.
-ADAPTIVE_TUNER_MAX_CLICK_DELAY = 0.3
+ADAPTIVE_TUNER_MAX_CLICK_DELAY = 0.0
 
 # Minimum move delay allowed by adaptive tuning.
-ADAPTIVE_TUNER_MIN_MOVE_DELAY = 0.1
+ADAPTIVE_TUNER_MIN_MOVE_DELAY = 0.0
 
 # Maximum move delay allowed by adaptive tuning.
-ADAPTIVE_TUNER_MAX_MOVE_DELAY = 0.3
+ADAPTIVE_TUNER_MAX_MOVE_DELAY = 0.0
 
 # Minimum search interval allowed by adaptive tuning.
-ADAPTIVE_TUNER_MIN_SEARCH_INTERVAL = 0.1
+ADAPTIVE_TUNER_MIN_SEARCH_INTERVAL = 0.0
 
 # Maximum search interval allowed by adaptive tuning.
-ADAPTIVE_TUNER_MAX_SEARCH_INTERVAL = 0.3
+ADAPTIVE_TUNER_MAX_SEARCH_INTERVAL = 0.0
 
 
 # Historical Learning
@@ -432,10 +433,10 @@ AI_LEARNING_SAVE_INTERVAL = 0.0
 AI_LEARNING_RECORDS_LIMIT = 500
 
 # Maximum wait for the historical learning worker to stop.
-AI_LEARNING_THREAD_JOIN_TIMEOUT = 1.5
+AI_LEARNING_THREAD_JOIN_TIMEOUT = 0.1
 
 # Delay between historical learning worker passes.
-AI_LEARNING_THREAD_INTERVAL = 0.05
+AI_LEARNING_THREAD_INTERVAL = 0.0
 
 # Number of adjacent level records considered as pairs.
 AI_LEARNING_PAIR_WINDOW = 2
@@ -453,28 +454,28 @@ AI_LEARNING_PROFILE_BLEND_TOP_K = 1
 AI_LEARNING_MIN_IMPROVEMENT_RATIO = 0.0
 
 # Cooldown between learned behavior applications.
-AI_LEARNING_APPLY_COOLDOWN = 0.001
+AI_LEARNING_APPLY_COOLDOWN = 0.0
 
 # Minimum click delay allowed by historical learning.
 AI_LEARNING_MIN_CLICK_DELAY = 0.0
 
 # Maximum click delay allowed by historical learning.
-AI_LEARNING_MAX_CLICK_DELAY = 0.5
+AI_LEARNING_MAX_CLICK_DELAY = 0.0
 
 # Minimum move delay allowed by historical learning.
 AI_LEARNING_MIN_MOVE_DELAY = 0.0
 
 # Maximum move delay allowed by historical learning.
-AI_LEARNING_MAX_MOVE_DELAY = 0.5
+AI_LEARNING_MAX_MOVE_DELAY = 0.0
 
 # Minimum search interval allowed by historical learning.
 AI_LEARNING_MIN_SEARCH_INTERVAL = 0.0
 
 # Maximum search interval allowed by historical learning.
-AI_LEARNING_MAX_SEARCH_INTERVAL = 0.5
+AI_LEARNING_MAX_SEARCH_INTERVAL = 0.0
 
 # Minimum sleep between historical learning worker loops.
-LEARNING_LOOP_MIN_SLEEP = 0.05
+LEARNING_LOOP_MIN_SLEEP = 0.0
 
 
 # Forbidden Zones
