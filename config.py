@@ -489,66 +489,6 @@ FORBIDDEN_CLICK_X_MAX = 260
 # Minimum y-coordinate for the general forbidden click band.
 FORBIDDEN_CLICK_Y_MIN = 668
 
-# Minimum x-coordinate for forbidden zone 1.
-FORBIDDEN_ZONE_1_X_MIN = 290
-
-# Maximum x-coordinate for forbidden zone 1.
-FORBIDDEN_ZONE_1_X_MAX = 350
-
-# Minimum y-coordinate for forbidden zone 1.
-FORBIDDEN_ZONE_1_Y_MIN = 93
-
-# Maximum y-coordinate for forbidden zone 1.
-FORBIDDEN_ZONE_1_Y_MAX = 320
-
-# Minimum x-coordinate for forbidden zone 2.
-FORBIDDEN_ZONE_2_X_MIN = 0
-
-# Maximum x-coordinate for forbidden zone 2.
-FORBIDDEN_ZONE_2_X_MAX = 60
-
-# Minimum y-coordinate for forbidden zone 2.
-FORBIDDEN_ZONE_2_Y_MIN = 50
-
-# Maximum y-coordinate for forbidden zone 2.
-FORBIDDEN_ZONE_2_Y_MAX = 280
-
-# Minimum x-coordinate for forbidden zone 3.
-FORBIDDEN_ZONE_3_X_MIN = 0
-
-# Maximum x-coordinate for forbidden zone 3.
-FORBIDDEN_ZONE_3_X_MAX = 60
-
-# Minimum y-coordinate for forbidden zone 3.
-FORBIDDEN_ZONE_3_Y_MIN = 600
-
-# Maximum y-coordinate for forbidden zone 3.
-FORBIDDEN_ZONE_3_Y_MAX = 667
-
-# Minimum x-coordinate for forbidden zone 4.
-FORBIDDEN_ZONE_4_X_MIN = 145
-
-# Maximum x-coordinate for forbidden zone 4.
-FORBIDDEN_ZONE_4_X_MAX = 200
-
-# Minimum y-coordinate for forbidden zone 4.
-FORBIDDEN_ZONE_4_Y_MIN = 65
-
-# Maximum y-coordinate for forbidden zone 4.
-FORBIDDEN_ZONE_4_Y_MAX = 110
-
-# Minimum x-coordinate for forbidden zone 5.
-FORBIDDEN_ZONE_5_X_MIN = 55
-
-# Maximum x-coordinate for forbidden zone 5.
-FORBIDDEN_ZONE_5_X_MAX = 260
-
-# Minimum y-coordinate for forbidden zone 5.
-FORBIDDEN_ZONE_5_Y_MIN = 660
-
-# Maximum y-coordinate for forbidden zone 5.
-FORBIDDEN_ZONE_5_Y_MAX = 725
-
 NUMBERED_FORBIDDEN_ZONE_BOUNDS = (
     (290, 350, 93, 320),
     (0, 60, 50, 280),

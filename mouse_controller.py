@@ -1,73 +1,28 @@
 import logging
-import math
 import threading
-import time
 from collections.abc import Callable, Sequence
-from typing import Any, Protocol
+from typing import Any
 
 from pynput import mouse as pynput_mouse
 
 import config
+from timing import (
+    _InterruptAdapter,
+    _duration,
+    precise_sleep,
+    sleep_until,
+    wait_event,
+)
 
 logger = logging.getLogger(__name__)
 
 Point = tuple[int, int]
 WindowBounds = tuple[int, int, int, int]
 ForbiddenZone = tuple[str, int, int, int, int | None]
-MIN_SLEEP_SLICE = 0.001
-MAX_SLEEP_ITERATIONS = 120_000
 CURSOR_ATTEMPTS = 2
 CURSOR_RETRY_DELAY = 0.08
 MAX_DRAG_STEPS = 60
 MAX_STATS_UPGRADE_CLICKS = 500
-
-
-class StopEventLike(Protocol):
-    def is_set(self) -> bool: ...
-
-    def wait(self, timeout: float) -> bool: ...
-
-
-def _duration(value: Any, default: float = 0.0) -> float:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        number = float(default)
-    if not math.isfinite(number):
-        number = float(default)
-    return max(0.0, number)
-
-
-def precise_sleep(duration: Any) -> None:
-    wait_event(None, duration)
-
-
-def sleep_until(deadline: float, stop_event: StopEventLike | None = None) -> bool:
-    for _ in range(_sleep_iterations(deadline)):
-        if stop_event is not None and stop_event.is_set():
-            return False
-        remaining = deadline - time.perf_counter()
-        if remaining <= 0:
-            return stop_event is None or not stop_event.is_set()
-        if stop_event is None:
-            time.sleep(min(remaining, 0.05))
-        elif stop_event.wait(min(remaining, 0.05)):
-            return False
-    return stop_event is None or not stop_event.is_set()
-
-
-def wait_event(stop_event: StopEventLike | None, duration: Any) -> bool:
-    duration = _duration(duration)
-    if duration <= 0:
-        return stop_event is None or not stop_event.is_set()
-    return sleep_until(time.perf_counter() + duration, stop_event)
-
-
-def _sleep_iterations(deadline: float) -> int:
-    remaining = max(0.0, deadline - time.perf_counter())
-    return min(
-        MAX_SLEEP_ITERATIONS, max(1, int(math.ceil(remaining / MIN_SLEEP_SLICE)) + 3)
-    )
 
 
 def _as_bounds(bounds: Any) -> WindowBounds:
@@ -516,20 +471,6 @@ class MouseController:
         return path
 
 
-class _InterruptAdapter:
-    def __init__(self, interrupt_check: Callable[[], bool]) -> None:
-        self._interrupt_check = interrupt_check
-
-    def is_set(self) -> bool:
-        return bool(self._interrupt_check())
-
-    def wait(self, timeout: float) -> bool:
-        end_time = time.perf_counter() + max(0.0, timeout)
-        for _ in range(_sleep_iterations(end_time)):
-            if self.is_set():
-                return True
-            remaining = end_time - time.perf_counter()
-            if remaining <= 0:
-                return self.is_set()
-            time.sleep(min(remaining, 0.01))
-        return self.is_set()
+# _InterruptAdapter is defined in timing.py and re-exported here for
+# backwards-compat in case anything imports it from mouse_controller.
+__all__ = ["MouseController", "precise_sleep", "wait_event"]
