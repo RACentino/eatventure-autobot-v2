@@ -26,10 +26,6 @@ WINDOW_HEIGHT = 780
 # Enables verbose debug logging when true.
 DEBUG = False
 
-# Shows the forbidden click area overlay while the bot is running.
-SHOW_FORBIDDEN_AREA = False
-
-
 # Supervision NMS
 
 # Enables supervision-based non-max suppression globally.
@@ -101,25 +97,6 @@ ASSET_TRACKING_BOX_ENABLED = True
 # Maximum wait for the background tracker thread to stop.
 ASSET_TRACKING_THREAD_JOIN_TIMEOUT = 1.00
 
-# Enables the real-time asset tracking overlay.
-ASSET_TRACKING_OVERLAY_ENABLED = False
-
-# Overlay refresh cadence in milliseconds.
-ASSET_TRACKING_OVERLAY_REFRESH_MS = 20
-
-# Maximum tracked assets drawn by the overlay per refresh.
-ASSET_TRACKING_OVERLAY_MAX_ITEMS = 200
-
-# Overlay color for red icon detections.
-ASSET_TRACKING_RED_ICON_COLOR = "#ff4040"
-
-# Overlay color for upgrade station detections.
-ASSET_TRACKING_UPGRADE_STATION_COLOR = "#40d0ff"
-
-# Overlay color for box detections.
-ASSET_TRACKING_BOX_COLOR = "#ffd24a"
-
-
 # SCRCPY Recovery
 
 # Enables a short retry delay after SCRCPY capture misses.
@@ -130,10 +107,6 @@ SCRCPY_RED_ICON_MISS_RECOVERY_DELAY = 0.033
 
 # Retry delay after a box scan miss.
 SCRCPY_BOX_MISS_RECOVERY_DELAY = 0.033
-
-# Retry delay after an upgrade station scan miss.
-SCRCPY_UPGRADE_MISS_RECOVERY_DELAY = 0.033
-
 
 # Vision Matching
 
@@ -234,12 +207,6 @@ UPGRADE_SEARCH_INTERVAL = 0.08
 # Delay between state-machine actions.
 STATE_DELAY = 0.0
 
-# Settling delay before verifying an upgrade station hold target.
-UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.150
-
-# Maximum attempts for upgrade station verification.
-UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 5
-
 # Delay between upgrade station verification attempts.
 UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.080
 
@@ -299,10 +266,6 @@ SCROLL_START_POS = (170, 380)
 
 # Relative coordinate for the new-level button.
 NEW_LEVEL_BUTTON_POS = (30, 692)
-
-# Relative coordinate for the level transition confirmation.
-LEVEL_TRANSITION_POS = (174, 520)
-
 
 # Icon Regions and Offsets
 
@@ -438,9 +401,6 @@ AI_LEARNING_THREAD_JOIN_TIMEOUT = 1.00
 # Delay between historical learning worker passes.
 AI_LEARNING_THREAD_INTERVAL = 5.0
 
-# Number of adjacent level records considered as pairs.
-AI_LEARNING_PAIR_WINDOW = 2
-
 # Number of level records considered for a learning batch.
 AI_LEARNING_BATCH_WINDOW = 2
 
@@ -488,66 +448,6 @@ FORBIDDEN_CLICK_X_MAX = 260
 
 # Minimum y-coordinate for the general forbidden click band.
 FORBIDDEN_CLICK_Y_MIN = 668
-
-# Minimum x-coordinate for forbidden zone 1.
-FORBIDDEN_ZONE_1_X_MIN = 290
-
-# Maximum x-coordinate for forbidden zone 1.
-FORBIDDEN_ZONE_1_X_MAX = 350
-
-# Minimum y-coordinate for forbidden zone 1.
-FORBIDDEN_ZONE_1_Y_MIN = 93
-
-# Maximum y-coordinate for forbidden zone 1.
-FORBIDDEN_ZONE_1_Y_MAX = 320
-
-# Minimum x-coordinate for forbidden zone 2.
-FORBIDDEN_ZONE_2_X_MIN = 0
-
-# Maximum x-coordinate for forbidden zone 2.
-FORBIDDEN_ZONE_2_X_MAX = 60
-
-# Minimum y-coordinate for forbidden zone 2.
-FORBIDDEN_ZONE_2_Y_MIN = 50
-
-# Maximum y-coordinate for forbidden zone 2.
-FORBIDDEN_ZONE_2_Y_MAX = 280
-
-# Minimum x-coordinate for forbidden zone 3.
-FORBIDDEN_ZONE_3_X_MIN = 0
-
-# Maximum x-coordinate for forbidden zone 3.
-FORBIDDEN_ZONE_3_X_MAX = 60
-
-# Minimum y-coordinate for forbidden zone 3.
-FORBIDDEN_ZONE_3_Y_MIN = 600
-
-# Maximum y-coordinate for forbidden zone 3.
-FORBIDDEN_ZONE_3_Y_MAX = 667
-
-# Minimum x-coordinate for forbidden zone 4.
-FORBIDDEN_ZONE_4_X_MIN = 145
-
-# Maximum x-coordinate for forbidden zone 4.
-FORBIDDEN_ZONE_4_X_MAX = 200
-
-# Minimum y-coordinate for forbidden zone 4.
-FORBIDDEN_ZONE_4_Y_MIN = 65
-
-# Maximum y-coordinate for forbidden zone 4.
-FORBIDDEN_ZONE_4_Y_MAX = 110
-
-# Minimum x-coordinate for forbidden zone 5.
-FORBIDDEN_ZONE_5_X_MIN = 55
-
-# Maximum x-coordinate for forbidden zone 5.
-FORBIDDEN_ZONE_5_X_MAX = 260
-
-# Minimum y-coordinate for forbidden zone 5.
-FORBIDDEN_ZONE_5_Y_MIN = 660
-
-# Maximum y-coordinate for forbidden zone 5.
-FORBIDDEN_ZONE_5_Y_MAX = 725
 
 NUMBERED_FORBIDDEN_ZONE_BOUNDS = (
     (290, 350, 93, 320),

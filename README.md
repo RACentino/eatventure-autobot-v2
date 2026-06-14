@@ -49,13 +49,6 @@ A comprehensive logging system tracks every decision the bot makes. It includes:
 * **State Persistence**: Historical learning state is saved to JSON files, allowing the bot to retain its "knowledge" even after a restart.
 * **Performance Metrics**: Logs completion times and AI "confidence" levels for debugging.
 
-### Visual Debugging
-
-The bot provides tools for real-time calibration and transparency:
-
-* **Forbidden Zone Overlay**: When enabled, the bot draws a **semi-transparent red overlay** directly over the game window. This visualizes the "Dead Zones" where the bot is forbidden from clicking (e.g., ad menus, settings buttons), allowing for pixel-perfect configuration of the `FORBIDDEN_ZONES`.
-* **Asset Tracking Overlay**: When enabled, the bot renders real-time bounding boxes and track IDs for detected red icons, upgrade stations, and boxes in a sidecar calibration window.
-
 ### Forbidden Zone Configuration
 
 The bot utilizes a refactored **Forbidden Zone Handling** system. Zones are defined in `config.py` using relative coordinates. The bot automatically:

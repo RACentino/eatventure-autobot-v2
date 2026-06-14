@@ -159,7 +159,8 @@ class ImageMatcher:
         result = _match_template(screenshot, template, mask, template_name)
         if result is None:
             return False, 0.0, 0, 0
-        min_value, _, min_location, _ = cv2.minMaxLoc(result)
+        min_value, _, raw_min_location, _ = cv2.minMaxLoc(result)
+        min_location = (int(raw_min_location[0]), int(raw_min_location[1]))
         confidence = float(1.0 - min_value)
         if not np.isfinite(confidence) or confidence < _threshold(
             threshold, self.threshold
