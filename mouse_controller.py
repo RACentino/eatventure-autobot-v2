@@ -1,6 +1,5 @@
 import logging
 import threading
-import time
 from collections.abc import Callable, Sequence
 from typing import Any
 
