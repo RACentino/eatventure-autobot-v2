@@ -353,8 +353,10 @@ class HistoricalLearner:
 class _UpgradeStationHoldMonitor:
     def __init__(self, bot: Any, threshold: float) -> None:
         self.bot = bot
-        self.threshold = max(0.0, float(threshold) - 0.05)
-        self.interval = max(0.01, _finite_float(config.UPGRADE_STATION_VERIFY_SEARCH_INTERVAL, 0.1))
+        self.threshold = max(0.0, float(threshold))
+        self.relaxed_threshold = max(0.0, self.threshold - 0.05)
+        interval = _finite_float(config.UPGRADE_STATION_VERIFY_SEARCH_INTERVAL, 0.1)
+        self.interval = max(0.05, min(0.20, interval))
         self.next_verify_at = time.perf_counter() + self.interval
         self.station_lost = False
 
@@ -363,7 +365,12 @@ class _UpgradeStationHoldMonitor:
             return True
         if time.perf_counter() < self.next_verify_at:
             return False
-        if self.bot._find_upgrade_station(self.threshold, use_tracked=False) is None:
+        match = self.bot._verify_upgrade_station(
+            self.threshold,
+            self.relaxed_threshold,
+            wait_between_attempts=False,
+        )
+        if match is None:
             self.station_lost = True
             return True
         self.next_verify_at = time.perf_counter() + self.interval
@@ -758,6 +765,24 @@ class EatventureBot:
                 return float(confidence), int(x), int(y)
         return None
 
+    def _verify_upgrade_station(
+        self,
+        base_threshold: float,
+        relaxed_threshold: float,
+        wait_between_attempts: bool,
+    ) -> RedIcon | None:
+        attempts = max(1, int(config.UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS))
+        attempts = min(attempts, MAX_UPGRADE_SEARCH_ATTEMPTS)
+        for attempt in range(attempts):
+            threshold = base_threshold if attempt == 0 else relaxed_threshold
+            match = self._find_upgrade_station(threshold, use_tracked=False)
+            if match is not None:
+                return match
+            if wait_between_attempts and attempt < attempts - 1:
+                if not self._sleep(config.UPGRADE_STATION_VERIFY_SEARCH_INTERVAL):
+                    return None
+        return None
+
     def _upgrade_candidates(self, screenshot: Any, threshold: float) -> list[tuple[float, int, int, int, int]]:
         template_pair = self._template("upgradeStation")
         if template_pair is None:
@@ -952,7 +977,31 @@ class EatventureBot:
         if self.upgrade_station_pos is None:
             return State.OPEN_BOXES
         x, y = self.upgrade_station_pos
-        monitor = _UpgradeStationHoldMonitor(self, float(config.UPGRADE_STATION_THRESHOLD))
+        if self.mouse_controller.is_in_forbidden_zone(x, y, relative=True):
+            logger.warning("Upgrade station blocked by forbidden zone at (%s, %s)", x, y)
+            return State.OPEN_BOXES
+        clicked = self.mouse_controller.precise_click(x, y, relative=True)
+        self.tuner.record_click_result(clicked)
+        self._apply_tuning()
+        if not clicked:
+            logger.warning("Upgrade station verification click failed at (%s, %s)", x, y)
+            return State.OPEN_BOXES
+        if not self._sleep(config.UPGRADE_STATION_VERIFY_SETTLE_DELAY):
+            return State.OPEN_BOXES
+        threshold = float(config.UPGRADE_STATION_THRESHOLD)
+        match = self._verify_upgrade_station(threshold, max(0.0, threshold - 0.05), wait_between_attempts=True)
+        if match is None:
+            logger.info("Upgrade station disappeared before hold")
+            self.upgrade_station_pos = None
+            self.upgrade_found_in_cycle = False
+            self.tuner.record_search_result(False)
+            self._apply_tuning()
+            return State.OPEN_BOXES
+        _, x, y = match
+        self.upgrade_station_pos = (x, y)
+        self.tuner.record_search_result(True)
+        self._apply_tuning()
+        monitor = _UpgradeStationHoldMonitor(self, threshold)
         held = self.mouse_controller.hold_at(x, y, duration=config.CLICK_HOLD_MAX_DURATION, relative=True, interrupt_check=monitor)
         self.tuner.record_click_result(held or monitor.station_lost)
         self._apply_tuning()

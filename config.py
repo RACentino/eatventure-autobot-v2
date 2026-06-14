@@ -207,8 +207,14 @@ UPGRADE_SEARCH_INTERVAL = 0.08
 # Delay between state-machine actions.
 STATE_DELAY = 0.0
 
+# Settling delay before verifying an upgrade station hold target.
+UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.150
+
+# Maximum attempts for upgrade station verification.
+UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 2
+
 # Delay between upgrade station verification attempts.
-UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.080
+UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.75
 
 # Maximum duration for holding an upgrade station click.
 CLICK_HOLD_MAX_DURATION = 10.0
