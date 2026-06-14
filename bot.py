@@ -1315,23 +1315,43 @@ class EatventureBot:
         if found:
             logger.info("newLevel.png found at (%s, %s)", x, y)
             return State.TRANSITION_LEVEL
-        self.red_icons, _, new_level_icon = self._scan_red_icons(screenshot)
-        if (
-            not self.red_icons
-            and new_level_icon is None
-            and self._scrcpy_recovery(config.SCRCPY_RED_ICON_MISS_RECOVERY_DELAY)
-        ):
-            screenshot = self.window_capture.capture(max_y=config.EXTENDED_SEARCH_Y)
-            self.red_icons, _, new_level_icon = self._scan_red_icons(screenshot)
-        if new_level_icon is not None:
-            self._new_level_red_icon_verified = False
-            logger.info(
-                "New level red icon detected at (%s, %s) [%.3f]",
-                new_level_icon[1],
-                new_level_icon[2],
-                new_level_icon[0],
-            )
-            return State.CHECK_NEW_LEVEL
+        tracked = self._tracked_assets("red_icon")
+        if tracked:
+            new_level_icon = self._find_new_level_red_icon(screenshot)
+            if new_level_icon is not None:
+                self._new_level_red_icon_verified = False
+                logger.info(
+                    "New level red icon detected at (%s, %s) [%.3f]",
+                    new_level_icon[1],
+                    new_level_icon[2],
+                    new_level_icon[0],
+                )
+                return State.CHECK_NEW_LEVEL
+            icons: list[RedIcon] = [
+                (asset.confidence, asset.center_x, asset.center_y)
+                for asset in tracked
+            ]
+        else:
+            icons, _, new_level_icon = self._scan_red_icons(screenshot)
+            if (
+                not icons
+                and new_level_icon is None
+                and self._scrcpy_recovery(config.SCRCPY_RED_ICON_MISS_RECOVERY_DELAY)
+            ):
+                screenshot = self.window_capture.capture(
+                    max_y=config.EXTENDED_SEARCH_Y
+                )
+                icons, _, new_level_icon = self._scan_red_icons(screenshot)
+            if new_level_icon is not None:
+                self._new_level_red_icon_verified = False
+                logger.info(
+                    "New level red icon detected at (%s, %s) [%.3f]",
+                    new_level_icon[1],
+                    new_level_icon[2],
+                    new_level_icon[0],
+                )
+                return State.CHECK_NEW_LEVEL
+        self.red_icons = icons
         filtered = self._clickable_icons(self.red_icons)
         if not filtered:
             return State.OPEN_BOXES
@@ -1391,24 +1411,19 @@ class EatventureBot:
     def handle_search_upgrade_station(self, current_state: State) -> StateResult:
         base_threshold = config.UPGRADE_STATION_THRESHOLD
         relaxed_threshold = max(0.0, base_threshold - 0.05)
-        for attempt in range(5):
-            match = self._upgrade_station_match(
-                base_threshold if attempt < 2 else relaxed_threshold
-            )
-            if match is not None:
-                _, x, y = match
-                self.upgrade_station_pos = (x, y)
-                self.upgrade_found_in_cycle = True
-                self.consecutive_failed_cycles = 0
-                self.cycle_counter = 0
-                self.tuner.record_search_result(True)
-                self._apply_tuning()
-                logger.info(
-                    "Upgrade station found at (%s, %s) on attempt %s", x, y, attempt + 1
-                )
-                return State.HOLD_UPGRADE_STATION
-            if attempt < 4 and not self._sleep(self.tuner.search_interval):
-                return State.OPEN_BOXES
+        match = self._upgrade_station_match(base_threshold)
+        if match is None:
+            match = self._upgrade_station_match(relaxed_threshold)
+        if match is not None:
+            _, x, y = match
+            self.upgrade_station_pos = (x, y)
+            self.upgrade_found_in_cycle = True
+            self.consecutive_failed_cycles = 0
+            self.cycle_counter = 0
+            self.tuner.record_search_result(True)
+            self._apply_tuning()
+            logger.info("Upgrade station found at (%s, %s)", x, y)
+            return State.HOLD_UPGRADE_STATION
         self.tuner.record_search_result(False)
         self._apply_tuning()
         self.consecutive_failed_cycles += 1
@@ -1495,12 +1510,16 @@ class EatventureBot:
         )
         if found:
             return State.TRANSITION_LEVEL
-        candidates = self._box_candidates(screenshot)
-        if not candidates and self._scrcpy_recovery(
-            config.SCRCPY_BOX_MISS_RECOVERY_DELAY
-        ):
-            screenshot = self.window_capture.capture(max_y=config.BOX_SEARCH_Y)
+        tracked = self._tracked_box_candidates()
+        if tracked:
+            candidates: list[BoxCandidate] = tracked
+        else:
             candidates = self._box_candidates(screenshot)
+            if not candidates and self._scrcpy_recovery(
+                config.SCRCPY_BOX_MISS_RECOVERY_DELAY
+            ):
+                screenshot = self.window_capture.capture(max_y=config.BOX_SEARCH_Y)
+                candidates = self._box_candidates(screenshot)
         boxes_found = 0
         for _, x, y, _, _, _ in candidates:
             if not self.mouse_controller.is_in_forbidden_zone(
