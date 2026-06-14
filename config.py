@@ -223,7 +223,7 @@ MOUSE_DOWN_DURATION = 0.08
 MOUSE_UP_DURATION = 0.08
 
 # Enables hover movement before click actions.
-HOVER_ENABLED = False
+HOVER_ENABLED = True
 
 # Duration for hover movement before click actions.
 HOVER_DURATION = 0.05
@@ -286,7 +286,7 @@ BOX_SEARCH_Y = 780
 # Click Coordinates
 
 # Relative idle click coordinate used before scan actions.
-IDLE_CLICK_POS = (2, 390)
+IDLE_CLICK_POS = (2, 690)
 
 # Relative coordinate for opening the stats upgrade panel.
 STATS_UPGRADE_BUTTON_POS = (310, 698)
