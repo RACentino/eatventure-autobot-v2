@@ -871,12 +871,17 @@ class EatventureBot:
             )
         ]
 
-    def _red_icon_priority(self, icon: RedIcon) -> tuple[int, int, float]:
+    def _red_icon_priority(self, icon: RedIcon) -> tuple[int, int]:
+        """Determine priority for a red icon.
+
+        Icons near previously successful Y positions get higher priority (0),
+        others get lower priority (1). Confidence is ignored to match backup logic.
+        """
         confidence, _, y = icon
         for success_y in self.successful_red_icon_positions:
             if abs(y - success_y) < 50:
-                return 0, y, -confidence
-        return 1, y, -confidence
+                return 0, y
+        return 1, y
 
     def _remember_successful_y(self, y: int) -> None:
         if all(
