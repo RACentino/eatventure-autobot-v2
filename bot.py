@@ -708,13 +708,14 @@ class EatventureBot:
             if template_pair is None or getattr(screenshot, "size", 0) == 0:
                 continue
             template, mask = template_pair
-            matches = self.image_matcher.find_all_templates(
+            matches = self.image_matcher.find_all_color_gated_templates(
                 screenshot,
                 template,
                 mask=mask,
                 threshold=threshold,
                 min_distance=min_distance,
                 template_name=name,
+                hsv_ranges=config.RED_ICON_HSV_RANGES,
                 use_supervision_nms=self._supervision_enabled(
                     SupervisionFlag.RED_ICON_NMS
                 ),

@@ -42,6 +42,7 @@ else:
 
 ASSET_TRACKING_LOOP_ITERATION_LIMIT = 2_147_483_647
 FRAME_MIN_INTERVAL_SECONDS = 1.0 / 60.0
+DETECTION_COOLDOWN_MAX_FRAME_INTERVALS = 60.0
 
 DETECTION_RESULT_DRAIN_LIMIT = 8
 IMAGE_MIN_CHANNELS = 3
@@ -468,9 +469,32 @@ class AssetTracker:
             if frame is None:
                 continue
             frame_height, frame_width = frame.shape[:2]
+            detection_started_at = time.perf_counter()
             raw_detections = self._safe_call_detection_provider(frame)
             self._apply_detections(raw_detections, frame_width, frame_height)
+            detection_duration = time.perf_counter() - detection_started_at
+            if not self._wait_after_detection(detection_duration, frame_interval):
+                return
         logger.error("Asset detection thread reached iteration limit")
+
+    def _wait_after_detection(
+        self, detection_duration: float, frame_interval: float
+    ) -> bool:
+        cooldown_duration = self._detection_cooldown_duration(
+            detection_duration, frame_interval
+        )
+        if cooldown_duration <= 0.0:
+            return True
+        return not self._stop_flag.wait(cooldown_duration)
+
+    @staticmethod
+    def _detection_cooldown_duration(
+        detection_duration: float, frame_interval: float
+    ) -> float:
+        if detection_duration <= frame_interval:
+            return 0.0
+        maximum_cooldown = frame_interval * DETECTION_COOLDOWN_MAX_FRAME_INTERVALS
+        return min(detection_duration - frame_interval, maximum_cooldown)
 
     def _read_latest_frame(self, timeout: float) -> np.ndarray | None:
         latest_frame: np.ndarray | None = None
