@@ -10,6 +10,23 @@ from typing import Any
 import numpy as np
 
 import config
+from domain import (
+    ASSET_CLASS_IDS as DOMAIN_ASSET_CLASS_IDS,
+    ASSET_CLASS_NAMES as DOMAIN_ASSET_CLASS_NAMES,
+    AssetType,
+    asset_class_id_for,
+    asset_class_name_for,
+    asset_type_value,
+)
+from forbidden_zones import (
+    ForbiddenZone,
+    bounded_forbidden_zone,
+    box_intersects_bounds,
+    box_intersects_forbidden_zones,
+    configured_forbidden_zones,
+    point_blocked_by_forbidden_zones,
+    point_inside_bounds,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,25 +44,17 @@ ASSET_TRACKING_LOOP_ITERATION_LIMIT = 2_147_483_647
 FRAME_MIN_INTERVAL_SECONDS = 0.033
 
 DETECTION_RESULT_DRAIN_LIMIT = 8
+IMAGE_MIN_CHANNELS = 3
 
-ASSET_CLASS_IDS = {"red_icon": 0, "upgrade_station": 1, "box": 2}
-ASSET_CLASS_NAMES = {class_id: name for name, class_id in ASSET_CLASS_IDS.items()}
+ASSET_CLASS_IDS = DOMAIN_ASSET_CLASS_IDS
+ASSET_CLASS_NAMES = DOMAIN_ASSET_CLASS_NAMES
 
 AssetOverlayItem = tuple[str, int, float, int, int, int, int]
 
 
 @dataclass(frozen=True)
-class ForbiddenZone:
-    name: str
-    x_min: int
-    x_max: int
-    y_min: int
-    y_max: int | None
-
-
-@dataclass(frozen=True)
 class AssetDetection:
-    asset_type: str
+    asset_type: AssetType | str
     template_name: str
     confidence: float
     center_x: int
@@ -58,7 +67,7 @@ class AssetDetection:
 
 @dataclass(frozen=True)
 class TrackedAsset:
-    asset_type: str
+    asset_type: AssetType | str
     template_name: str
     tracker_id: int
     confidence: float
@@ -83,26 +92,7 @@ DetectionProvider = Callable[[np.ndarray], list[AssetDetection]]
 
 
 def _configured_forbidden_zones() -> tuple[ForbiddenZone, ...]:
-    base_zone = ForbiddenZone(
-        "FORBIDDEN_CLICK",
-        config.FORBIDDEN_CLICK_X_MIN,
-        config.FORBIDDEN_CLICK_X_MAX,
-        config.FORBIDDEN_CLICK_Y_MIN,
-        None,
-    )
-    numbered_zones = [
-        ForbiddenZone(
-            f"FORBIDDEN_ZONE_{zone_index}",
-            int(x_min),
-            int(x_max),
-            int(y_min),
-            int(y_max),
-        )
-        for zone_index, (x_min, x_max, y_min, y_max) in enumerate(
-            config.NUMBERED_FORBIDDEN_ZONE_BOUNDS, start=1
-        )
-    ]
-    return (base_zone, *numbered_zones)
+    return configured_forbidden_zones()
 
 
 def _candidate_xyxy(candidate: AssetDetection) -> tuple[float, float, float, float]:
@@ -201,23 +191,7 @@ def _target_coordinate(value: int | None, fallback: int) -> int:
 def _bounded_forbidden_zone(
     zone: ForbiddenZone, frame_width: int, frame_height: int
 ) -> tuple[int, int, int, int] | None:
-    if frame_width <= 0 or frame_height <= 0:
-        return None
-    raw_y_max = frame_height - 1 if zone.y_max is None else int(zone.y_max)
-    outside_frame = (
-        zone.x_max < 0
-        or zone.x_min >= frame_width
-        or raw_y_max < 0
-        or zone.y_min >= frame_height
-    )
-    if outside_frame:
-        return None
-    return (
-        max(0, zone.x_min),
-        min(frame_width - 1, zone.x_max),
-        max(0, zone.y_min),
-        min(frame_height - 1, raw_y_max),
-    )
+    return bounded_forbidden_zone(zone, frame_width, frame_height)
 
 
 def _point_blocked_by_forbidden_zones(
@@ -227,18 +201,13 @@ def _point_blocked_by_forbidden_zones(
     frame_width: int,
     frame_height: int,
 ) -> bool:
-    if not (0 <= int(x) < frame_width and 0 <= int(y) < frame_height):
-        return True
-    for zone in zones:
-        bounds = _bounded_forbidden_zone(zone, frame_width, frame_height)
-        if bounds is not None and _point_inside_bounds(int(x), int(y), bounds):
-            return True
-    return False
+    return point_blocked_by_forbidden_zones(
+        x, y, zones, frame_width, frame_height
+    )
 
 
 def _point_inside_bounds(x: int, y: int, bounds: tuple[int, int, int, int]) -> bool:
-    x_min, x_max, y_min, y_max = bounds
-    return x_min <= x <= x_max and y_min <= y <= y_max
+    return point_inside_bounds(x, y, bounds)
 
 
 def _box_intersects_forbidden_zones(
@@ -247,12 +216,7 @@ def _box_intersects_forbidden_zones(
     frame_width: int,
     frame_height: int,
 ) -> bool:
-    left, top, right, bottom = box
-    for zone in zones:
-        bounds = _bounded_forbidden_zone(zone, frame_width, frame_height)
-        if bounds is not None and _box_intersects_bounds(left, top, right, bottom, bounds):
-            return True
-    return False
+    return box_intersects_forbidden_zones(box, zones, frame_width, frame_height)
 
 
 def _box_intersects_bounds(
@@ -262,8 +226,7 @@ def _box_intersects_bounds(
     bottom: float,
     bounds: tuple[int, int, int, int],
 ) -> bool:
-    x_min, x_max, y_min, y_max = bounds
-    return left <= x_max and right >= x_min and top <= y_max and bottom >= y_min
+    return box_intersects_bounds(left, top, right, bottom, bounds)
 
 
 def _detection_passes_zone_check(
@@ -389,7 +352,7 @@ class AssetTracker:
         with self._snapshot_lock:
             self._snapshot = AssetTrackingSnapshot(0, 0.0, 0, 0, ())
 
-    def assets(self, asset_type: str | None = None) -> list[TrackedAsset]:
+    def assets(self, asset_type: AssetType | str | None = None) -> list[TrackedAsset]:
         with self._snapshot_lock:
             snapshot = self._snapshot
         snapshot_is_stale = (
@@ -403,7 +366,12 @@ class AssetTracker:
         )
         if asset_type is None:
             return filtered_assets
-        return [asset for asset in filtered_assets if asset.asset_type == asset_type]
+        requested_asset_type = asset_type_value(asset_type)
+        return [
+            asset
+            for asset in filtered_assets
+            if asset_type_value(asset.asset_type) == requested_asset_type
+        ]
 
     def snapshot(self) -> AssetTrackingSnapshot:
         with self._snapshot_lock:
@@ -478,9 +446,13 @@ class AssetTracker:
         except Exception as grab_error:
             logger.debug("Asset capture frame grab failed: %s", grab_error)
             return None
-        if image_array.ndim != 3 or image_array.shape[2] < 3:
+        if image_array.ndim != IMAGE_MIN_CHANNELS:
             return None
-        bgr_frame = image_array[:, :, :3].astype(np.uint8, copy=False)
+        if image_array.shape[2] < IMAGE_MIN_CHANNELS:
+            return None
+        bgr_frame = image_array[:, :, :IMAGE_MIN_CHANNELS].astype(
+            np.uint8, copy=False
+        )
         if not bgr_frame.flags.c_contiguous:
             bgr_frame = np.ascontiguousarray(bgr_frame)
         return bgr_frame
@@ -624,7 +596,7 @@ class AssetTracker:
             [candidate.confidence for candidate in valid_detections], dtype=np.float32
         )
         class_id_values = np.asarray(
-            [ASSET_CLASS_IDS.get(candidate.asset_type, 0) for candidate in valid_detections],
+            [asset_class_id_for(candidate.asset_type) for candidate in valid_detections],
             dtype=np.int32,
         )
         supervision_data = self._build_supervision_data(valid_detections)
@@ -639,7 +611,8 @@ class AssetTracker:
     def _build_supervision_data(detections: list[AssetDetection]) -> dict[str, Any]:
         return {
             "asset_type": np.asarray(
-                [candidate.asset_type for candidate in detections], dtype=object
+                [asset_type_value(candidate.asset_type) for candidate in detections],
+                dtype=object,
             ),
             "template_name": np.asarray(
                 [candidate.template_name for candidate in detections], dtype=object
@@ -699,7 +672,7 @@ class AssetTracker:
         class_id = _int_value(_sequence_value(class_id_array, detection_index), 0)
         asset_type = _string_value(
             _sequence_value(detection_data.get("asset_type"), detection_index),
-            ASSET_CLASS_NAMES.get(class_id, "red_icon"),
+            asset_class_name_for(class_id),
         )
         template_name = _string_value(
             _sequence_value(detection_data.get("template_name"), detection_index),

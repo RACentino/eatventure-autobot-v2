@@ -8,13 +8,20 @@ from typing import Any, Protocol
 from pynput import mouse as pynput_mouse
 
 import config
+from forbidden_zones import (
+    ForbiddenZone,
+    configured_forbidden_zones,
+    first_forbidden_zone_containing_point,
+    point_inside_forbidden_zone,
+)
 
 logger = logging.getLogger(__name__)
 
 Point = tuple[int, int]
 WindowBounds = tuple[int, int, int, int]
-ForbiddenZone = tuple[str, int, int, int, int | None]
 MIN_SLEEP_SLICE = 0.001
+SLEEP_POLL_INTERVAL_SECONDS = 0.05
+INTERRUPT_WAIT_POLL_INTERVAL_SECONDS = 0.01
 MAX_SLEEP_ITERATIONS = 120_000
 CURSOR_ATTEMPTS = 2
 CURSOR_RETRY_DELAY = 0.08
@@ -50,8 +57,8 @@ def sleep_until(deadline: float, stop_event: StopEventLike | None = None) -> boo
         if remaining <= 0:
             return stop_event is None or not stop_event.is_set()
         if stop_event is None:
-            time.sleep(min(remaining, 0.05))
-        elif stop_event.wait(min(remaining, 0.05)):
+            time.sleep(min(remaining, SLEEP_POLL_INTERVAL_SECONDS))
+        elif stop_event.wait(min(remaining, SLEEP_POLL_INTERVAL_SECONDS)):
             return False
     return stop_event is None or not stop_event.is_set()
 
@@ -89,10 +96,7 @@ def _as_bounds(bounds: Any) -> WindowBounds:
 
 
 def _inside_forbidden_zone(x: int, y: int, zone: ForbiddenZone) -> bool:
-    _, x_min, x_max, y_min, y_max = zone
-    if y_max is None:
-        return y >= y_min and x_min <= x <= x_max
-    return x_min <= x <= x_max and y_min <= y <= y_max
+    return point_inside_forbidden_zone(x, y, zone)
 
 
 class MouseController:
@@ -128,20 +132,7 @@ class MouseController:
 
     @staticmethod
     def _configured_forbidden_zones() -> list[ForbiddenZone]:
-        zones: list[ForbiddenZone] = [
-            (
-                "FORBIDDEN_CLICK",
-                config.FORBIDDEN_CLICK_X_MIN,
-                config.FORBIDDEN_CLICK_X_MAX,
-                config.FORBIDDEN_CLICK_Y_MIN,
-                None,
-            ),
-        ]
-        for index, (x_min, x_max, y_min, y_max) in enumerate(
-            config.NUMBERED_FORBIDDEN_ZONE_BOUNDS, start=1
-        ):
-            zones.append((f"FORBIDDEN_ZONE_{index}", x_min, x_max, y_min, y_max))
-        return zones
+        return list(configured_forbidden_zones())
 
     def get_cursor_position(self) -> Point:
         x, y = self._mouse.position
@@ -208,13 +199,13 @@ class MouseController:
         if position is None:
             return True
         rel_x, rel_y, _, _, _, _ = position
-        for zone in self._forbidden_zones:
-            if _inside_forbidden_zone(rel_x, rel_y, zone):
-                logger.debug(
-                    "Coordinates (%s, %s) blocked by %s", rel_x, rel_y, zone[0]
-                )
-                return True
-        return False
+        zone = first_forbidden_zone_containing_point(
+            rel_x, rel_y, self._forbidden_zones
+        )
+        if zone is None:
+            return False
+        logger.debug("Coordinates (%s, %s) blocked by %s", rel_x, rel_y, zone.name)
+        return True
 
     def _set_cursor(self, screen_x: int, screen_y: int, verify: bool = True) -> bool:
         for attempt in range(1, CURSOR_ATTEMPTS + 1):
@@ -531,5 +522,5 @@ class _InterruptAdapter:
             remaining = end_time - time.perf_counter()
             if remaining <= 0:
                 return self.is_set()
-            time.sleep(min(remaining, 0.01))
+            time.sleep(min(remaining, INTERRUPT_WAIT_POLL_INTERVAL_SECONDS))
         return self.is_set()
