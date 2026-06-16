@@ -6,6 +6,8 @@ import numpy as np
 
 _MSS_IMPORT_ERROR: Exception | None
 _PYWINCTL_IMPORT_ERROR: Exception | None
+mss: Any
+pywinctl: Any
 
 try:
     import mss
@@ -66,7 +68,9 @@ def _geometry_value(geometry: Any, names: tuple[str, ...], index: int) -> Any:
 def _bounds_from_geometry(geometry: Any) -> WindowRect:
     left = int(_geometry_value(geometry, ("left", "x"), 0))
     top = int(_geometry_value(geometry, ("top", "y"), 1))
-    if hasattr(geometry, "right") or (isinstance(geometry, dict) and "right" in geometry):
+    if hasattr(geometry, "right") or (
+        isinstance(geometry, dict) and "right" in geometry
+    ):
         right = int(_geometry_value(geometry, ("right",), 2))
         bottom = int(_geometry_value(geometry, ("bottom",), 3))
         return left, top, right - left, bottom - top
@@ -108,7 +112,9 @@ class WindowCapture:
     def _alive(window: Any) -> bool:
         alive = getattr(window, "isAlive", None)
         try:
-            return bool(alive() if callable(alive) else True if alive is None else alive)
+            return bool(
+                alive() if callable(alive) else True if alive is None else alive
+            )
         except Exception:
             return False
 
@@ -253,4 +259,7 @@ class WindowCapture:
     def close(self) -> None:
         close_screenshotter = getattr(self._screenshotter, "close", None)
         if callable(close_screenshotter):
-            close_screenshotter()
+            try:
+                close_screenshotter()
+            except Exception as exc:
+                logger.debug("Screenshot backend close failed: %s", exc)

@@ -17,9 +17,7 @@ from domain import (
     BOT_RUN_ITERATION_LIMIT,
     BOT_STATE_LOOP_SLEEP_SECONDS,
     BOX_TEMPLATE_NAMES,
-    CHECK_NEW_LEVEL_POST_CLICK_DELAY,
     CHECK_NEW_LEVEL_PRE_CLICK_DELAY,
-    CHECK_NEW_LEVEL_UPGRADE_CLICK_DELAY,
     CLICK_BUCKET_SIZE_PIXELS,
     FAILED_CYCLES_BEFORE_SCROLL,
     FAILED_CLICK_BUCKET_LIMIT,
@@ -231,7 +229,9 @@ class HistoricalLearner:
         )
         self.batch_window = max(2, int(config.AI_LEARNING_BATCH_WINDOW))
         self.top_k = max(1, int(config.AI_LEARNING_PROFILE_BLEND_TOP_K))
-        self.ema_alpha = max(0.01, min(0.8, _finite_float(config.AI_LEARNING_EMA_ALPHA)))
+        self.ema_alpha = max(
+            0.01, min(0.8, _finite_float(config.AI_LEARNING_EMA_ALPHA))
+        )
         self.min_improvement_ratio = max(
             0.0, _finite_float(config.AI_LEARNING_MIN_IMPROVEMENT_RATIO)
         )
@@ -284,9 +284,7 @@ class HistoricalLearner:
         self._last_processed_batch = max(
             0, int(state.get("last_processed_batch", 0) or 0)
         )
-        self._tuned_behavior = self.sanitize_behavior(
-            state.get("tuned_behavior", {})
-        )
+        self._tuned_behavior = self.sanitize_behavior(state.get("tuned_behavior", {}))
         if self._tuned_behavior:
             self.bot.apply_learned_behavior(self._tuned_behavior)
 
@@ -507,7 +505,9 @@ class EatventureBot:
             return templates
         for template_file in sorted(assets_path.glob("*.png"))[:MAX_TEMPLATE_FILES]:
             try:
-                templates[template_file.stem] = self.image_matcher.load_template(template_file)
+                templates[template_file.stem] = self.image_matcher.load_template(
+                    template_file
+                )
                 logger.info("Loaded template: %s", template_file.stem)
             except Exception as exc:
                 logger.error("Failed to load template %s: %s", template_file, exc)
@@ -530,8 +530,12 @@ class EatventureBot:
             self.state_machine.register_handler(state, handler)
 
     def _validate_required_templates(self) -> bool:
-        missing = [name for name in REQUIRED_TEMPLATE_NAMES if name not in self.templates]
-        if not any(name.startswith(RED_ICON_TEMPLATE_PREFIX) for name in self.templates):
+        missing = [
+            name for name in REQUIRED_TEMPLATE_NAMES if name not in self.templates
+        ]
+        if not any(
+            name.startswith(RED_ICON_TEMPLATE_PREFIX) for name in self.templates
+        ):
             missing.append(RED_ICON_MISSING_PATTERN)
         if missing:
             logger.error("Missing required templates: %s", ", ".join(missing))
@@ -571,13 +575,18 @@ class EatventureBot:
             return False
         self._step_active.set()
         try:
-            if self._stop_requested.is_set() or not self.window_capture.is_window_active():
+            if (
+                self._stop_requested.is_set()
+                or not self.window_capture.is_window_active()
+            ):
                 self.stop()
                 return False
             self._apply_tuning()
             if self.state_machine.update():
                 return True
-            logger.error("State update failed in %s", self.state_machine.get_state_name())
+            logger.error(
+                "State update failed in %s", self.state_machine.get_state_name()
+            )
         except (WindowNotAvailableError, WindowCaptureError) as exc:
             logger.error("Stopping bot: %s", exc)
         except Exception:
@@ -769,9 +778,7 @@ class EatventureBot:
         for (x, y), matches in red_icon_map.items():
             best_by_name: dict[str, float] = {}
             for name, confidence in matches:
-                best_by_name[name] = max(
-                    float(confidence), best_by_name.get(name, 0.0)
-                )
+                best_by_name[name] = max(float(confidence), best_by_name.get(name, 0.0))
             if len(best_by_name) >= min_matches:
                 name, confidence = max(best_by_name.items(), key=lambda item: item[1])
                 records.append((confidence, x, y, name))
@@ -1004,7 +1011,9 @@ class EatventureBot:
             for asset in self.asset_tracker.assets(AssetType.BOX)
         ]
 
-    def _template_box_candidates(self, screenshot: Any, name: str) -> list[BoxCandidate]:
+    def _template_box_candidates(
+        self, screenshot: Any, name: str
+    ) -> list[BoxCandidate]:
         template_pair = self._template(name)
         if template_pair is None:
             return []
@@ -1115,7 +1124,9 @@ class EatventureBot:
         self.scroll_cycle_progress = 0
 
     def _scroll(self) -> bool:
-        distance = int(round(float(config.SCROLL_PIXEL_STEP) * float(config.SCROLL_DISTANCE_RATIO)))
+        distance = int(
+            round(float(config.SCROLL_PIXEL_STEP) * float(config.SCROLL_DISTANCE_RATIO))
+        )
         start_x, start_y = config.SCROLL_START_POS
         moved = self.mouse_controller.drag(
             start_x,
@@ -1147,7 +1158,9 @@ class EatventureBot:
         self.total_levels_completed += 1
         elapsed = 0.0
         if self.current_level_start_time is not None:
-            elapsed = max(0.0, (datetime.now() - self.current_level_start_time).total_seconds())
+            elapsed = max(
+                0.0, (datetime.now() - self.current_level_start_time).total_seconds()
+            )
         self.current_level_start_time = datetime.now()
         self._reset_search_cycle()
         self.telegram.notify_new_level(self.total_levels_completed, elapsed)
@@ -1234,7 +1247,9 @@ class EatventureBot:
             threshold=config.UNLOCK_THRESHOLD,
             template_name=TemplateName.UNLOCK.value,
         )
-        if found and not self.mouse_controller.is_in_forbidden_zone(x, y, relative=True):
+        if found and not self.mouse_controller.is_in_forbidden_zone(
+            x, y, relative=True
+        ):
             logger.info("Unlock found at (%s, %s) [%.3f]", x, y, confidence)
             self.mouse_controller.click(x, y, relative=True)
         return State.SEARCH_UPGRADE_STATION
@@ -1262,9 +1277,8 @@ class EatventureBot:
                 self._apply_tuning()
                 logger.info("Upgrade station found at (%s, %s)", x, y)
                 return State.HOLD_UPGRADE_STATION
-            if (
-                attempt < MAX_UPGRADE_SEARCH_ATTEMPTS - 1
-                and not self._sleep(self.tuner.search_interval)
+            if attempt < MAX_UPGRADE_SEARCH_ATTEMPTS - 1 and not self._sleep(
+                self.tuner.search_interval
             ):
                 return State.OPEN_BOXES
         self._record_failed_click()
@@ -1354,7 +1368,9 @@ class EatventureBot:
         ):
             logger.info("No stats icon detected")
             return State.SCROLL
-        if not self.mouse_controller.click(*config.STATS_UPGRADE_BUTTON_POS, relative=True):
+        if not self.mouse_controller.click(
+            *config.STATS_UPGRADE_BUTTON_POS, relative=True
+        ):
             return State.OPEN_BOXES
         self._sleep(config.STATE_DELAY)
         clicked = self.mouse_controller.click_stats_upgrade_at(

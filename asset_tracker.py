@@ -202,9 +202,7 @@ def _point_blocked_by_forbidden_zones(
     frame_width: int,
     frame_height: int,
 ) -> bool:
-    return point_blocked_by_forbidden_zones(
-        x, y, zones, frame_width, frame_height
-    )
+    return point_blocked_by_forbidden_zones(x, y, zones, frame_width, frame_height)
 
 
 def _point_inside_bounds(x: int, y: int, bounds: tuple[int, int, int, int]) -> bool:
@@ -288,7 +286,9 @@ class AssetTracker:
 
     @staticmethod
     def available() -> bool:
-        return supervision_module is not None and hasattr(supervision_module, "ByteTrack")
+        return supervision_module is not None and hasattr(
+            supervision_module, "ByteTrack"
+        )
 
     def _create_byte_tracker(self) -> Any | None:
         if not self.available():
@@ -358,7 +358,8 @@ class AssetTracker:
             snapshot = self._snapshot
         snapshot_is_stale = (
             snapshot.timestamp <= 0
-            or time.time() - snapshot.timestamp > float(config.ASSET_TRACKING_MAX_SNAPSHOT_AGE)
+            or time.time() - snapshot.timestamp
+            > float(config.ASSET_TRACKING_MAX_SNAPSHOT_AGE)
         )
         if snapshot_is_stale:
             return []
@@ -395,34 +396,52 @@ class AssetTracker:
     def _run_capture_thread(self) -> None:
         screenshotter = self._create_private_screenshotter()
         if screenshotter is None:
-            logger.error("Asset capture thread could not initialise screenshotter; exiting")
+            logger.error(
+                "Asset capture thread could not initialise screenshotter; exiting"
+            )
             return
-        frame_interval = max(
-            FRAME_MIN_INTERVAL_SECONDS, float(config.ASSET_TRACKING_INTERVAL)
-        )
-        last_capture_time = 0.0
-        for _ in range(ASSET_TRACKING_LOOP_ITERATION_LIMIT):
-            if self._stop_flag.is_set():
-                return
-            now = time.monotonic()
-            elapsed = now - last_capture_time
-            if elapsed < frame_interval:
-                time.sleep(frame_interval - elapsed)
-                continue
-            frame = self._capture_frame(screenshotter)
-            if frame is not None:
-                _drop_and_replace_frame_queue(self._frame_queue, frame)
-                last_capture_time = time.monotonic()
-            else:
-                time.sleep(frame_interval)
-        logger.error("Asset capture thread reached iteration limit")
+        try:
+            frame_interval = max(
+                FRAME_MIN_INTERVAL_SECONDS, float(config.ASSET_TRACKING_INTERVAL)
+            )
+            last_capture_time = 0.0
+            for _ in range(ASSET_TRACKING_LOOP_ITERATION_LIMIT):
+                if self._stop_flag.is_set():
+                    return
+                now = time.monotonic()
+                elapsed = now - last_capture_time
+                if elapsed < frame_interval:
+                    time.sleep(frame_interval - elapsed)
+                    continue
+                frame = self._capture_frame(screenshotter)
+                if frame is not None:
+                    _drop_and_replace_frame_queue(self._frame_queue, frame)
+                    last_capture_time = time.monotonic()
+                else:
+                    time.sleep(frame_interval)
+            logger.error("Asset capture thread reached iteration limit")
+        finally:
+            self._close_private_screenshotter(screenshotter)
+
+    @staticmethod
+    def _close_private_screenshotter(screenshotter: Any) -> None:
+        close_screenshotter = getattr(screenshotter, "close", None)
+        if not callable(close_screenshotter):
+            return
+        try:
+            close_screenshotter()
+        except Exception as close_error:
+            logger.debug("Asset tracker screenshotter close failed: %s", close_error)
 
     def _create_private_screenshotter(self) -> Any | None:
         try:
             import mss as mss_module
+
             return mss_module.mss()
         except Exception as screenshotter_error:
-            logger.error("Asset tracker cannot create screenshotter: %s", screenshotter_error)
+            logger.error(
+                "Asset tracker cannot create screenshotter: %s", screenshotter_error
+            )
             return None
 
     def _capture_frame(self, screenshotter: Any) -> np.ndarray | None:
@@ -437,12 +456,14 @@ class AssetTracker:
         if window_width <= 0 or capture_height <= 0:
             return None
         try:
-            raw_capture = screenshotter.grab({
-                "left": window_x,
-                "top": window_y,
-                "width": window_width,
-                "height": capture_height,
-            })
+            raw_capture = screenshotter.grab(
+                {
+                    "left": window_x,
+                    "top": window_y,
+                    "width": window_width,
+                    "height": capture_height,
+                }
+            )
             image_array = np.asarray(raw_capture)
         except Exception as grab_error:
             logger.debug("Asset capture frame grab failed: %s", grab_error)
@@ -451,9 +472,7 @@ class AssetTracker:
             return None
         if image_array.shape[2] < IMAGE_MIN_CHANNELS:
             return None
-        bgr_frame = image_array[:, :, :IMAGE_MIN_CHANNELS].astype(
-            np.uint8, copy=False
-        )
+        bgr_frame = image_array[:, :, :IMAGE_MIN_CHANNELS].astype(np.uint8, copy=False)
         if not bgr_frame.flags.c_contiguous:
             bgr_frame = np.ascontiguousarray(bgr_frame)
         return bgr_frame
@@ -509,9 +528,7 @@ class AssetTracker:
                 break
         return latest_frame
 
-    def _safe_call_detection_provider(
-        self, frame: np.ndarray
-    ) -> list[AssetDetection]:
+    def _safe_call_detection_provider(self, frame: np.ndarray) -> list[AssetDetection]:
         try:
             result = self.detection_provider(frame)
             return result if isinstance(result, list) else []
@@ -529,11 +546,15 @@ class AssetTracker:
             raw_detections, frame_width, frame_height
         )
         prioritized_detections = sorted(
-            filtered_detections, key=lambda detection: detection.confidence, reverse=True
+            filtered_detections,
+            key=lambda detection: detection.confidence,
+            reverse=True,
         )[: self.max_detections]
         tracked_assets = tuple(
             self._filter_trackable_assets(
-                self._track_detections(prioritized_detections), frame_width, frame_height
+                self._track_detections(prioritized_detections),
+                frame_width,
+                frame_height,
             )
         )
         with self._snapshot_lock:
@@ -614,13 +635,17 @@ class AssetTracker:
             candidate for candidate in detections if _valid_detection(candidate)
         ]
         bounding_boxes = np.asarray(
-            [_candidate_xyxy(candidate) for candidate in valid_detections], dtype=np.float32
+            [_candidate_xyxy(candidate) for candidate in valid_detections],
+            dtype=np.float32,
         ).reshape((-1, 4))
         confidence_values = np.asarray(
             [candidate.confidence for candidate in valid_detections], dtype=np.float32
         )
         class_id_values = np.asarray(
-            [asset_class_id_for(candidate.asset_type) for candidate in valid_detections],
+            [
+                asset_class_id_for(candidate.asset_type)
+                for candidate in valid_detections
+            ],
             dtype=np.int32,
         )
         supervision_data = self._build_supervision_data(valid_detections)
@@ -676,8 +701,12 @@ class AssetTracker:
         tracker_id_array = getattr(detections, "tracker_id", None)
         tracked_assets = [
             self._build_tracked_asset(
-                detections, detection_data, confidence_array,
-                class_id_array, tracker_id_array, detection_index,
+                detections,
+                detection_data,
+                confidence_array,
+                class_id_array,
+                tracker_id_array,
+                detection_index,
             )
             for detection_index in range(min(len(detections), self.max_detections))
         ]

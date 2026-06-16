@@ -1,10 +1,11 @@
 import logging
-from typing import Any
+from typing import Any, cast
 
 import cv2
 import numpy as np
 
 _SUPERVISION_IMPORT_ERROR: Exception | None
+sv: Any
 
 try:
     import supervision as sv
@@ -27,6 +28,7 @@ HSV_REGION_MAX_COVERAGE_RATIO = 0.45
 HSV_REGION_MAX_TOTAL_AREA_RATIO = 0.70
 HSV_REGION_MERGE_PADDING_PIXELS = 2
 HSV_REGION_MINIMUM_COMPONENT_AREA = 1
+MIN_SCALED_TEMPLATE_DIMENSION = 1
 
 
 def _threshold(value: Any, default: float = 0.85) -> float:
@@ -261,7 +263,7 @@ class ImageMatcher:
             return []
         matches: list[MatchCandidate] = []
         max_score = 1.0 - _threshold(threshold, self.threshold)
-        for scale in self._valid_scales(scales):
+        for scale in self._valid_scales(scales, template.shape):
             matches.extend(
                 self._template_candidates_for_scale(
                     screenshot,
@@ -293,7 +295,9 @@ class ImageMatcher:
             template = _as_bgr(template, template_name)
             mask = _normalized_mask(mask, template.shape, template_name)
         except (ValueError, cv2.error) as exc:
-            logger.warning("[%s] Invalid color-gated match input: %s", template_name, exc)
+            logger.warning(
+                "[%s] Invalid color-gated match input: %s", template_name, exc
+            )
             return []
         matches_by_location: dict[tuple[int, int, int, int], MatchCandidate] = {}
         max_score = 1.0 - _threshold(threshold, self.threshold)
@@ -332,7 +336,7 @@ class ImageMatcher:
         left, top, right, bottom = region
         regional_screenshot = screenshot[top:bottom, left:right]
         matches: list[MatchCandidate] = []
-        for scale in self._valid_scales(scales):
+        for scale in self._valid_scales(scales, template.shape):
             for candidate in self._template_candidates_for_scale(
                 regional_screenshot,
                 template,
@@ -393,8 +397,11 @@ class ImageMatcher:
             if normalized_range is None:
                 continue
             lower, upper = normalized_range
-            combined_mask = cv2.bitwise_or(
-                combined_mask, self._hsv_mask(hsv_screenshot, lower, upper)
+            combined_mask = cast(
+                np.ndarray,
+                cv2.bitwise_or(
+                    combined_mask, self._hsv_mask(hsv_screenshot, lower, upper)
+                ),
             )
         return combined_mask
 
@@ -570,15 +577,25 @@ class ImageMatcher:
         return None
 
     @staticmethod
-    def _valid_scales(scales: list[float] | None) -> list[float]:
+    def _valid_scales(
+        scales: list[float] | None, template_shape: tuple[int, ...]
+    ) -> list[float]:
         values = [1.0] if scales is None else scales[:32]
         normalized = []
+        template_height, template_width = template_shape[:2]
         for scale in values:
             try:
                 scale = float(scale)
             except (TypeError, ValueError):
                 continue
-            if np.isfinite(scale) and scale > 0:
+            scaled_width = int(round(float(template_width) * scale))
+            scaled_height = int(round(float(template_height) * scale))
+            if (
+                np.isfinite(scale)
+                and scale > 0
+                and scaled_width >= MIN_SCALED_TEMPLATE_DIMENSION
+                and scaled_height >= MIN_SCALED_TEMPLATE_DIMENSION
+            ):
                 normalized.append(scale)
         return normalized or [1.0]
 
@@ -750,8 +767,9 @@ class ImageMatcher:
         hsv_region = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
         combined = np.zeros((height, width), dtype=np.uint8)
         for lower, upper in ranges[:32]:
-            combined = cv2.bitwise_or(
-                combined, self._hsv_mask(hsv_region, lower, upper)
+            combined = cast(
+                np.ndarray,
+                cv2.bitwise_or(combined, self._hsv_mask(hsv_region, lower, upper)),
             )
         matched_count = int(np.count_nonzero((combined > 0) & active_mask))
         return matched_count / active_count >= _threshold(hsv_match_threshold, 0.9)

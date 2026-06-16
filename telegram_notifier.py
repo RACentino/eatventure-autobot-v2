@@ -1,4 +1,5 @@
 import logging
+import math
 from typing import Any
 
 import requests
@@ -6,13 +7,27 @@ import requests
 import config
 
 logger = logging.getLogger(__name__)
+DEFAULT_TELEGRAM_REQUEST_TIMEOUT = 5.0
+MIN_TELEGRAM_REQUEST_TIMEOUT = 0.001
+
+
+def _positive_timeout(value: Any, default: float) -> float:
+    try:
+        timeout = float(value)
+    except (TypeError, ValueError):
+        timeout = float(default)
+    if not math.isfinite(timeout) or timeout <= 0:
+        timeout = float(default)
+    return max(MIN_TELEGRAM_REQUEST_TIMEOUT, timeout)
 
 
 class TelegramNotifier:
     def __init__(self, bot_token: Any, chat_id: Any, enabled: bool = True) -> None:
         self.bot_token = str(bot_token or "").strip()
         self.chat_id = str(chat_id or "").strip()
-        self.timeout = 5.0
+        self.timeout = _positive_timeout(
+            config.TELEGRAM_CLOSE_TIMEOUT, DEFAULT_TELEGRAM_REQUEST_TIMEOUT
+        )
         self.enabled = bool(enabled and self.bot_token and self.chat_id)
         self._session = requests.Session() if self.enabled else None
         logger.info("Telegram notifier %s", "enabled" if self.enabled else "disabled")
@@ -34,7 +49,7 @@ class TelegramNotifier:
             response = self._session.post(
                 f"https://api.telegram.org/bot{self.bot_token}/sendMessage",
                 json=payload,
-                timeout=max(0.0, float(config.TELEGRAM_CLOSE_TIMEOUT), self.timeout),
+                timeout=self.timeout,
             )
         except requests.RequestException as exc:
             logger.error("Error sending Telegram message: %s", exc.__class__.__name__)

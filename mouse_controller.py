@@ -438,8 +438,6 @@ class MouseController:
             if not self._click_screen(
                 screen_pos[0],
                 screen_pos[1],
-                down_duration=0.0,
-                up_duration=0.0,
                 interrupt_check=interrupt_check,
             ):
                 return None
