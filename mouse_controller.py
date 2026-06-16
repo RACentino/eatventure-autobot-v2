@@ -27,6 +27,8 @@ CURSOR_ATTEMPTS = 2
 CURSOR_RETRY_DELAY = 0.08
 MAX_DRAG_STEPS = 60
 MAX_STATS_UPGRADE_CLICKS = 500
+STATS_UPGRADE_MOUSE_DOWN_DURATION = 0.0
+STATS_UPGRADE_MOUSE_UP_DURATION = 0.0
 
 
 class StopEventLike(Protocol):
@@ -438,6 +440,8 @@ class MouseController:
             if not self._click_screen(
                 screen_pos[0],
                 screen_pos[1],
+                down_duration=STATS_UPGRADE_MOUSE_DOWN_DURATION,
+                up_duration=STATS_UPGRADE_MOUSE_UP_DURATION,
                 interrupt_check=interrupt_check,
             ):
                 return None
