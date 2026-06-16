@@ -428,13 +428,18 @@ class MouseController:
             if interrupt_check and interrupt_check():
                 return None
             target_time = start + index * click_delay
-            if target_time >= start + duration:
+            if (
+                target_time >= start + duration
+                or time.perf_counter() >= start + duration
+            ):
                 break
             if not sleep_until(target_time):
                 return None
             if not self._click_screen(
                 screen_pos[0],
                 screen_pos[1],
+                down_duration=0.0,
+                up_duration=0.0,
                 interrupt_check=interrupt_check,
             ):
                 return None

@@ -1366,7 +1366,6 @@ class EatventureBot:
         )
         if not clicked:
             return State.OPEN_BOXES
-        self._click_idle()
         logger.info("Stats upgrade completed")
         return State.OPEN_BOXES
 
