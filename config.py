@@ -273,6 +273,10 @@ SCROLL_START_POS = (170, 380)
 # Relative coordinate for the new-level button.
 NEW_LEVEL_BUTTON_POS = (30, 692)
 
+# Relative coordinate for the level transition confirmation.
+LEVEL_TRANSITION_POS = (174, 520)
+
+
 # Icon Regions and Offsets
 
 # Horizontal offset added to red icon click coordinates.

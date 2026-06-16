@@ -1423,20 +1423,28 @@ class EatventureBot:
         return State.FIND_RED_ICONS
 
     def handle_check_new_level(self, current_state: State) -> StateResult:
-        self._click_idle()
-        self._sleep(CHECK_NEW_LEVEL_PRE_CLICK_DELAY)
-        if not self.mouse_controller.click(*config.NEW_LEVEL_BUTTON_POS, relative=True):
+        idle_click_succeeded = self._click_idle()
+        if not idle_click_succeeded:
             return State.CHECK_NEW_LEVEL
-        self._sleep(CHECK_NEW_LEVEL_POST_CLICK_DELAY)
-        match = self._find_upgrade_station(config.UPGRADE_STATION_THRESHOLD)
-        if match is None:
-            logger.warning("Upgrade station not found for level transition")
-            self._reset_search_cycle()
-            return State.FIND_RED_ICONS
-        _, x, y = match
-        if not self.mouse_controller.click(x, y, relative=True):
+
+        pre_click_delay_completed = self._sleep(CHECK_NEW_LEVEL_PRE_CLICK_DELAY)
+        if not pre_click_delay_completed:
             return State.CHECK_NEW_LEVEL
-        self._sleep(CHECK_NEW_LEVEL_UPGRADE_CLICK_DELAY)
+
+        new_level_button_clicked = self.mouse_controller.click(
+            *config.NEW_LEVEL_BUTTON_POS,
+            relative=True,
+        )
+        if not new_level_button_clicked:
+            return State.CHECK_NEW_LEVEL
+
+        level_transition_confirmation_clicked = self.mouse_controller.click(
+            *config.LEVEL_TRANSITION_POS,
+            relative=True,
+        )
+        if not level_transition_confirmation_clicked:
+            return State.CHECK_NEW_LEVEL
+
         return State.TRANSITION_LEVEL
 
     def handle_transition_level(self, current_state: State) -> StateResult:
