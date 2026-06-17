@@ -314,22 +314,22 @@ UPGRADE_RED_ICON_Y_MAX = 680
 # Scrolling
 
 # Pixel distance for each scroll drag.
-SCROLL_PIXEL_STEP = 180
+SCROLL_PIXEL_STEP = 120
 
 # Multiplier applied to scroll pixel distance.
 SCROLL_DISTANCE_RATIO = 1.0
 
 # Maximum oscillating scroll cycles before reset.
-MAX_SCROLL_CYCLES = 6
+MAX_SCROLL_CYCLES = 8
 
 # Step increment applied to each oscillating scroll cycle.
 SCROLL_INCREMENT_STEP = 1
 
 # Delay between scroll intervals.
-SCROLL_INTERVAL_PAUSE = 15.0 / 60.0
+SCROLL_INTERVAL_PAUSE = 18.0 / 60.0
 
 # Settling delay after a scroll.
-POST_SCROLL_SETTLE = 15.0 / 60.0
+POST_SCROLL_SETTLE = 18.0 / 60.0
 
 # Duration of the scroll drag gesture.
 SCROLL_DURATION = 18.0 / 60.0
