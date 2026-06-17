@@ -159,10 +159,10 @@ UNLOCK_THRESHOLD = 0.905
 NEW_LEVEL_THRESHOLD = 0.965
 
 # Minimum red icon templates that must agree outside fast mode.
-RED_ICON_MIN_MATCHES = 1
+RED_ICON_MIN_MATCHES = 3
 
 # Enables single-template red icon_scan mode for faster passes.
-RED_ICON_FAST_MODE_ENABLED = False
+RED_ICON_FAST_MODE_ENABLED = True
 
 # Red icon template names used when fast mode is enabled.
 RED_ICON_FAST_TEMPLATE_NAMES = (
@@ -185,10 +185,10 @@ RED_ICON_HSV_MIN_MATCH_RATIO = 0.5
 # Mouse and Action Timing
 
 # Delay after normal click actions.
-CLICK_DELAY = 6.0/60.0
+CLICK_DELAY = 1.0/60.0
 
 # Delay after cursor movement.
-MOUSE_MOVE_DELAY = 6.0/60.0
+MOUSE_MOVE_DELAY = 1.0/60.0
 
 # Duration to hold the mouse button down during click actions.
 MOUSE_DOWN_DURATION = 9.0/60.0
