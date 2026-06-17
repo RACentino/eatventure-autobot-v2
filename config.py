@@ -100,7 +100,7 @@ ASSET_TRACKING_THREAD_JOIN_TIMEOUT = 1.0
 # SCRCPY Recovery
 
 # Enables a short retry delay after SCRCPY capture misses.
-SCRCPY_MISS_RECOVERY_ENABLED = True
+SCRCPY_MISS_RECOVERY_ENABLED = False
 
 # Retry delay after a red icon scan miss.
 SCRCPY_RED_ICON_MISS_RECOVERY_DELAY = 2.0 / 60.0
@@ -320,16 +320,16 @@ SCROLL_PIXEL_STEP = 180
 SCROLL_DISTANCE_RATIO = 1.0
 
 # Maximum oscillating scroll cycles before reset.
-MAX_SCROLL_CYCLES = 8
+MAX_SCROLL_CYCLES = 4
 
 # Step increment applied to each oscillating scroll cycle.
 SCROLL_INCREMENT_STEP = 1
 
 # Delay between scroll intervals.
-SCROLL_INTERVAL_PAUSE = 18.0 / 60.0
+SCROLL_INTERVAL_PAUSE = 9.0 / 60.0
 
 # Settling delay after a scroll.
-POST_SCROLL_SETTLE = 18.0 / 60.0
+POST_SCROLL_SETTLE = 9.0 / 60.0
 
 # Duration of the scroll drag gesture.
 SCROLL_DURATION = 18.0 / 60.0
