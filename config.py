@@ -65,10 +65,10 @@ ASSET_TRACKING_CAPTURE_Y = 780
 ASSET_TRACKING_FRAME_RATE = 60.0
 
 # Delay between tracker capture passes.
-ASSET_TRACKING_INTERVAL = 1.0 / 60.0
+ASSET_TRACKING_INTERVAL = 1.0/60.0
 
 # Maximum age in seconds for tracker snapshots used by bot actions.
-ASSET_TRACKING_MAX_SNAPSHOT_AGE = 4.0 / 60.0
+ASSET_TRACKING_MAX_SNAPSHOT_AGE = 4.0/60.0
 
 # Maximum detections passed through each tracking frame.
 ASSET_TRACKING_MAX_DETECTIONS = 256
@@ -100,13 +100,13 @@ ASSET_TRACKING_THREAD_JOIN_TIMEOUT = 1.0
 # SCRCPY Recovery
 
 # Enables a short retry delay after SCRCPY capture misses.
-SCRCPY_MISS_RECOVERY_ENABLED = False
+SCRCPY_MISS_RECOVERY_ENABLED = True
 
 # Retry delay after a red icon scan miss.
-SCRCPY_RED_ICON_MISS_RECOVERY_DELAY = 2.0 / 60.0
+SCRCPY_RED_ICON_MISS_RECOVERY_DELAY = 2.0/60.0
 
 # Retry delay after a box scan miss.
-SCRCPY_BOX_MISS_RECOVERY_DELAY = 2.0 / 60.0
+SCRCPY_BOX_MISS_RECOVERY_DELAY = 2.0/60.0
 
 # Vision Matching
 
@@ -185,37 +185,37 @@ RED_ICON_HSV_MIN_MATCH_RATIO = 0.5
 # Mouse and Action Timing
 
 # Delay after normal click actions.
-CLICK_DELAY = 6.0 / 60.0
+CLICK_DELAY = 6.0/60.0
 
 # Delay after cursor movement.
-MOUSE_MOVE_DELAY = 6.0 / 60.0
+MOUSE_MOVE_DELAY = 6.0/60.0
 
 # Duration to hold the mouse button down during click actions.
-MOUSE_DOWN_DURATION = 9.0 / 60.0
+MOUSE_DOWN_DURATION = 9.0/60.0
 
 # Delay after releasing the mouse button.
-MOUSE_UP_DURATION = 7.0 / 60.0
+MOUSE_UP_DURATION = 7.0/60.0
 
 # Enables hover movement before click actions.
 HOVER_ENABLED = True
 
 # Duration for hover movement before click actions.
-HOVER_DURATION = 1.0 / 60.0
+HOVER_DURATION = 1.0/60.0
 
 # Delay between upgrade station search attempts.
-UPGRADE_SEARCH_INTERVAL = 1.0 / 60.0
+UPGRADE_SEARCH_INTERVAL = 1.0/60.0
 
 # Delay between state-machine actions.
 STATE_DELAY = 0.0
 
 # Settling delay before verifying an upgrade station hold target.
-UPGRADE_STATION_VERIFY_SETTLE_DELAY = 9.0 / 60.0
+UPGRADE_STATION_VERIFY_SETTLE_DELAY = 9.0/60.0
 
 # Maximum attempts for upgrade station verification.
 UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 2
 
 # Delay between upgrade station verification attempts.
-UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 1.0 / 60.0
+UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 1.0/60.0
 
 # Maximum duration for holding an upgrade station click.
 CLICK_HOLD_MAX_DURATION = 10.0
@@ -224,7 +224,7 @@ CLICK_HOLD_MAX_DURATION = 10.0
 STATS_UPGRADE_CLICK_DURATION = 1.5
 
 # Delay between stats upgrade click actions.
-STATS_UPGRADE_CLICK_DELAY = 0.9 / 60.0
+STATS_UPGRADE_CLICK_DELAY = 0.9/60.0
 
 
 # Telegram Notifications
@@ -326,13 +326,13 @@ MAX_SCROLL_CYCLES = 4
 SCROLL_INCREMENT_STEP = 1
 
 # Delay between scroll intervals.
-SCROLL_INTERVAL_PAUSE = 12.0 / 60.0
+SCROLL_INTERVAL_PAUSE = 18.0/60.0
 
 # Settling delay after a scroll.
-POST_SCROLL_SETTLE = 12.0 / 60.0
+POST_SCROLL_SETTLE = 18.0/60.0
 
 # Duration of the scroll drag gesture.
-SCROLL_DURATION = 18.0 / 60.0
+SCROLL_DURATION = 18.0/60.0
 
 
 # Adaptive Runtime Tuning
