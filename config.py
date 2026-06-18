@@ -26,6 +26,8 @@ WINDOW_HEIGHT = 780
 # Enables verbose debug logging when true.
 DEBUG = False
 
+SIXTY_FPS_FRAME_DURATION_SECONDS = 1.0 / 60.0
+
 # Supervision NMS
 
 # Enables supervision-based non-max suppression globally.
@@ -61,11 +63,11 @@ ASSET_TRACKING_ENABLED = True
 # Maximum vertical capture area used by the background tracker.
 ASSET_TRACKING_CAPTURE_Y = 780
 
-# Frame rate passed to supervision ByteTrack.
-ASSET_TRACKING_FRAME_RATE = 1.0
-
 # Delay between tracker capture passes.
-ASSET_TRACKING_INTERVAL = 1.0
+ASSET_TRACKING_INTERVAL = 0.70
+
+# Frame rate passed to supervision ByteTrack.
+ASSET_TRACKING_FRAME_RATE = 1.0 / ASSET_TRACKING_INTERVAL
 
 # Maximum age in seconds for tracker snapshots used by bot actions.
 ASSET_TRACKING_MAX_SNAPSHOT_AGE = 0.75
@@ -95,7 +97,7 @@ ASSET_TRACKING_UPGRADE_STATION_ENABLED = True
 ASSET_TRACKING_BOX_ENABLED = True
 
 # Maximum wait for the background tracker thread to stop.
-ASSET_TRACKING_THREAD_JOIN_TIMEOUT = 3.0
+ASSET_TRACKING_THREAD_JOIN_TIMEOUT = 1.5
 
 # SCRCPY Recovery
 
@@ -103,10 +105,12 @@ ASSET_TRACKING_THREAD_JOIN_TIMEOUT = 3.0
 SCRCPY_MISS_RECOVERY_ENABLED = True
 
 # Retry delay after a red icon scan miss.
-SCRCPY_RED_ICON_MISS_RECOVERY_DELAY = 0.40
+SCRCPY_RED_ICON_MISS_RECOVERY_DELAY = (
+    5.0 * SIXTY_FPS_FRAME_DURATION_SECONDS
+)
 
 # Retry delay after a box scan miss.
-SCRCPY_BOX_MISS_RECOVERY_DELAY = 0.40
+SCRCPY_BOX_MISS_RECOVERY_DELAY = 5.0 * SIXTY_FPS_FRAME_DURATION_SECONDS
 
 # Vision Matching
 
@@ -185,46 +189,50 @@ RED_ICON_HSV_MIN_MATCH_RATIO = 0.5
 # Mouse and Action Timing
 
 # Delay after normal click actions.
-CLICK_DELAY = 0.20
+CLICK_DELAY = 5.0 * SIXTY_FPS_FRAME_DURATION_SECONDS
 
 # Delay after cursor movement.
-MOUSE_MOVE_DELAY = 0.08
+MOUSE_MOVE_DELAY = 2.0 * SIXTY_FPS_FRAME_DURATION_SECONDS
 
 # Duration to hold the mouse button down during click actions.
-MOUSE_DOWN_DURATION = 0.12
+MOUSE_DOWN_DURATION = 3.0 * SIXTY_FPS_FRAME_DURATION_SECONDS
 
 # Delay after releasing the mouse button.
-MOUSE_UP_DURATION = 0.18
+MOUSE_UP_DURATION = 3.0 * SIXTY_FPS_FRAME_DURATION_SECONDS
 
 # Enables hover movement before click actions.
 HOVER_ENABLED = True
 
 # Duration for hover movement before click actions.
-HOVER_DURATION = 0.05
+HOVER_DURATION = SIXTY_FPS_FRAME_DURATION_SECONDS
 
 # Delay between upgrade station search attempts.
-UPGRADE_SEARCH_INTERVAL = 0.30
+UPGRADE_SEARCH_INTERVAL = 5.0 * SIXTY_FPS_FRAME_DURATION_SECONDS
 
 # Delay between state-machine actions.
-STATE_DELAY = 0.50
+STATE_DELAY = 9.0 * SIXTY_FPS_FRAME_DURATION_SECONDS
 
 # Settling delay before verifying an upgrade station hold target.
-UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.50
+UPGRADE_STATION_VERIFY_SETTLE_DELAY = (
+    9.0 * SIXTY_FPS_FRAME_DURATION_SECONDS
+)
 
 # Maximum attempts for upgrade station verification.
 UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 3
 
 # Delay between upgrade station verification attempts.
-UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.25
+UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = (
+    4.0 * SIXTY_FPS_FRAME_DURATION_SECONDS
+)
 
 # Maximum duration for holding an upgrade station click.
-CLICK_HOLD_MAX_DURATION = 12.0
+CLICK_HOLD_MAX_DURATION = 10.0
 
 # Duration for stats upgrade click bursts.
-STATS_UPGRADE_CLICK_DURATION = 2.0
+STATS_UPGRADE_CLICK_DURATION = 90.0 * SIXTY_FPS_FRAME_DURATION_SECONDS
 
 # Delay between stats upgrade click actions.
-STATS_UPGRADE_CLICK_DELAY = 0.10
+STATS_UPGRADE_CLICK_DELAY = 4.0 * SIXTY_FPS_FRAME_DURATION_SECONDS
 
 
 # Telegram Notifications
@@ -239,7 +247,7 @@ TELEGRAM_BOT_TOKEN = ""
 TELEGRAM_CHAT_ID = ""
 
 # Maximum Telegram request timeout in seconds.
-TELEGRAM_CLOSE_TIMEOUT = 3.0
+TELEGRAM_CLOSE_TIMEOUT = 1.5
 
 
 # Capture Regions
@@ -356,40 +364,40 @@ ADAPTIVE_TUNER_SEARCH_LOW_THRESHOLD = 1.0
 ADAPTIVE_TUNER_SEARCH_HIGH_THRESHOLD = 0.0
 
 # Amount added to click delay after low click success.
-ADAPTIVE_TUNER_CLICK_DELAY_STEP = 0.025
+ADAPTIVE_TUNER_CLICK_DELAY_STEP = SIXTY_FPS_FRAME_DURATION_SECONDS
 
 # Amount added to move delay after low click success.
-ADAPTIVE_TUNER_MOVE_DELAY_STEP = 0.010
+ADAPTIVE_TUNER_MOVE_DELAY_STEP = 0.5 * SIXTY_FPS_FRAME_DURATION_SECONDS
 
 # Amount subtracted from click delay after high click success.
-ADAPTIVE_TUNER_CLICK_DECREMENT = 0.010
+ADAPTIVE_TUNER_CLICK_DECREMENT = 0.5 * SIXTY_FPS_FRAME_DURATION_SECONDS
 
 # Amount subtracted from move delay after high click success.
-ADAPTIVE_TUNER_MOVE_DECREMENT = 0.005
+ADAPTIVE_TUNER_MOVE_DECREMENT = 0.25 * SIXTY_FPS_FRAME_DURATION_SECONDS
 
 # Amount added to search interval after low search success.
-ADAPTIVE_TUNER_SEARCH_INTERVAL_STEP = 0.050
+ADAPTIVE_TUNER_SEARCH_INTERVAL_STEP = SIXTY_FPS_FRAME_DURATION_SECONDS
 
 # Amount subtracted from search interval after high search success.
-ADAPTIVE_TUNER_SEARCH_DECREMENT = 0.025
+ADAPTIVE_TUNER_SEARCH_DECREMENT = 0.5 * SIXTY_FPS_FRAME_DURATION_SECONDS
 
 # Minimum click delay allowed by adaptive tuning.
-ADAPTIVE_TUNER_MIN_CLICK_DELAY = 0.15
+ADAPTIVE_TUNER_MIN_CLICK_DELAY = 4.0 * SIXTY_FPS_FRAME_DURATION_SECONDS
 
 # Maximum click delay allowed by adaptive tuning.
-ADAPTIVE_TUNER_MAX_CLICK_DELAY = 0.35
+ADAPTIVE_TUNER_MAX_CLICK_DELAY = 8.0 * SIXTY_FPS_FRAME_DURATION_SECONDS
 
 # Minimum move delay allowed by adaptive tuning.
-ADAPTIVE_TUNER_MIN_MOVE_DELAY = 0.06
+ADAPTIVE_TUNER_MIN_MOVE_DELAY = SIXTY_FPS_FRAME_DURATION_SECONDS
 
 # Maximum move delay allowed by adaptive tuning.
-ADAPTIVE_TUNER_MAX_MOVE_DELAY = 0.15
+ADAPTIVE_TUNER_MAX_MOVE_DELAY = 4.0 * SIXTY_FPS_FRAME_DURATION_SECONDS
 
 # Minimum search interval allowed by adaptive tuning.
-ADAPTIVE_TUNER_MIN_SEARCH_INTERVAL = 0.20
+ADAPTIVE_TUNER_MIN_SEARCH_INTERVAL = 4.0 * SIXTY_FPS_FRAME_DURATION_SECONDS
 
 # Maximum search interval allowed by adaptive tuning.
-ADAPTIVE_TUNER_MAX_SEARCH_INTERVAL = 0.50
+ADAPTIVE_TUNER_MAX_SEARCH_INTERVAL = 10.0 * SIXTY_FPS_FRAME_DURATION_SECONDS
 
 
 # Historical Learning
@@ -401,16 +409,16 @@ AI_LEARNING_ENABLED = False
 AI_LEARNING_STATE_FILE = str(BASE_DIR / "memory" / "learning_state_stable.json")
 
 # Minimum interval between historical learning state saves.
-AI_LEARNING_SAVE_INTERVAL = 60.0
+AI_LEARNING_SAVE_INTERVAL = 30.0
 
 # Maximum historical learning records kept in memory and persisted state.
 AI_LEARNING_RECORDS_LIMIT = 500
 
 # Maximum wait for the historical learning worker to stop.
-AI_LEARNING_THREAD_JOIN_TIMEOUT = 2.0
+AI_LEARNING_THREAD_JOIN_TIMEOUT = 1.0
 
 # Delay between historical learning worker passes.
-AI_LEARNING_THREAD_INTERVAL = 10.0
+AI_LEARNING_THREAD_INTERVAL = 5.0
 
 # Number of level records considered for a learning batch.
 AI_LEARNING_BATCH_WINDOW = 2
@@ -425,28 +433,28 @@ AI_LEARNING_PROFILE_BLEND_TOP_K = 1
 AI_LEARNING_MIN_IMPROVEMENT_RATIO = 0.0
 
 # Cooldown between learned behavior applications.
-AI_LEARNING_APPLY_COOLDOWN = 120.0
+AI_LEARNING_APPLY_COOLDOWN = 30.0
 
 # Minimum click delay allowed by historical learning.
-AI_LEARNING_MIN_CLICK_DELAY = 0.15
+AI_LEARNING_MIN_CLICK_DELAY = 4.0 * SIXTY_FPS_FRAME_DURATION_SECONDS
 
 # Maximum click delay allowed by historical learning.
-AI_LEARNING_MAX_CLICK_DELAY = 0.35
+AI_LEARNING_MAX_CLICK_DELAY = 8.0 * SIXTY_FPS_FRAME_DURATION_SECONDS
 
 # Minimum move delay allowed by historical learning.
-AI_LEARNING_MIN_MOVE_DELAY = 0.06
+AI_LEARNING_MIN_MOVE_DELAY = SIXTY_FPS_FRAME_DURATION_SECONDS
 
 # Maximum move delay allowed by historical learning.
-AI_LEARNING_MAX_MOVE_DELAY = 0.15
+AI_LEARNING_MAX_MOVE_DELAY = 4.0 * SIXTY_FPS_FRAME_DURATION_SECONDS
 
 # Minimum search interval allowed by historical learning.
-AI_LEARNING_MIN_SEARCH_INTERVAL = 0.20
+AI_LEARNING_MIN_SEARCH_INTERVAL = 4.0 * SIXTY_FPS_FRAME_DURATION_SECONDS
 
 # Maximum search interval allowed by historical learning.
-AI_LEARNING_MAX_SEARCH_INTERVAL = 0.50
+AI_LEARNING_MAX_SEARCH_INTERVAL = 10.0 * SIXTY_FPS_FRAME_DURATION_SECONDS
 
 # Minimum sleep between historical learning worker loops.
-LEARNING_LOOP_MIN_SLEEP = 2.0
+LEARNING_LOOP_MIN_SLEEP = 1.0
 
 
 # Forbidden Zones
