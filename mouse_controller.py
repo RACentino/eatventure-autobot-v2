@@ -29,6 +29,9 @@ MAX_DRAG_STEPS = 60
 MAX_STATS_UPGRADE_CLICKS = 500
 STATS_UPGRADE_MOUSE_DOWN_DURATION = 0.0
 STATS_UPGRADE_MOUSE_UP_DURATION = 0.0
+MINIMUM_PHYSICAL_INPUT_EVENT_INTERVAL_SECONDS = (
+    config.SIXTY_FPS_FRAME_DURATION_SECONDS
+)
 
 
 class StopEventLike(Protocol):
@@ -129,6 +132,7 @@ class MouseController:
             config.HOVER_DURATION if hover_duration is None else hover_duration
         )
         self._input_lock = threading.RLock()
+        self._physical_input_event_governor = _PhysicalInputEventGovernor()
         self._left_button_is_down = False
         self._forbidden_zones = self._configured_forbidden_zones()
 
@@ -212,6 +216,7 @@ class MouseController:
     def _set_cursor(self, screen_x: int, screen_y: int, verify: bool = True) -> bool:
         for attempt in range(1, CURSOR_ATTEMPTS + 1):
             try:
+                self._physical_input_event_governor.wait_for_next_dispatch()
                 self._mouse.position = (int(screen_x), int(screen_y))
                 if not verify:
                     return True
@@ -235,6 +240,7 @@ class MouseController:
         self, action_name: str, action: Callable[[], Any], x: int, y: int
     ) -> bool:
         try:
+            self._physical_input_event_governor.wait_for_next_dispatch()
             action()
             return True
         except Exception as exc:
@@ -529,3 +535,25 @@ class _InterruptAdapter:
                 return self.is_set()
             time.sleep(min(remaining, INTERRUPT_WAIT_POLL_INTERVAL_SECONDS))
         return self.is_set()
+
+
+class _PhysicalInputEventGovernor:
+    def __init__(self) -> None:
+        self._minimum_interval_seconds = (
+            MINIMUM_PHYSICAL_INPUT_EVENT_INTERVAL_SECONDS
+        )
+        self._next_dispatch_time = 0.0
+        self._dispatch_lock = threading.Lock()
+
+    def wait_for_next_dispatch(self) -> None:
+        with self._dispatch_lock:
+            remaining = self._next_dispatch_time - time.perf_counter()
+            if remaining > 0:
+                precise_sleep(remaining)
+            dispatch_time = time.perf_counter()
+            self._next_dispatch_time = (
+                dispatch_time + self._minimum_interval_seconds
+            )
+
+    def get_minimum_interval_seconds(self) -> float:
+        return self._minimum_interval_seconds
