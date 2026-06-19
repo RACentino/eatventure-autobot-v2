@@ -62,7 +62,7 @@ ASSET_TRACKING_ENABLED = True
 ASSET_TRACKING_CAPTURE_Y = 780
 
 # Delay between tracker capture passes.
-ASSET_TRACKING_INTERVAL = 0.70
+ASSET_TRACKING_INTERVAL = 0.7
 
 # Frame rate passed to supervision ByteTrack.
 ASSET_TRACKING_FRAME_RATE = 1.43
@@ -221,7 +221,7 @@ UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.067
 CLICK_HOLD_MAX_DURATION = 10.0
 
 # Duration for stats upgrade click bursts.
-STATS_UPGRADE_CLICK_DURATION = 1.5
+STATS_UPGRADE_CLICK_DURATION = 3.0
 
 # Delay between stats upgrade click actions.
 STATS_UPGRADE_CLICK_DELAY = 0.067
@@ -326,13 +326,13 @@ MAX_SCROLL_CYCLES = 6
 SCROLL_INCREMENT_STEP = 1
 
 # Delay between scroll intervals.
-SCROLL_INTERVAL_PAUSE = 0.100
+SCROLL_INTERVAL_PAUSE = 0.1
 
 # Settling delay after a scroll.
-POST_SCROLL_SETTLE = 0.100
+POST_SCROLL_SETTLE = 0.1
 
 # Duration of the scroll drag gesture.
-SCROLL_DURATION = 0.300
+SCROLL_DURATION = 0.3
 
 
 # Adaptive Runtime Tuning
