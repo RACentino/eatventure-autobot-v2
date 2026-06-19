@@ -191,10 +191,10 @@ CLICK_DELAY = 0.083
 MOUSE_MOVE_DELAY = 0.033
 
 # Duration to hold the mouse button down during click actions.
-MOUSE_DOWN_DURATION = 0.15
+MOUSE_DOWN_DURATION = 0.05
 
 # Delay after releasing the mouse button.
-MOUSE_UP_DURATION = 0.12
+MOUSE_UP_DURATION = 0.033
 
 # Enables hover movement before click actions.
 HOVER_ENABLED = True
