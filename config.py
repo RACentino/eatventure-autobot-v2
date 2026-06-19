@@ -162,7 +162,7 @@ NEW_LEVEL_THRESHOLD = 0.965
 RED_ICON_MIN_MATCHES = 3
 
 # Enables single-template red icon_scan mode for faster passes.
-RED_ICON_FAST_MODE_ENABLED = False
+RED_ICON_FAST_MODE_ENABLED = True
 
 # Red icon template names used when fast mode is enabled.
 RED_ICON_FAST_TEMPLATE_NAMES = (
@@ -460,7 +460,7 @@ FORBIDDEN_CLICK_X_MAX = 260
 FORBIDDEN_CLICK_Y_MIN = 668
 
 NUMBERED_FORBIDDEN_ZONE_BOUNDS = (
-    (290, 350, 93, 270),
+    (290, 350, 93, 320),
     (0, 60, 50, 280),
     (0, 60, 600, 667),
     (145, 200, 65, 110),
