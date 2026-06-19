@@ -162,7 +162,7 @@ NEW_LEVEL_THRESHOLD = 0.965
 RED_ICON_MIN_MATCHES = 3
 
 # Enables single-template red icon_scan mode for faster passes.
-RED_ICON_FAST_MODE_ENABLED = True
+RED_ICON_FAST_MODE_ENABLED = False
 
 # Red icon template names used when fast mode is enabled.
 RED_ICON_FAST_TEMPLATE_NAMES = (
@@ -179,7 +179,7 @@ RED_ICON_HSV_RANGES = (
     ((174, 110, 190), (179, 255, 255)),
 )
 
-RED_ICON_HSV_MIN_MATCH_RATIO = 0.5
+RED_ICON_HSV_MIN_MATCH_RATIO = 0.6
 
 # Mouse and Action Timing
 
