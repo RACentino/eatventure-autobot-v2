@@ -65,6 +65,7 @@ RedIcon = tuple[float, int, int]
 RedIconRecord = tuple[float, int, int, str]
 BoxCandidate = tuple[float, int, int, int, int, str]
 StateResult = State | None
+UPWARD_OSCILLATING_SCROLL_DIRECTION = -1
 
 
 def _finite_float(value: Any, default: float = 0.0) -> float:
@@ -1154,6 +1155,32 @@ class EatventureBot:
                     self.scroll_cycle_index += 1
         return True
 
+    def _perform_upward_verification_scroll(self) -> bool:
+        original_scroll_direction = self.scroll_direction
+        original_scroll_cycle_index = self.scroll_cycle_index
+        original_scroll_cycle_progress = self.scroll_cycle_progress
+        try:
+            self.scroll_direction = UPWARD_OSCILLATING_SCROLL_DIRECTION
+            return self._scroll()
+        finally:
+            self.scroll_direction = original_scroll_direction
+            self.scroll_cycle_index = original_scroll_cycle_index
+            self.scroll_cycle_progress = original_scroll_cycle_progress
+
+    def _find_new_level_red_icon(self) -> RedIcon | None:
+        screenshot = self.window_capture.capture(max_y=config.EXTENDED_SEARCH_Y)
+        new_level_red_icon_zone = (
+            config.NEW_LEVEL_RED_ICON_X_MIN,
+            config.NEW_LEVEL_RED_ICON_X_MAX,
+            config.NEW_LEVEL_RED_ICON_Y_MIN,
+            config.NEW_LEVEL_RED_ICON_Y_MAX,
+        )
+        return self._find_zone_red_icon(
+            screenshot,
+            new_level_red_icon_zone,
+            config.NEW_LEVEL_RED_ICON_THRESHOLD,
+        )
+
     def _record_level_completion(self, source: str) -> float:
         self.total_levels_completed += 1
         elapsed = 0.0
@@ -1445,6 +1472,18 @@ class EatventureBot:
         pre_click_delay_completed = self._sleep(CHECK_NEW_LEVEL_PRE_CLICK_DELAY)
         if not pre_click_delay_completed:
             return State.CHECK_NEW_LEVEL
+
+        verification_scroll_completed = self._perform_upward_verification_scroll()
+        if not verification_scroll_completed:
+            return State.CHECK_NEW_LEVEL
+
+        verified_new_level_red_icon = self._find_new_level_red_icon()
+        if verified_new_level_red_icon is None:
+            logger.info(
+                "New level red icon disappeared after verification scroll; "
+                "resuming main flow"
+            )
+            return State.FIND_RED_ICONS
 
         new_level_button_clicked = self.mouse_controller.click(
             *config.NEW_LEVEL_BUTTON_POS,
