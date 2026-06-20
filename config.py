@@ -220,7 +220,7 @@ UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.067
 CLICK_HOLD_MAX_DURATION = 10.0
 
 # Duration for stats upgrade click bursts.
-STATS_UPGRADE_CLICK_DURATION = 3.0
+STATS_UPGRADE_CLICK_DURATION = 2.25
 
 # Delay between stats upgrade click actions.
 STATS_UPGRADE_CLICK_DELAY = 0.067
@@ -319,10 +319,10 @@ SCROLL_PIXEL_STEP = 120
 SCROLL_DISTANCE_RATIO = 1.0
 
 # Maximum oscillating scroll cycles before reset.
-MAX_SCROLL_CYCLES = 6
+MAX_SCROLL_CYCLES = 4
 
 # Step increment applied to each oscillating scroll cycle.
-SCROLL_INCREMENT_STEP = 1
+SCROLL_INCREMENT_STEP = 2
 
 # Delay between scroll intervals.
 SCROLL_INTERVAL_PAUSE = 0.1
@@ -331,7 +331,7 @@ SCROLL_INTERVAL_PAUSE = 0.1
 POST_SCROLL_SETTLE = 0.1
 
 # Duration of the scroll drag gesture.
-SCROLL_DURATION = 0.200
+SCROLL_DURATION = 0.150
 
 
 # Adaptive Runtime Tuning
