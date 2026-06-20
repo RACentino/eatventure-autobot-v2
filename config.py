@@ -114,7 +114,7 @@ SCRCPY_BOX_MISS_RECOVERY_DELAY = 0.083
 MATCH_THRESHOLD = 0.98
 
 # Template confidence threshold for red icon scans.
-RED_ICON_THRESHOLD = 0.94
+RED_ICON_THRESHOLD = 0.95
 
 # Template confidence threshold for new-level red icon validation.
 NEW_LEVEL_RED_ICON_THRESHOLD = 0.950
@@ -175,11 +175,11 @@ RED_ICON_FAST_TEMPLATE_NAMES = (
 RED_ICON_FAST_MIN_DISTANCE = 64
 
 RED_ICON_HSV_RANGES = (
-    ((0, 110, 190), (12, 255, 255)),
-    ((174, 110, 190), (179, 255, 255)),
+    ((0, 100, 180), (15, 255, 255)),
+    ((170, 100, 180), (179, 255, 255)),
 )
 
-RED_ICON_HSV_MIN_MATCH_RATIO = 0.6
+RED_ICON_HSV_MIN_MATCH_RATIO = 0.4
 
 # Mouse and Action Timing
 
