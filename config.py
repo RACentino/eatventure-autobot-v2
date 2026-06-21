@@ -168,7 +168,7 @@ NEW_LEVEL_THRESHOLD = 0.965
 RED_ICON_MIN_MATCHES = 3
 
 # Enables single-template red icon_scan mode for faster passes.
-RED_ICON_FAST_MODE_ENABLED = False
+RED_ICON_FAST_MODE_ENABLED = True
 
 # Red icon template names used when fast mode is enabled.
 RED_ICON_FAST_TEMPLATE_NAMES = (
@@ -178,7 +178,7 @@ RED_ICON_FAST_TEMPLATE_NAMES = (
 )
 
 # Minimum pixel distance between fast-mode red icon matches.
-RED_ICON_FAST_MIN_DISTANCE = 32
+RED_ICON_FAST_MIN_DISTANCE = 64
 
 RED_ICON_HSV_RANGES = (
     ((0, 140, 200), (8, 255, 255)),
@@ -227,7 +227,7 @@ UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.1
 CLICK_HOLD_MAX_DURATION = 9.0
 
 # Duration for stats upgrade click bursts.
-STATS_UPGRADE_CLICK_DURATION = 2.25
+STATS_UPGRADE_CLICK_DURATION = 1.5
 
 # Delay between stats upgrade click actions.
 STATS_UPGRADE_CLICK_DELAY = 0.067
@@ -343,7 +343,7 @@ SCROLL_INTERVAL_PAUSE = 0.1
 POST_SCROLL_SETTLE = 0.1
 
 # Duration of the scroll drag gesture.
-SCROLL_DURATION = 0.300
+SCROLL_DURATION = 0.3
 
 
 
