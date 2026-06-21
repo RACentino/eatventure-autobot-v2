@@ -7,6 +7,7 @@ ASSETS_DIR = "assets"
 LOGS_DIR = "logs"
 
 
+
 # Window and Logging
 
 # Exact desktop window title that the automation targets.
@@ -21,9 +22,9 @@ WINDOW_HEIGHT = 780
 # Enables verbose debug logging when true.
 DEBUG = False
 
-# Duration of a single frame at 60 FPS. Used as the base unit for
-# input-event timing so physical dispatch matches display refresh rate.
+# Duration of a single frame at 60 FPS. Used as the base unit for input-event timing so physical dispatch matches display refresh rate.
 SIXTY_FPS_FRAME_DURATION_SECONDS = 0.017
+
 
 
 # Supervision NMS
@@ -51,6 +52,7 @@ SUPERVISION_RED_ICON_NMS_IOU_THRESHOLD = 0.20
 
 # IoU threshold for supervision NMS on upgrade station detections.
 SUPERVISION_UPGRADE_STATION_NMS_IOU_THRESHOLD = 0.20
+
 
 
 # ByteTrack Asset Tracking
@@ -97,6 +99,8 @@ ASSET_TRACKING_BOX_ENABLED = True
 # Maximum wait for the background tracker thread to stop.
 ASSET_TRACKING_THREAD_JOIN_TIMEOUT = 1.5
 
+
+
 # SCRCPY Recovery
 
 # Enables a short retry delay after SCRCPY capture misses.
@@ -107,6 +111,8 @@ SCRCPY_RED_ICON_MISS_RECOVERY_DELAY = 0.083
 
 # Retry delay after a box scan miss.
 SCRCPY_BOX_MISS_RECOVERY_DELAY = 0.083
+
+
 
 # Vision Matching
 
@@ -170,11 +176,11 @@ RED_ICON_FAST_TEMPLATE_NAMES = (
 )
 
 # Minimum pixel distance between fast-mode red icon matches.
-RED_ICON_FAST_MIN_DISTANCE = 30
+RED_ICON_FAST_MIN_DISTANCE = 32
 
 RED_ICON_HSV_RANGES = (
-    ((0, 100, 180), (15, 255, 255)),
-    ((170, 100, 180), (179, 255, 255)),
+    ((0, 140, 200), (8, 255, 255)),
+    ((175, 140, 200), (179, 255, 255)),
 )
 
 RED_ICON_HSV_MIN_MATCH_RATIO = 0.5
@@ -183,16 +189,16 @@ RED_ICON_HSV_MIN_MATCH_RATIO = 0.5
 # Mouse and Action Timing
 
 # Delay after normal click actions.
-CLICK_DELAY = 0.083
+CLICK_DELAY = 0.1
 
 # Delay after cursor movement.
-MOUSE_MOVE_DELAY = 0.033
+MOUSE_MOVE_DELAY = 0.051
 
 # Duration to hold the mouse button down during click actions.
-MOUSE_DOWN_DURATION = 0.05
+MOUSE_DOWN_DURATION = 0.15
 
 # Delay after releasing the mouse button.
-MOUSE_UP_DURATION = 0.033
+MOUSE_UP_DURATION = 0.12
 
 # Enables hover movement before click actions.
 HOVER_ENABLED = True
@@ -201,28 +207,29 @@ HOVER_ENABLED = True
 HOVER_DURATION = 0.1
 
 # Delay between upgrade station search attempts.
-UPGRADE_SEARCH_INTERVAL = 0.083
+UPGRADE_SEARCH_INTERVAL = 0.1
 
 # Delay between state-machine actions.
-STATE_DELAY = 0.15
+STATE_DELAY = 0.0
 
 # Settling delay before verifying an upgrade station hold target.
 UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.15
 
 # Maximum attempts for upgrade station verification.
-UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 3
+UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 2
 
 # Delay between upgrade station verification attempts.
 UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.067
 
 # Maximum duration for holding an upgrade station click.
-CLICK_HOLD_MAX_DURATION = 10.0
+CLICK_HOLD_MAX_DURATION = 9.0
 
 # Duration for stats upgrade click bursts.
 STATS_UPGRADE_CLICK_DURATION = 2.25
 
 # Delay between stats upgrade click actions.
 STATS_UPGRADE_CLICK_DELAY = 0.067
+
 
 
 # Telegram Notifications
@@ -240,6 +247,7 @@ TELEGRAM_CHAT_ID = ""
 TELEGRAM_CLOSE_TIMEOUT = 1.5
 
 
+
 # Capture Regions
 
 # Maximum vertical capture area for normal scans.
@@ -253,6 +261,7 @@ UPGRADE_STATION_SEARCH_Y = 760
 
 # Vertical capture area for box searches.
 BOX_SEARCH_Y = 780
+
 
 
 # Click Coordinates
@@ -274,6 +283,7 @@ NEW_LEVEL_BUTTON_POS = (30, 692)
 
 # Relative coordinate for the level transition confirmation.
 LEVEL_TRANSITION_POS = (174, 520)
+
 
 
 # Icon Regions and Offsets
@@ -309,10 +319,11 @@ UPGRADE_RED_ICON_Y_MIN = 665
 UPGRADE_RED_ICON_Y_MAX = 680
 
 
+
 # Scrolling
 
 # Pixel distance for each scroll drag.
-SCROLL_PIXEL_STEP = 120
+SCROLL_PIXEL_STEP = 180
 
 # Multiplier applied to scroll pixel distance.
 SCROLL_DISTANCE_RATIO = 1.0
@@ -330,7 +341,8 @@ SCROLL_INTERVAL_PAUSE = 0.1
 POST_SCROLL_SETTLE = 0.1
 
 # Duration of the scroll drag gesture.
-SCROLL_DURATION = 0.150
+SCROLL_DURATION = 0.300
+
 
 
 # Adaptive Runtime Tuning
@@ -390,6 +402,7 @@ ADAPTIVE_TUNER_MIN_SEARCH_INTERVAL = 0.067
 ADAPTIVE_TUNER_MAX_SEARCH_INTERVAL = 0.167
 
 
+
 # Historical Learning
 
 # Enables historical learning from completed levels.
@@ -445,6 +458,7 @@ AI_LEARNING_MAX_SEARCH_INTERVAL = 0.167
 
 # Minimum sleep between historical learning worker loops.
 LEARNING_LOOP_MIN_SLEEP = 1.0
+
 
 
 # Forbidden Zones
