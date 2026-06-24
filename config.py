@@ -211,19 +211,19 @@ HOVER_ENABLED = False
 HOVER_DURATION = 0.1
 
 # Delay between upgrade station search attempts.
-UPGRADE_SEARCH_INTERVAL = 0.1
+UPGRADE_SEARCH_INTERVAL = 0.75
 
 # Delay between state-machine actions.
 STATE_DELAY = 0.0
 
 # Settling delay before verifying an upgrade station hold target.
-UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.2
+UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.150
 
 # Maximum attempts for upgrade station verification.
 UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 2
 
 # Delay between upgrade station verification attempts.
-UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.1
+UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.75
 
 # Maximum duration for holding an upgrade station click.
 CLICK_HOLD_MAX_DURATION = 9.0
@@ -333,10 +333,10 @@ SCROLL_PIXEL_STEP = 180
 SCROLL_DISTANCE_RATIO = 1.0
 
 # Maximum oscillating scroll cycles before reset.
-MAX_SCROLL_CYCLES = 6
+MAX_SCROLL_CYCLES = 3
 
 # Step increment applied to each oscillating scroll cycle.
-SCROLL_INCREMENT_STEP = 1
+SCROLL_INCREMENT_STEP = 2
 
 # Delay between scroll intervals.
 SCROLL_INTERVAL_PAUSE = 0.1
