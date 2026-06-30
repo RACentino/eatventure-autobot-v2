@@ -193,7 +193,7 @@ RED_ICON_HSV_MIN_MATCH_RATIO = 0.45
 # Mouse and Action Timing
 
 # Delay after normal click actions.
-CLICK_DELAY = 0.025
+CLICK_DELAY = 0.0
 
 # Delay after cursor movement.
 MOUSE_MOVE_DELAY = 0.025
