@@ -64,13 +64,13 @@ ASSET_TRACKING_ENABLED = True
 ASSET_TRACKING_CAPTURE_Y = 780
 
 # Delay between tracker capture passes.
-ASSET_TRACKING_INTERVAL = 0.7
+ASSET_TRACKING_INTERVAL = 0.075
 
 # Frame rate passed to supervision ByteTrack.
 ASSET_TRACKING_FRAME_RATE = 1.43
 
 # Maximum age in seconds for tracker snapshots used by bot actions.
-ASSET_TRACKING_MAX_SNAPSHOT_AGE = 0.75
+ASSET_TRACKING_MAX_SNAPSHOT_AGE = 0.075
 
 # Maximum detections passed through each tracking frame.
 ASSET_TRACKING_MAX_DETECTIONS = 256
@@ -141,7 +141,7 @@ UPGRADE_STATION_HSV_RANGES = (
 UPGRADE_STATION_HSV_MIN_MATCH_RATIO = 0.4
 
 # Template confidence threshold for box scans.
-BOX_THRESHOLD = 0.930
+BOX_THRESHOLD = 0.93
 
 # Accepted HSV ranges for box candidate gating.
 BOX_HSV_RANGES = (
@@ -156,7 +156,7 @@ BOX_HSV_RANGES = (
 )
 
 # Minimum HSV mask ratio for accepting a box candidate.
-BOX_HSV_MIN_MATCH_RATIO = 0.5
+BOX_HSV_MIN_MATCH_RATIO = 0.6
 
 # Template confidence threshold for unlock button scans.
 UNLOCK_THRESHOLD = 0.905
@@ -333,10 +333,10 @@ SCROLL_PIXEL_STEP = 180
 SCROLL_DISTANCE_RATIO = 1.0
 
 # Maximum oscillating scroll cycles before reset.
-MAX_SCROLL_CYCLES = 3
+MAX_SCROLL_CYCLES = 6
 
 # Step increment applied to each oscillating scroll cycle.
-SCROLL_INCREMENT_STEP = 2
+SCROLL_INCREMENT_STEP = 1
 
 # Delay between scroll intervals.
 SCROLL_INTERVAL_PAUSE = 0.1
