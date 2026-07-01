@@ -64,7 +64,7 @@ ASSET_TRACKING_ENABLED = True
 ASSET_TRACKING_CAPTURE_Y = 780
 
 # Delay between tracker capture passes.
-ASSET_TRACKING_INTERVAL = 0.5
+ASSET_TRACKING_INTERVAL = 0.25
 
 # Frame rate passed to supervision ByteTrack.
 ASSET_TRACKING_FRAME_RATE = 1.43
@@ -141,7 +141,7 @@ UPGRADE_STATION_HSV_RANGES = (
 UPGRADE_STATION_HSV_MIN_MATCH_RATIO = 0.4
 
 # Template confidence threshold for box scans.
-BOX_THRESHOLD = 0.94
+BOX_THRESHOLD = 0.935
 
 # Accepted HSV ranges for box candidate gating.
 BOX_HSV_RANGES = (
@@ -168,12 +168,10 @@ NEW_LEVEL_THRESHOLD = 0.965
 RED_ICON_MIN_MATCHES = 3
 
 # Enables single-template red icon_scan mode for faster passes.
-RED_ICON_FAST_MODE_ENABLED = False
+RED_ICON_FAST_MODE_ENABLED = True
 
 # Red icon template names used when fast mode is enabled.
-RED_ICON_FAST_TEMPLATE_NAMES = (
-        "RedIcon2",
-        "RedIcon3",
+RED_ICON_FAST_TEMPLATE_NAMES = (,
         "RedIcon6",
 )
 
