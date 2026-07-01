@@ -325,7 +325,7 @@ UPGRADE_RED_ICON_Y_MAX = 680
 # Scrolling
 
 # Pixel distance for each scroll drag.
-SCROLL_PIXEL_STEP = 180
+SCROLL_PIXEL_STEP = 150
 
 # Multiplier applied to scroll pixel distance.
 SCROLL_DISTANCE_RATIO = 1.0
@@ -343,7 +343,7 @@ SCROLL_INTERVAL_PAUSE = 0.1
 POST_SCROLL_SETTLE = 0.1
 
 # Duration of the scroll drag gesture.
-SCROLL_DURATION = 0.250
+SCROLL_DURATION = 0.2
 
 
 
