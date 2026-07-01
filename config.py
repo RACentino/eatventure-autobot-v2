@@ -64,7 +64,7 @@ ASSET_TRACKING_ENABLED = True
 ASSET_TRACKING_CAPTURE_Y = 780
 
 # Delay between tracker capture passes.
-ASSET_TRACKING_INTERVAL = 0.25
+ASSET_TRACKING_INTERVAL = 0.5
 
 # Frame rate passed to supervision ByteTrack.
 ASSET_TRACKING_FRAME_RATE = 1.43
