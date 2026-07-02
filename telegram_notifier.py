@@ -1,12 +1,14 @@
 import logging
 import math
 from typing import Any
+from urllib.parse import quote
 
 import requests
 
 import config
 
 logger = logging.getLogger(__name__)
+TELEGRAM_API_BASE_URL = "https://api.telegram.org"
 DEFAULT_TELEGRAM_REQUEST_TIMEOUT = 5.0
 MIN_TELEGRAM_REQUEST_TIMEOUT = 0.001
 
@@ -47,7 +49,7 @@ class TelegramNotifier:
         payload = {"chat_id": self.chat_id, "text": text[:4096]}
         try:
             response = self._session.post(
-                f"https://api.telegram.org/bot{self.bot_token}/sendMessage",
+                self._send_message_url(),
                 json=payload,
                 timeout=self.timeout,
             )
@@ -58,6 +60,10 @@ class TelegramNotifier:
             return True
         logger.error("Failed to send Telegram message: status=%s", response.status_code)
         return False
+
+    def _send_message_url(self) -> str:
+        encoded_token = quote(self.bot_token, safe=":")
+        return f"{TELEGRAM_API_BASE_URL}/bot{encoded_token}/sendMessage"
 
     def _notify(self, message: str) -> None:
         if not self.send_message(message):

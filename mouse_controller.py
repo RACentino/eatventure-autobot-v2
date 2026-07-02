@@ -482,23 +482,27 @@ class MouseController:
             precise_sleep(self.move_delay)
             if not self._press_left(*start_pos):
                 return False
-            start_time = time.perf_counter()
-            if not self._move_along_drag_path(path, duration, steps, start_time):
-                return False
-            if not self._release_left(*end_pos):
-                return False
-            precise_sleep(self.click_delay)
-            return True
+            release_completed = False
+            try:
+                start_time = time.perf_counter()
+                if not self._move_along_drag_path(path, duration, steps, start_time):
+                    return False
+                release_completed = self._release_left(*end_pos)
+                if not release_completed:
+                    return False
+                precise_sleep(self.click_delay)
+                return True
+            finally:
+                if not release_completed and self._left_button_is_down:
+                    self._release_after_failed_sequence(*end_pos)
 
     def _move_along_drag_path(
         self, path: list[Point], duration: float, steps: int, start_time: float
     ) -> bool:
         for index, (screen_x, screen_y) in enumerate(path):
             if not self._set_cursor(screen_x, screen_y, verify=index == steps):
-                self._release_after_failed_sequence(screen_x, screen_y)
                 return False
             if not sleep_until(start_time + ((index + 1) * duration / steps)):
-                self._release_after_failed_sequence(screen_x, screen_y)
                 return False
         return True
 

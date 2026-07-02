@@ -185,6 +185,25 @@ def _float_value(value: Any, default: float = 0.0) -> float:
     return number if np.isfinite(number) else float(default)
 
 
+def _positive_int_value(value: Any, default: int) -> int:
+    return max(1, _int_value(value, default))
+
+
+def _nonnegative_float_value(value: Any, default: float) -> float:
+    return max(0.0, _float_value(value, default))
+
+
+def _unit_float_value(value: Any, default: float) -> float:
+    return max(0.0, min(1.0, _float_value(value, default)))
+
+
+def _asset_tracking_frame_interval() -> float:
+    return max(
+        FRAME_MIN_INTERVAL_SECONDS,
+        _float_value(config.ASSET_TRACKING_INTERVAL, FRAME_MIN_INTERVAL_SECONDS),
+    )
+
+
 def _target_coordinate(value: int | None, fallback: int) -> int:
     return int(fallback if value is None else value)
 
@@ -274,7 +293,9 @@ class AssetTracker:
     ) -> None:
         self.window_capture = window_capture
         self.detection_provider = detection_provider
-        self.max_detections = max(1, int(config.ASSET_TRACKING_MAX_DETECTIONS))
+        self.max_detections = _positive_int_value(
+            config.ASSET_TRACKING_MAX_DETECTIONS, 256
+        )
         self._byte_tracker = self._create_byte_tracker()
         self._forbidden_zones = _configured_forbidden_zones()
         self._stop_flag = threading.Event()
@@ -302,26 +323,39 @@ class AssetTracker:
             warnings.simplefilter("ignore", FutureWarning)
             if supervision_module is None:
                 return None
-            return supervision_module.ByteTrack(
-                track_activation_threshold=float(
-                    config.ASSET_TRACKING_TRACK_ACTIVATION_THRESHOLD
-                ),
-                lost_track_buffer=int(config.ASSET_TRACKING_LOST_TRACK_BUFFER),
-                minimum_matching_threshold=float(
-                    config.ASSET_TRACKING_MINIMUM_MATCHING_THRESHOLD
-                ),
-                frame_rate=float(config.ASSET_TRACKING_FRAME_RATE),
-                minimum_consecutive_frames=int(
-                    config.ASSET_TRACKING_MINIMUM_CONSECUTIVE_FRAMES
-                ),
-            )
+            try:
+                return supervision_module.ByteTrack(
+                    track_activation_threshold=_unit_float_value(
+                        config.ASSET_TRACKING_TRACK_ACTIVATION_THRESHOLD, 0.25
+                    ),
+                    lost_track_buffer=_positive_int_value(
+                        config.ASSET_TRACKING_LOST_TRACK_BUFFER, 2
+                    ),
+                    minimum_matching_threshold=_unit_float_value(
+                        config.ASSET_TRACKING_MINIMUM_MATCHING_THRESHOLD, 0.8
+                    ),
+                    frame_rate=max(
+                        1.0, _float_value(config.ASSET_TRACKING_FRAME_RATE, 1.0)
+                    ),
+                    minimum_consecutive_frames=_positive_int_value(
+                        config.ASSET_TRACKING_MINIMUM_CONSECUTIVE_FRAMES, 2
+                    ),
+                )
+            except Exception as tracker_error:
+                logger.warning(
+                    "Supervision ByteTrack initialization failed: %s", tracker_error
+                )
+                return None
 
     def start(self) -> bool:
         if not config.ASSET_TRACKING_ENABLED:
             return False
-        if self._capture_thread is not None and self._capture_thread.is_alive():
+        if self._worker_threads_alive():
             return True
+        if self._any_worker_thread_alive():
+            self.stop()
         self._stop_flag.clear()
+        self._clear_frame_queue()
         self._capture_thread = threading.Thread(
             target=self._run_capture_thread,
             name="asset_capture",
@@ -337,9 +371,35 @@ class AssetTracker:
         logger.info("Asset tracker started (dual-thread pipeline)")
         return True
 
+    def _worker_threads_alive(self) -> bool:
+        return (
+            self._capture_thread is not None
+            and self._capture_thread.is_alive()
+            and self._detection_thread is not None
+            and self._detection_thread.is_alive()
+        )
+
+    def _any_worker_thread_alive(self) -> bool:
+        capture_thread_alive = (
+            self._capture_thread is not None and self._capture_thread.is_alive()
+        )
+        detection_thread_alive = (
+            self._detection_thread is not None and self._detection_thread.is_alive()
+        )
+        return capture_thread_alive or detection_thread_alive
+
+    def _clear_frame_queue(self) -> None:
+        for _ in range(DETECTION_RESULT_DRAIN_LIMIT):
+            try:
+                self._frame_queue.get_nowait()
+            except queue.Empty:
+                return
+
     def stop(self) -> None:
         self._stop_flag.set()
-        join_timeout = float(config.ASSET_TRACKING_THREAD_JOIN_TIMEOUT)
+        join_timeout = _nonnegative_float_value(
+            config.ASSET_TRACKING_THREAD_JOIN_TIMEOUT, 1.5
+        )
         if self._capture_thread is not None and self._capture_thread.is_alive():
             self._capture_thread.join(timeout=join_timeout)
         if self._detection_thread is not None and self._detection_thread.is_alive():
@@ -401,9 +461,7 @@ class AssetTracker:
             )
             return
         try:
-            frame_interval = max(
-                FRAME_MIN_INTERVAL_SECONDS, float(config.ASSET_TRACKING_INTERVAL)
-            )
+            frame_interval = _asset_tracking_frame_interval()
             last_capture_time = 0.0
             for _ in range(ASSET_TRACKING_LOOP_ITERATION_LIMIT):
                 if self._stop_flag.is_set():
@@ -452,7 +510,10 @@ class AssetTracker:
         except Exception as bounds_error:
             logger.debug("Asset capture could not read window bounds: %s", bounds_error)
             return None
-        capture_height = min(window_height, int(config.ASSET_TRACKING_CAPTURE_Y))
+        capture_height = min(
+            window_height,
+            _positive_int_value(config.ASSET_TRACKING_CAPTURE_Y, window_height),
+        )
         if window_width <= 0 or capture_height <= 0:
             return None
         try:
@@ -478,9 +539,7 @@ class AssetTracker:
         return bgr_frame
 
     def _run_detection_thread(self) -> None:
-        frame_interval = max(
-            FRAME_MIN_INTERVAL_SECONDS, float(config.ASSET_TRACKING_INTERVAL)
-        )
+        frame_interval = _asset_tracking_frame_interval()
         for _ in range(ASSET_TRACKING_LOOP_ITERATION_LIMIT):
             if self._stop_flag.is_set():
                 return
