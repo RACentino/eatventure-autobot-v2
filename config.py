@@ -337,10 +337,10 @@ MAX_SCROLL_CYCLES = 4
 SCROLL_INCREMENT_STEP = 2
 
 # Delay between scroll intervals.
-SCROLL_INTERVAL_PAUSE = 0.2
+SCROLL_INTERVAL_PAUSE = 0.1
 
 # Settling delay after a scroll.
-POST_SCROLL_SETTLE = 0.2
+POST_SCROLL_SETTLE = 0.1
 
 # Duration of the scroll drag gesture.
 SCROLL_DURATION = 0.3
