@@ -224,13 +224,13 @@ UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 2
 UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.1
 
 # Maximum duration for holding an upgrade station click.
-CLICK_HOLD_MAX_DURATION = 0.0
+CLICK_HOLD_MAX_DURATION = 9.0
 
 # Duration for stats upgrade click bursts.
-STATS_UPGRADE_CLICK_DURATION = 0.0
+STATS_UPGRADE_CLICK_DURATION = 2.0
 
 # Delay between stats upgrade click actions.
-STATS_UPGRADE_CLICK_DELAY = 0.0
+STATS_UPGRADE_CLICK_DELAY = 0.064
 
 
 
@@ -337,13 +337,13 @@ MAX_SCROLL_CYCLES = 4
 SCROLL_INCREMENT_STEP = 2
 
 # Delay between scroll intervals.
-SCROLL_INTERVAL_PAUSE = 0.0
+SCROLL_INTERVAL_PAUSE = 0.1
 
 # Settling delay after a scroll.
-POST_SCROLL_SETTLE = 0.0
+POST_SCROLL_SETTLE = 0.1
 
 # Duration of the scroll drag gesture.
-SCROLL_DURATION = 0.0
+SCROLL_DURATION = 0.3
 
 
 
