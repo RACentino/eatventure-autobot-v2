@@ -215,7 +215,7 @@ UPGRADE_SEARCH_INTERVAL = 0.067
 STATE_DELAY = 0.0
 
 # Settling delay before verifying an upgrade station hold target.
-UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.100
+UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.034
 
 # Maximum attempts for upgrade station verification.
 UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 2
