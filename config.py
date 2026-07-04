@@ -64,13 +64,13 @@ ASSET_TRACKING_ENABLED = True
 ASSET_TRACKING_CAPTURE_Y = 780
 
 # Delay between tracker capture passes.
-ASSET_TRACKING_INTERVAL = 0.017
+ASSET_TRACKING_INTERVAL = 0.0167
 
 # Frame rate passed to supervision ByteTrack.
 ASSET_TRACKING_FRAME_RATE = 60.0
 
 # Maximum age in seconds for tracker snapshots used by bot actions.
-ASSET_TRACKING_MAX_SNAPSHOT_AGE = 0.200
+ASSET_TRACKING_MAX_SNAPSHOT_AGE = 0.150
 
 # Maximum detections passed through each tracking frame.
 ASSET_TRACKING_MAX_DETECTIONS = 256
@@ -97,7 +97,7 @@ ASSET_TRACKING_UPGRADE_STATION_ENABLED = True
 ASSET_TRACKING_BOX_ENABLED = True
 
 # Maximum wait for the background tracker thread to stop.
-ASSET_TRACKING_THREAD_JOIN_TIMEOUT = 1.5
+ASSET_TRACKING_THREAD_JOIN_TIMEOUT = 1.0
 
 
 
@@ -197,10 +197,10 @@ CLICK_DELAY = 0.017
 MOUSE_MOVE_DELAY = 0.017
 
 # Duration to hold the mouse button down during click actions.
-MOUSE_DOWN_DURATION = 0.100
+MOUSE_DOWN_DURATION = 0.117
 
 # Delay after releasing the mouse button.
-MOUSE_UP_DURATION = 0.100
+MOUSE_UP_DURATION = 0.117
 
 # Enables hover movement before click actions.
 HOVER_ENABLED = False
@@ -209,13 +209,13 @@ HOVER_ENABLED = False
 HOVER_DURATION = 0.0
 
 # Delay between upgrade station search attempts.
-UPGRADE_SEARCH_INTERVAL = 0.067
+UPGRADE_SEARCH_INTERVAL = 0.050
 
 # Delay between state-machine actions.
 STATE_DELAY = 0.0
 
 # Settling delay before verifying an upgrade station hold target.
-UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.034
+UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.117
 
 # Maximum attempts for upgrade station verification.
 UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 2
@@ -227,7 +227,7 @@ UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.050
 CLICK_HOLD_MAX_DURATION = 9.0
 
 # Duration for stats upgrade click bursts.
-STATS_UPGRADE_CLICK_DURATION = 1.5
+STATS_UPGRADE_CLICK_DURATION = 2.0
 
 # Delay between stats upgrade click actions.
 STATS_UPGRADE_CLICK_DELAY = 0.064
@@ -337,13 +337,13 @@ MAX_SCROLL_CYCLES = 4
 SCROLL_INCREMENT_STEP = 2
 
 # Delay between scroll intervals.
-SCROLL_INTERVAL_PAUSE = 0.1
+SCROLL_INTERVAL_PAUSE = 0.0
 
 # Settling delay after a scroll.
-POST_SCROLL_SETTLE = 0.1
+POST_SCROLL_SETTLE = 0.0
 
 # Duration of the scroll drag gesture.
-SCROLL_DURATION = 0.3
+SCROLL_DURATION = 0.0
 
 
 
@@ -389,13 +389,13 @@ ADAPTIVE_TUNER_SEARCH_DECREMENT = 0.017
 ADAPTIVE_TUNER_MIN_CLICK_DELAY = 0.017
 
 # Maximum click delay allowed by adaptive tuning.
-ADAPTIVE_TUNER_MAX_CLICK_DELAY = 0.034
+ADAPTIVE_TUNER_MAX_CLICK_DELAY = 0.050
 
 # Minimum move delay allowed by adaptive tuning.
 ADAPTIVE_TUNER_MIN_MOVE_DELAY = 0.017
 
 # Maximum move delay allowed by adaptive tuning.
-ADAPTIVE_TUNER_MAX_MOVE_DELAY = 0.034
+ADAPTIVE_TUNER_MAX_MOVE_DELAY = 0.050
 
 # Minimum search interval allowed by adaptive tuning.
 ADAPTIVE_TUNER_MIN_SEARCH_INTERVAL = 0.050
@@ -444,13 +444,13 @@ AI_LEARNING_APPLY_COOLDOWN = 5.0
 AI_LEARNING_MIN_CLICK_DELAY = 0.017
 
 # Maximum click delay allowed by historical learning.
-AI_LEARNING_MAX_CLICK_DELAY = 0.034
+AI_LEARNING_MAX_CLICK_DELAY = 0.050
 
 # Minimum move delay allowed by historical learning.
 AI_LEARNING_MIN_MOVE_DELAY = 0.017
 
 # Maximum move delay allowed by historical learning.
-AI_LEARNING_MAX_MOVE_DELAY = 0.034
+AI_LEARNING_MAX_MOVE_DELAY = 0.050
 
 # Minimum search interval allowed by historical learning.
 AI_LEARNING_MIN_SEARCH_INTERVAL = 0.050
