@@ -343,7 +343,7 @@ SCROLL_INTERVAL_PAUSE = 0.05
 POST_SCROLL_SETTLE = 0.05
 
 # Duration of the scroll drag gesture.
-SCROLL_DURATION = 0.3
+SCROLL_DURATION = 0.2
 
 
 
