@@ -176,7 +176,7 @@ RED_ICON_FAST_TEMPLATE_NAMES = (
 )
 
 # Minimum pixel distance between fast-mode red icon matches.
-RED_ICON_FAST_MIN_DISTANCE = 64
+RED_ICON_FAST_MIN_DISTANCE = 32
 
 # Accepted HSV ranges for red icon candidate gating.
 RED_ICON_HSV_RANGES = (
@@ -191,16 +191,16 @@ RED_ICON_HSV_MIN_MATCH_RATIO = 0.45
 # Mouse and Action Timing
 
 # Delay after normal click actions.
-CLICK_DELAY = 0.015
+CLICK_DELAY = 0.05
 
 # Delay after cursor movement.
-MOUSE_MOVE_DELAY = 0.015
+MOUSE_MOVE_DELAY = 0.05
 
 # Duration to hold the mouse button down during click actions.
-MOUSE_DOWN_DURATION = 0.12
+MOUSE_DOWN_DURATION = 0.1
 
 # Delay after releasing the mouse button.
-MOUSE_UP_DURATION = 0.12
+MOUSE_UP_DURATION = 0.1
 
 # Enables hover movement before click actions.
 HOVER_ENABLED = False
@@ -218,7 +218,7 @@ STATE_DELAY = 0.0
 UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.15
 
 # Maximum attempts for upgrade station verification.
-UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 6
+UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 2
 
 # Delay between upgrade station verification attempts.
 UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.025
@@ -227,7 +227,7 @@ UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.025
 CLICK_HOLD_MAX_DURATION = 9.0
 
 # Duration for stats upgrade click bursts.
-STATS_UPGRADE_CLICK_DURATION = 2.0
+STATS_UPGRADE_CLICK_DURATION = 1.25
 
 # Delay between stats upgrade click actions.
 STATS_UPGRADE_CLICK_DELAY = 0.064
@@ -337,10 +337,10 @@ MAX_SCROLL_CYCLES = 1
 SCROLL_INCREMENT_STEP = 5
 
 # Delay between scroll intervals.
-SCROLL_INTERVAL_PAUSE = 0.05
+SCROLL_INTERVAL_PAUSE = 0.075
 
 # Settling delay after a scroll.
-POST_SCROLL_SETTLE = 0.05
+POST_SCROLL_SETTLE = 0.075
 
 # Duration of the scroll drag gesture.
 SCROLL_DURATION = 0.2
