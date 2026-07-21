@@ -172,6 +172,7 @@ RED_ICON_FAST_MODE_ENABLED = True
 
 # Red icon template names used when fast mode is enabled.
 RED_ICON_FAST_TEMPLATE_NAMES = (
+    "RedIcon6",
     "RedIcon15",
 )
 
