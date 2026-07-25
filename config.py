@@ -177,7 +177,7 @@ RED_ICON_FAST_TEMPLATE_NAMES = (
 )
 
 # Minimum pixel distance between fast-mode red icon matches.
-RED_ICON_FAST_MIN_DISTANCE = 32
+RED_ICON_FAST_MIN_DISTANCE = 64
 
 # Accepted HSV ranges for red icon candidate gating.
 RED_ICON_HSV_RANGES = (
@@ -344,7 +344,7 @@ SCROLL_INTERVAL_PAUSE = 0.075
 POST_SCROLL_SETTLE = 0.075
 
 # Duration of the scroll drag gesture.
-SCROLL_DURATION = 0.2
+SCROLL_DURATION = 0.3
 
 
 
