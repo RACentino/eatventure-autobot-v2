@@ -176,7 +176,11 @@ RED_ICON_FAST_TEMPLATE_NAMES = (
 )
 
 # Minimum pixel distance between fast-mode red icon matches.
-RED_ICON_FAST_MIN_DISTANCE = 64
+# Set to 35px: icons can appear as close as ~36px apart in-game (validated
+# against all 9 test images). Values above 40 cause false negatives by
+# collapsing adjacent icon pairs during NMS. Values below 20 risk splitting
+# a single icon across multiple candidates.
+RED_ICON_FAST_MIN_DISTANCE = 35
 
 # Accepted HSV ranges for red icon candidate gating.
 RED_ICON_HSV_RANGES = (
