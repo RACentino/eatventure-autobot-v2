@@ -1473,7 +1473,16 @@ class EatventureBot:
         if not pre_click_delay_completed:
             return State.CHECK_NEW_LEVEL
 
-        verification_scroll_completed = self._perform_upward_verification_scroll()
+        original_scroll_direction = self.scroll_direction
+        original_scroll_cycle_index = self.scroll_cycle_index
+        original_scroll_cycle_progress = self.scroll_cycle_progress
+        try:
+            self.scroll_direction = -UPWARD_OSCILLATING_SCROLL_DIRECTION
+            verification_scroll_completed = self._scroll()
+        finally:
+            self.scroll_direction = original_scroll_direction
+            self.scroll_cycle_index = original_scroll_cycle_index
+            self.scroll_cycle_progress = original_scroll_cycle_progress
         if not verification_scroll_completed:
             return State.CHECK_NEW_LEVEL
 
