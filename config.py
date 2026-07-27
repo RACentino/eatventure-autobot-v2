@@ -176,11 +176,7 @@ RED_ICON_FAST_TEMPLATE_NAMES = (
 )
 
 # Minimum pixel distance between fast-mode red icon matches.
-# Set to 35px: icons can appear as close as ~36px apart in-game (validated
-# against all 9 test images). Values above 40 cause false negatives by
-# collapsing adjacent icon pairs during NMS. Values below 20 risk splitting
-# a single icon across multiple candidates.
-RED_ICON_FAST_MIN_DISTANCE = 35
+RED_ICON_FAST_MIN_DISTANCE = 32
 
 # Accepted HSV ranges for red icon candidate gating.
 RED_ICON_HSV_RANGES = (
@@ -234,7 +230,7 @@ CLICK_HOLD_MAX_DURATION = 9.0
 STATS_UPGRADE_CLICK_DURATION = 1.75
 
 # Delay between stats upgrade click actions.
-STATS_UPGRADE_CLICK_DELAY = 0.064
+STATS_UPGRADE_CLICK_DELAY = 0.016
 
 
 
@@ -341,10 +337,10 @@ MAX_SCROLL_CYCLES = 1
 SCROLL_INCREMENT_STEP = 5
 
 # Delay between scroll intervals.
-SCROLL_INTERVAL_PAUSE = 0.075
+SCROLL_INTERVAL_PAUSE = 0.15
 
 # Settling delay after a scroll.
-POST_SCROLL_SETTLE = 0.075
+POST_SCROLL_SETTLE = 0.15
 
 # Duration of the scroll drag gesture.
 SCROLL_DURATION = 0.3
