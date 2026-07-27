@@ -278,7 +278,6 @@ class MouseController:
         if not self._button(
             "left up", lambda: self._mouse.release(self._left_button), x, y
         ):
-            self._left_button_is_down = False
             return False
         self._left_button_is_down = False
         wait_time = _duration(
@@ -315,9 +314,15 @@ class MouseController:
     ) -> bool:
         if not self._press_left(screen_x, screen_y, down_duration, interrupt_check):
             return False
-        if not self._release_left(screen_x, screen_y, up_duration, interrupt_check):
-            return False
-        return True
+        release_completed = False
+        try:
+            release_completed = self._release_left(
+                screen_x, screen_y, up_duration, interrupt_check
+            )
+            return release_completed
+        finally:
+            if not release_completed and self._left_button_is_down:
+                self._release_after_failed_sequence(screen_x, screen_y)
 
     def move_to(self, x: Any, y: Any, relative: bool = True) -> bool:
         with self._input_lock:
@@ -377,17 +382,24 @@ class MouseController:
                 screen_x, screen_y, duration=0.0, interrupt_check=interrupt_check
             ):
                 return False
-            if not self._interruptible_delay(
-                _duration(4.0 if duration is None else duration, 4.0), interrupt_check
-            ):
-                self._release_after_failed_sequence(screen_x, screen_y)
-                return False
-            if not self._release_left(
-                screen_x, screen_y, interrupt_check=interrupt_check
-            ):
-                return False
-            precise_sleep(self.click_delay)
-            return True
+            release_completed = False
+            try:
+                if not self._interruptible_delay(
+                    _duration(4.0 if duration is None else duration, 4.0),
+                    interrupt_check,
+                ):
+                    self._release_after_failed_sequence(screen_x, screen_y)
+                    return False
+                release_completed = self._release_left(
+                    screen_x, screen_y, interrupt_check=interrupt_check
+                )
+                if not release_completed:
+                    return False
+                precise_sleep(self.click_delay)
+                return True
+            finally:
+                if not release_completed and self._left_button_is_down:
+                    self._release_after_failed_sequence(screen_x, screen_y)
 
     def click_stats_upgrade_at(
         self,
