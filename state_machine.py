@@ -27,11 +27,11 @@ class StateMachine:
             )
         self.current_state: State = initial_state
         self.previous_state: State | None = None
-        self.state_handlers: dict[State, Callable[[State], State | None]] = {}
+        self.state_handlers: dict[State, Callable[[], State | None]] = {}
         logger.info("State machine initialized in state: %s", initial_state.name)
 
     def register_handler(
-        self, state: State, handler: Callable[[State], State | None]
+        self, state: State, handler: Callable[[], State | None]
     ) -> None:
         if not isinstance(state, State):
             raise TypeError(f"state must be a State, got {type(state).__name__}")
@@ -60,7 +60,7 @@ class StateMachine:
             )
             return False
 
-        next_state = handler(self.current_state)
+        next_state = handler()
         if next_state is None:
             return True
         if not isinstance(next_state, State):

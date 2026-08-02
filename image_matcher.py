@@ -289,6 +289,7 @@ class ImageMatcher:
         scales: list[float] | None = None,
         template_name: str = "Unknown",
         hsv_ranges: Any = None,
+        hsv_match_threshold: float | None = None,
     ) -> list[MatchCandidate]:
         try:
             screenshot = _as_bgr(screenshot, "screenshot")
@@ -301,7 +302,14 @@ class ImageMatcher:
             return []
         matches_by_location: dict[tuple[int, int, int, int], MatchCandidate] = {}
         max_score = 1.0 - _threshold(threshold, self.threshold)
-        for region in self._color_candidate_regions(screenshot, template, hsv_ranges):
+        for region in self._color_candidate_regions(
+            screenshot,
+            template,
+            hsv_ranges,
+            mask,
+            hsv_match_threshold,
+            min_distance,
+        ):
             for candidate in self._region_template_candidates(
                 screenshot,
                 template,
@@ -321,6 +329,91 @@ class ImageMatcher:
         return sorted(
             matches_by_location.values(), key=lambda match: match[0], reverse=True
         )[:MAX_TEMPLATE_CANDIDATES]
+
+    def filter_candidates_by_hsv(
+        self,
+        screenshot: np.ndarray,
+        candidates: list[tuple[Any, ...]],
+        template: np.ndarray,
+        mask: np.ndarray | None = None,
+        hsv_ranges: Any = None,
+        hsv_match_threshold: float = 0.9,
+    ) -> list[tuple[Any, ...]]:
+        if not candidates:
+            return []
+        try:
+            screenshot = _as_bgr(screenshot, "screenshot")
+            template = _as_bgr(template, "template")
+            mask = _normalized_mask(mask, template.shape, "template")
+            combined_mask = self._combined_hsv_mask(screenshot, hsv_ranges)
+        except (ValueError, cv2.error) as exc:
+            logger.warning("Invalid HSV candidate input: %s", exc)
+            return []
+        if combined_mask is None or not np.any(combined_mask):
+            return []
+
+        screenshot_height, screenshot_width = screenshot.shape[:2]
+        minimum_ratio = _threshold(hsv_match_threshold, 0.9)
+        scaled_masks: dict[tuple[int, int], np.ndarray] = {}
+        accepted = []
+        for candidate in candidates:
+            try:
+                _, center_x, center_y, width, height = candidate[:5]
+                center_x, center_y, width, height = (
+                    float(center_x),
+                    float(center_y),
+                    float(width),
+                    float(height),
+                )
+            except (TypeError, ValueError):
+                continue
+            if not all(
+                np.isfinite(value) for value in (center_x, center_y, width, height)
+            ):
+                continue
+            center_x, center_y, width, height = (
+                int(center_x),
+                int(center_y),
+                int(width),
+                int(height),
+            )
+            if width <= 0 or height <= 0:
+                continue
+            left, top = center_x - width // 2, center_y - height // 2
+            right, bottom = left + width, top + height
+            if (
+                left < 0
+                or top < 0
+                or right > screenshot_width
+                or bottom > screenshot_height
+            ):
+                continue
+            region_mask = combined_mask[top:bottom, left:right] > 0
+            if mask is None:
+                active_count = width * height
+                matched_count = int(np.count_nonzero(region_mask))
+            else:
+                key = width, height
+                active_mask = scaled_masks.get(key)
+                if active_mask is None:
+                    active_mask = (
+                        mask > 0
+                        if mask.shape == (height, width)
+                        else cv2.resize(
+                            mask,
+                            (width, height),
+                            interpolation=cv2.INTER_NEAREST,
+                        )
+                        > 0
+                    )
+                    scaled_masks[key] = active_mask
+                active_count = int(np.count_nonzero(active_mask))
+                if active_count <= 0:
+                    continue
+                matched_count = int(np.count_nonzero(region_mask & active_mask))
+            if matched_count / active_count >= minimum_ratio:
+                accepted.append(candidate)
+        return accepted
 
     def _region_template_candidates(
         self,
@@ -362,12 +455,35 @@ class ImageMatcher:
         return confidence, center_x + offset_x, center_y + offset_y, width, height
 
     def _color_candidate_regions(
-        self, screenshot: np.ndarray, template: np.ndarray, hsv_ranges: Any
+        self,
+        screenshot: np.ndarray,
+        template: np.ndarray,
+        hsv_ranges: Any,
+        mask: np.ndarray | None = None,
+        hsv_match_threshold: float | None = None,
+        min_distance: int = 0,
     ) -> list[MatchRegion]:
         full_frame_region = self._full_frame_region(screenshot)
         combined_mask = self._combined_hsv_mask(screenshot, hsv_ranges)
         if combined_mask is None:
             return [full_frame_region]
+        if hsv_match_threshold is not None:
+            regions = self._hsv_gate_match_regions(
+                combined_mask,
+                screenshot.shape,
+                template.shape,
+                mask,
+                hsv_match_threshold,
+                min_distance,
+            )
+            if not regions:
+                return []
+            if (
+                len(regions) > HSV_REGION_COMPONENT_LIMIT
+                or self._regions_cover_too_much_area(regions, screenshot.shape)
+            ):
+                return [full_frame_region]
+            return regions
         coverage_ratio = self._mask_coverage_ratio(combined_mask)
         if coverage_ratio <= 0.0 or coverage_ratio > HSV_REGION_MAX_COVERAGE_RATIO:
             return [full_frame_region]
@@ -380,6 +496,66 @@ class ImageMatcher:
         if self._regions_cover_too_much_area(merged_regions, screenshot.shape):
             return [full_frame_region]
         return merged_regions or [full_frame_region]
+
+    def _hsv_gate_match_regions(
+        self,
+        combined_mask: np.ndarray,
+        screenshot_shape: tuple[int, ...],
+        template_shape: tuple[int, ...],
+        mask: np.ndarray | None,
+        hsv_match_threshold: float,
+        min_distance: int,
+    ) -> list[MatchRegion]:
+        screenshot_height, screenshot_width = screenshot_shape[:2]
+        template_height, template_width = template_shape[:2]
+        if (
+            template_height > screenshot_height
+            or template_width > screenshot_width
+        ):
+            return []
+        active_mask = (
+            np.ones((template_height, template_width), dtype=np.float32)
+            if mask is None
+            else (mask > 0).astype(np.float32)
+        )
+        active_count = int(np.count_nonzero(active_mask))
+        if active_count <= 0:
+            return []
+        coverage = cv2.matchTemplate(
+            (combined_mask > 0).astype(np.float32), active_mask, cv2.TM_CCORR
+        )
+        required = _threshold(hsv_match_threshold, 0.9) * active_count
+        valid_locations = (coverage >= required - 0.5).astype(np.uint8)
+        if not np.any(valid_locations):
+            return []
+        _, _, stats, _ = cv2.connectedComponentsWithStats(
+            valid_locations, connectivity=8
+        )
+        window = max(3, int(min_distance))
+        if window % 2 == 0:
+            window += 1
+        padding = window // 2
+        regions = []
+        for component_index in range(1, stats.shape[0]):
+            left = int(stats[component_index, cv2.CC_STAT_LEFT])
+            top = int(stats[component_index, cv2.CC_STAT_TOP])
+            width = int(stats[component_index, cv2.CC_STAT_WIDTH])
+            height = int(stats[component_index, cv2.CC_STAT_HEIGHT])
+            regions.append(
+                (
+                    max(0, left - padding),
+                    max(0, top - padding),
+                    min(
+                        int(screenshot_width),
+                        left + width - 1 + padding + template_width,
+                    ),
+                    min(
+                        int(screenshot_height),
+                        top + height - 1 + padding + template_height,
+                    ),
+                )
+            )
+        return self._merge_match_regions(regions)
 
     def _combined_hsv_mask(
         self, screenshot: np.ndarray, hsv_ranges: Any

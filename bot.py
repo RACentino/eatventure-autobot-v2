@@ -680,26 +680,6 @@ class EatventureBot:
         available_matches = max(1, len(self._red_icon_names()))
         return min(requested_matches, available_matches)
 
-    def _passes_hsv_gate(
-        self,
-        screenshot: Any,
-        template: Any,
-        mask: Any,
-        center_x: int,
-        center_y: int,
-        width: int,
-        height: int,
-        hsv_ranges: Any,
-        ratio: float,
-    ) -> bool:
-        top_left = (
-            int(center_x) - int(width) // 2,
-            int(center_y) - int(height) // 2,
-        )
-        return self.image_matcher._check_hsv_gate(
-            screenshot, template, top_left, mask, hsv_ranges, ratio
-        )
-
     def _collect_red_icon_map(
         self,
         screenshot: Any,
@@ -733,25 +713,25 @@ class EatventureBot:
                 supervision_class_agnostic=config.SUPERVISION_CLASS_AGNOSTIC_NMS,
             )
             height, width = template.shape[:2]
-            for confidence, x, y in matches:
-                if self._passes_hsv_gate(
-                    screenshot,
-                    template,
-                    mask,
-                    x,
-                    y,
-                    width,
-                    height,
-                    config.RED_ICON_HSV_RANGES,
-                    config.RED_ICON_HSV_MIN_MATCH_RATIO,
-                ):
-                    self._merge_icon(
-                        detections,
-                        int(x) + offset_x,
-                        int(y) + offset_y,
-                        name,
-                        float(confidence),
-                    )
+            candidates = self.image_matcher.filter_candidates_by_hsv(
+                screenshot,
+                [
+                    (confidence, x, y, width, height)
+                    for confidence, x, y in matches
+                ],
+                template,
+                mask=mask,
+                hsv_ranges=config.RED_ICON_HSV_RANGES,
+                hsv_match_threshold=config.RED_ICON_HSV_MIN_MATCH_RATIO,
+            )
+            for confidence, x, y, _, _ in candidates:
+                self._merge_icon(
+                    detections,
+                    int(x) + offset_x,
+                    int(y) + offset_y,
+                    name,
+                    float(confidence),
+                )
         return detections
 
     @staticmethod
@@ -951,13 +931,14 @@ class EatventureBot:
         if template_pair is None:
             return []
         template, mask = template_pair
-        candidates = self.image_matcher.find_template_candidates(
+        candidates = self.image_matcher.find_color_gated_template_candidates(
             screenshot,
             template,
             mask=mask,
             threshold=threshold,
             min_distance=15,
             template_name=TemplateName.UPGRADE_STATION.value,
+            hsv_ranges=config.UPGRADE_STATION_HSV_RANGES,
         )
         if self._supervision_enabled(SupervisionFlag.UPGRADE_STATION_NMS):
             filtered = self.image_matcher.filter_candidates_with_supervision_nms(
@@ -966,21 +947,14 @@ class EatventureBot:
                 class_agnostic=config.SUPERVISION_CLASS_AGNOSTIC_NMS,
             )
             candidates = list(filtered) if filtered is not None else candidates
-        return [
-            item
-            for item in candidates
-            if self._passes_hsv_gate(
-                screenshot,
-                template,
-                mask,
-                item[1],
-                item[2],
-                item[3],
-                item[4],
-                config.UPGRADE_STATION_HSV_RANGES,
-                config.UPGRADE_STATION_HSV_MIN_MATCH_RATIO,
-            )
-        ]
+        return self.image_matcher.filter_candidates_by_hsv(
+            screenshot,
+            candidates,
+            template,
+            mask=mask,
+            hsv_ranges=config.UPGRADE_STATION_HSV_RANGES,
+            hsv_match_threshold=config.UPGRADE_STATION_HSV_MIN_MATCH_RATIO,
+        )
 
     def _box_candidates(
         self, screenshot: Any, include_tracked: bool = True
@@ -1019,28 +993,27 @@ class EatventureBot:
         if template_pair is None:
             return []
         template, mask = template_pair
-        matches = self.image_matcher.find_template_candidates(
+        matches = self.image_matcher.find_color_gated_template_candidates(
             screenshot,
             template,
             mask=mask,
             threshold=config.BOX_THRESHOLD,
             min_distance=12,
             template_name=name,
+            hsv_ranges=config.BOX_HSV_RANGES,
+            hsv_match_threshold=config.BOX_HSV_MIN_MATCH_RATIO,
+        )
+        matches = self.image_matcher.filter_candidates_by_hsv(
+            screenshot,
+            matches,
+            template,
+            mask=mask,
+            hsv_ranges=config.BOX_HSV_RANGES,
+            hsv_match_threshold=config.BOX_HSV_MIN_MATCH_RATIO,
         )
         return [
             (float(confidence), int(x), int(y), int(width), int(height), name)
             for confidence, x, y, width, height in matches
-            if self._passes_hsv_gate(
-                screenshot,
-                template,
-                mask,
-                x,
-                y,
-                width,
-                height,
-                config.BOX_HSV_RANGES,
-                config.BOX_HSV_MIN_MATCH_RATIO,
-            )
         ]
 
     def _detect_trackable_assets(self, screenshot: Any) -> list[AssetDetection]:
@@ -1194,7 +1167,7 @@ class EatventureBot:
         self.historical_learner.record_completion(elapsed, source)
         return elapsed
 
-    def handle_find_red_icons(self, current_state: State) -> StateResult:
+    def handle_find_red_icons(self) -> StateResult:
         self._click_idle()
         self.cycle_counter += 1
         if self.cycle_counter >= SEARCH_CYCLES_BEFORE_SCROLL:
@@ -1236,7 +1209,7 @@ class EatventureBot:
         logger.info("%s red icons ready to process", len(self.red_icons))
         return State.CLICK_RED_ICON
 
-    def handle_click_red_icon(self, current_state: State) -> StateResult:
+    def handle_click_red_icon(self) -> StateResult:
         if self.current_red_icon_index >= len(self.red_icons):
             return State.OPEN_BOXES
         confidence, x, y = self.red_icons[self.current_red_icon_index]
@@ -1262,7 +1235,7 @@ class EatventureBot:
         )
         return State.CHECK_UNLOCK
 
-    def handle_check_unlock(self, current_state: State) -> StateResult:
+    def handle_check_unlock(self) -> StateResult:
         template_pair = self._template(TemplateName.UNLOCK.value)
         if template_pair is None:
             return State.SEARCH_UPGRADE_STATION
@@ -1281,7 +1254,7 @@ class EatventureBot:
             self.mouse_controller.click(x, y, relative=True)
         return State.SEARCH_UPGRADE_STATION
 
-    def handle_search_upgrade_station(self, current_state: State) -> StateResult:
+    def handle_search_upgrade_station(self) -> StateResult:
         base_threshold = float(config.UPGRADE_STATION_THRESHOLD)
         relaxed_threshold = max(
             0.0, base_threshold - UPGRADE_STATION_THRESHOLD_RELAXATION
@@ -1316,7 +1289,7 @@ class EatventureBot:
         logger.info("Upgrade station not found")
         return State.OPEN_BOXES
 
-    def handle_hold_upgrade_station(self, current_state: State) -> StateResult:
+    def handle_hold_upgrade_station(self) -> StateResult:
         if self.upgrade_station_pos is None:
             return State.OPEN_BOXES
         x, y = self.upgrade_station_pos
@@ -1375,7 +1348,7 @@ class EatventureBot:
             return State.UPGRADE_STATS
         return State.OPEN_BOXES
 
-    def handle_upgrade_stats(self, current_state: State) -> StateResult:
+    def handle_upgrade_stats(self) -> StateResult:
         self._click_idle()
         screenshot = self.window_capture.capture(max_y=config.EXTENDED_SEARCH_Y)
         found, _, _, _ = self._find_new_level_button(
@@ -1412,7 +1385,7 @@ class EatventureBot:
         logger.info("Stats upgrade completed")
         return State.OPEN_BOXES
 
-    def handle_open_boxes(self, current_state: State) -> StateResult:
+    def handle_open_boxes(self) -> StateResult:
         self._click_idle()
         screenshot = self.window_capture.capture(max_y=config.BOX_SEARCH_Y)
         found, _, _, _ = self._find_new_level_button(
@@ -1451,7 +1424,7 @@ class EatventureBot:
             return State.SCROLL
         return State.FIND_RED_ICONS
 
-    def handle_scroll(self, current_state: State) -> StateResult:
+    def handle_scroll(self) -> StateResult:
         self.failed_click_tracker.clear()
         self._click_idle()
         screenshot = self.window_capture.capture(max_y=config.MAX_SEARCH_Y)
@@ -1464,7 +1437,7 @@ class EatventureBot:
         self.cycle_counter = 0
         return State.FIND_RED_ICONS
 
-    def handle_check_new_level(self, current_state: State) -> StateResult:
+    def handle_check_new_level(self) -> StateResult:
         idle_click_succeeded = self._click_idle()
         if not idle_click_succeeded:
             return State.CHECK_NEW_LEVEL
@@ -1510,7 +1483,7 @@ class EatventureBot:
 
         return State.TRANSITION_LEVEL
 
-    def handle_transition_level(self, current_state: State) -> StateResult:
+    def handle_transition_level(self) -> StateResult:
         self._click_idle()
         for attempt in range(MAX_LEVEL_TRANSITION_ATTEMPTS):
             found, _, x, y = self._find_new_level_button(
@@ -1533,7 +1506,7 @@ class EatventureBot:
         self._reset_search_cycle()
         return State.FIND_RED_ICONS
 
-    def handle_wait_for_unlock(self, current_state: State) -> StateResult:
+    def handle_wait_for_unlock(self) -> StateResult:
         self._click_idle()
         self._sleep(WAIT_FOR_UNLOCK_PRE_SCAN_DELAY)
         self.wait_for_unlock_attempts += 1
