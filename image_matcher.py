@@ -5,14 +5,14 @@ import cv2
 import numpy as np
 
 _SUPERVISION_IMPORT_ERROR: Exception | None
-sv: Any
+supervision_module: Any = None
 
 try:
-    import supervision as sv
+    import supervision as imported_supervision
 except Exception as exc:
-    sv = None
     _SUPERVISION_IMPORT_ERROR = exc
 else:
+    supervision_module = imported_supervision
     _SUPERVISION_IMPORT_ERROR = None
 
 logger = logging.getLogger(__name__)
@@ -63,15 +63,16 @@ def _normalized_mask(
     if mask is None:
         return None
     if not hasattr(mask, "shape") or mask.size == 0:
-        return None
+        raise ValueError(f"{label} mask is empty")
     if mask.ndim == 3:
         mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
     if mask.ndim != 2 or mask.shape[:2] != template_shape[:2]:
-        logger.warning("[%s] Ignoring incompatible mask", label)
-        return None
+        raise ValueError(f"{label} mask is incompatible with the template")
     normalized = np.zeros(mask.shape[:2], dtype=np.uint8)
     normalized[mask > 0] = 255
-    return normalized if np.any(normalized) else None
+    if not np.any(normalized):
+        raise ValueError(f"{label} mask has no active pixels")
+    return normalized
 
 
 def _match_template(
@@ -133,7 +134,7 @@ class ImageMatcher:
 
     @staticmethod
     def supervision_available() -> bool:
-        return sv is not None
+        return supervision_module is not None
 
     def load_template(self, template_path: Any) -> tuple[np.ndarray, np.ndarray | None]:
         template = cv2.imread(str(template_path), cv2.IMREAD_UNCHANGED)
@@ -355,65 +356,84 @@ class ImageMatcher:
         screenshot_height, screenshot_width = screenshot.shape[:2]
         minimum_ratio = _threshold(hsv_match_threshold, 0.9)
         scaled_masks: dict[tuple[int, int], np.ndarray] = {}
-        accepted = []
-        for candidate in candidates:
-            try:
-                _, center_x, center_y, width, height = candidate[:5]
-                center_x, center_y, width, height = (
-                    float(center_x),
-                    float(center_y),
-                    float(width),
-                    float(height),
-                )
-            except (TypeError, ValueError):
-                continue
-            if not all(
-                np.isfinite(value) for value in (center_x, center_y, width, height)
-            ):
-                continue
-            center_x, center_y, width, height = (
-                int(center_x),
-                int(center_y),
-                int(width),
-                int(height),
+        return [
+            candidate
+            for candidate in candidates
+            if self._candidate_passes_hsv_gate(
+                candidate,
+                combined_mask,
+                mask,
+                scaled_masks,
+                screenshot_width,
+                screenshot_height,
+                minimum_ratio,
             )
-            if width <= 0 or height <= 0:
-                continue
-            left, top = center_x - width // 2, center_y - height // 2
-            right, bottom = left + width, top + height
-            if (
-                left < 0
-                or top < 0
-                or right > screenshot_width
-                or bottom > screenshot_height
-            ):
-                continue
-            region_mask = combined_mask[top:bottom, left:right] > 0
-            if mask is None:
-                active_count = width * height
-                matched_count = int(np.count_nonzero(region_mask))
-            else:
-                key = width, height
-                active_mask = scaled_masks.get(key)
-                if active_mask is None:
-                    active_mask = (
-                        mask > 0
-                        if mask.shape == (height, width)
-                        else cv2.resize(
-                            mask,
-                            (width, height),
-                            interpolation=cv2.INTER_NEAREST,
-                        )
-                        > 0
+        ]
+
+    @staticmethod
+    def _candidate_passes_hsv_gate(
+        candidate: tuple[Any, ...],
+        combined_mask: np.ndarray,
+        template_mask: np.ndarray | None,
+        scaled_masks: dict[tuple[int, int], np.ndarray],
+        screenshot_width: int,
+        screenshot_height: int,
+        minimum_ratio: float,
+    ) -> bool:
+        geometry = ImageMatcher._candidate_geometry(
+            candidate, screenshot_width, screenshot_height
+        )
+        if geometry is None:
+            return False
+        left, top, right, bottom, width, height = geometry
+        region_mask = combined_mask[top:bottom, left:right] > 0
+        if template_mask is None:
+            active_count = width * height
+            matched_count = int(np.count_nonzero(region_mask))
+        else:
+            mask_key = width, height
+            active_mask = scaled_masks.get(mask_key)
+            if active_mask is None:
+                active_mask = (
+                    template_mask > 0
+                    if template_mask.shape == (height, width)
+                    else cv2.resize(
+                        template_mask,
+                        (width, height),
+                        interpolation=cv2.INTER_NEAREST,
                     )
-                    scaled_masks[key] = active_mask
-                active_count = int(np.count_nonzero(active_mask))
-                if active_count <= 0:
-                    continue
-                matched_count = int(np.count_nonzero(region_mask & active_mask))
-            if matched_count / active_count >= minimum_ratio:
-                accepted.append(candidate)
-        return accepted
+                    > 0
+                )
+                scaled_masks[mask_key] = active_mask
+            active_count = int(np.count_nonzero(active_mask))
+            if active_count <= 0:
+                return False
+            matched_count = int(np.count_nonzero(region_mask & active_mask))
+        return matched_count / active_count >= minimum_ratio
+
+    @staticmethod
+    def _candidate_geometry(
+        candidate: tuple[Any, ...], screenshot_width: int, screenshot_height: int
+    ) -> tuple[int, int, int, int, int, int] | None:
+        try:
+            _, center_x, center_y, width, height = candidate[:5]
+            numeric_values = tuple(
+                float(value) for value in (center_x, center_y, width, height)
+            )
+        except (TypeError, ValueError):
+            return None
+        if not all(np.isfinite(value) for value in numeric_values):
+            return None
+        center_x, center_y, width, height = map(int, numeric_values)
+        if width <= 0 or height <= 0:
+            return None
+        left, top = center_x - width // 2, center_y - height // 2
+        right, bottom = left + width, top + height
+        if left < 0 or top < 0:
+            return None
+        if right > screenshot_width or bottom > screenshot_height:
+            return None
+        return left, top, right, bottom, width, height
 
     def _region_template_candidates(
         self,
@@ -464,9 +484,11 @@ class ImageMatcher:
         min_distance: int = 0,
     ) -> list[MatchRegion]:
         full_frame_region = self._full_frame_region(screenshot)
-        combined_mask = self._combined_hsv_mask(screenshot, hsv_ranges)
-        if combined_mask is None:
+        if hsv_ranges is None:
             return [full_frame_region]
+        combined_mask = self._combined_hsv_mask(screenshot, hsv_ranges)
+        if combined_mask is None or not np.any(combined_mask):
+            return []
         if hsv_match_threshold is not None:
             regions = self._hsv_gate_match_regions(
                 combined_mask,
@@ -478,9 +500,10 @@ class ImageMatcher:
             )
             if not regions:
                 return []
-            if (
-                len(regions) > HSV_REGION_COMPONENT_LIMIT
-                or self._regions_cover_too_much_area(regions, screenshot.shape)
+            if len(
+                regions
+            ) > HSV_REGION_COMPONENT_LIMIT or self._regions_cover_too_much_area(
+                regions, screenshot.shape
             ):
                 return [full_frame_region]
             return regions
@@ -508,10 +531,7 @@ class ImageMatcher:
     ) -> list[MatchRegion]:
         screenshot_height, screenshot_width = screenshot_shape[:2]
         template_height, template_width = template_shape[:2]
-        if (
-            template_height > screenshot_height
-            or template_width > screenshot_width
-        ):
+        if template_height > screenshot_height or template_width > screenshot_width:
             return []
         active_mask = (
             np.ones((template_height, template_width), dtype=np.float32)
@@ -722,7 +742,7 @@ class ImageMatcher:
     ) -> list[tuple[Any, ...]] | None:
         if not candidates:
             return []
-        if sv is None:
+        if supervision_module is None:
             if _SUPERVISION_IMPORT_ERROR is not None:
                 logger.debug("Supervision unavailable: %s", _SUPERVISION_IMPORT_ERROR)
             return None
@@ -731,7 +751,7 @@ class ImageMatcher:
             return []
         boxes, confidences, normalized_class_ids, indexes = arrays
         try:
-            detections = sv.Detections(
+            detections = supervision_module.Detections(
                 xyxy=boxes, confidence=confidences, class_id=normalized_class_ids
             )
             detections["candidate_index"] = indexes
@@ -764,12 +784,15 @@ class ImageMatcher:
                 scale = float(scale)
             except (TypeError, ValueError):
                 continue
-            scaled_width = int(round(float(template_width) * scale))
-            scaled_height = int(round(float(template_height) * scale))
+            if not np.isfinite(scale) or scale <= 0:
+                continue
+            try:
+                scaled_width = round(float(template_width) * scale)
+                scaled_height = round(float(template_height) * scale)
+            except OverflowError:
+                continue
             if (
-                np.isfinite(scale)
-                and scale > 0
-                and scaled_width >= MIN_SCALED_TEMPLATE_DIMENSION
+                scaled_width >= MIN_SCALED_TEMPLATE_DIMENSION
                 and scaled_height >= MIN_SCALED_TEMPLATE_DIMENSION
             ):
                 normalized.append(scale)
@@ -874,11 +897,13 @@ class ImageMatcher:
     def _normalize_hsv_range(hsv_range: Any) -> tuple[np.ndarray, np.ndarray] | None:
         try:
             lower, upper = hsv_range
-            lower = np.asarray(lower, dtype=np.int16)
-            upper = np.asarray(upper, dtype=np.int16)
-        except (TypeError, ValueError):
+            lower = np.asarray(lower, dtype=np.float64)
+            upper = np.asarray(upper, dtype=np.float64)
+        except (OverflowError, TypeError, ValueError):
             return None
         if lower.shape != (3,) or upper.shape != (3,):
+            return None
+        if not np.all(np.isfinite(lower)) or not np.all(np.isfinite(upper)):
             return None
         lower = np.array(
             [

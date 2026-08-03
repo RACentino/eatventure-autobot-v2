@@ -29,9 +29,7 @@ MAX_DRAG_STEPS = 60
 MAX_STATS_UPGRADE_CLICKS = 500
 STATS_UPGRADE_MOUSE_DOWN_DURATION = 0.0
 STATS_UPGRADE_MOUSE_UP_DURATION = 0.0
-MINIMUM_PHYSICAL_INPUT_EVENT_INTERVAL_SECONDS = (
-    config.SIXTY_FPS_FRAME_DURATION_SECONDS
-)
+MINIMUM_PHYSICAL_INPUT_EVENT_INTERVAL_SECONDS = config.SIXTY_FPS_FRAME_DURATION_SECONDS
 
 
 class StopEventLike(Protocol):
@@ -77,9 +75,7 @@ def wait_event(stop_event: StopEventLike | None, duration: Any) -> bool:
 
 def _sleep_iterations(deadline: float) -> int:
     remaining = max(0.0, deadline - time.perf_counter())
-    return min(
-        MAX_SLEEP_ITERATIONS, max(1, int(math.ceil(remaining / MIN_SLEEP_SLICE)) + 3)
-    )
+    return min(MAX_SLEEP_ITERATIONS, max(1, math.ceil(remaining / MIN_SLEEP_SLICE) + 3))
 
 
 def _as_bounds(bounds: Any) -> WindowBounds:
@@ -113,12 +109,14 @@ class MouseController:
         hover_enabled: bool | None = None,
         hover_duration: Any = None,
         mouse_device: Any = None,
+        stop_event: StopEventLike | None = None,
     ) -> None:
         self._mouse = (
             mouse_device if mouse_device is not None else pynput_mouse.Controller()
         )
         self._left_button = pynput_mouse.Button.left
         self._window_bounds_source = window_bounds_source
+        self._stop_event = stop_event
         self.click_delay = _duration(
             config.CLICK_DELAY if click_delay is None else click_delay, 0.08
         )
@@ -159,6 +157,9 @@ class MouseController:
         x, y, _, _ = self.get_window_bounds()
         return x, y
 
+    def _stopped(self) -> bool:
+        return self._stop_event is not None and self._stop_event.is_set()
+
     def _relative_position(
         self, x: Any, y: Any, relative: bool
     ) -> tuple[int, int, int, int, int, int] | None:
@@ -185,6 +186,8 @@ class MouseController:
     def _screen_position(
         self, x: Any, y: Any, relative: bool = True, check_forbidden: bool = True
     ) -> Point | None:
+        if self._stopped():
+            return None
         position = self._relative_position(x, y, relative)
         if position is None:
             return None
@@ -215,6 +218,8 @@ class MouseController:
 
     def _set_cursor(self, screen_x: int, screen_y: int, verify: bool = True) -> bool:
         for attempt in range(1, CURSOR_ATTEMPTS + 1):
+            if self._stopped():
+                return False
             try:
                 self._physical_input_event_governor.wait_for_next_dispatch()
                 self._mouse.position = (int(screen_x), int(screen_y))
@@ -254,11 +259,14 @@ class MouseController:
         duration: Any = None,
         interrupt_check: Callable[[], bool] | None = None,
     ) -> bool:
+        if self._stopped():
+            return False
+        self._left_button_is_down = True
         if not self._button(
             "left down", lambda: self._mouse.press(self._left_button), x, y
         ):
+            self._release_after_failed_sequence(x, y)
             return False
-        self._left_button_is_down = True
         wait_time = _duration(
             config.MOUSE_DOWN_DURATION if duration is None else duration,
             config.MOUSE_DOWN_DURATION,
@@ -293,6 +301,16 @@ class MouseController:
                 x,
                 y,
             )
+
+    def release_left_button(self) -> bool:
+        with self._input_lock:
+            if not self._left_button_is_down:
+                return True
+            try:
+                screen_x, screen_y = self.get_cursor_position()
+            except Exception:
+                screen_x, screen_y = 0, 0
+            return self._release_left(screen_x, screen_y, duration=0.0)
 
     @staticmethod
     def _interruptible_delay(
@@ -441,9 +459,7 @@ class MouseController:
     ) -> int | None:
         click_count = 0
         start = time.perf_counter()
-        limit = min(
-            MAX_STATS_UPGRADE_CLICKS, max(1, int(math.ceil(duration / click_delay)))
-        )
+        limit = min(MAX_STATS_UPGRADE_CLICKS, max(1, math.ceil(duration / click_delay)))
         for index in range(limit):
             if interrupt_check and interrupt_check():
                 return None
@@ -512,9 +528,13 @@ class MouseController:
         self, path: list[Point], duration: float, steps: int, start_time: float
     ) -> bool:
         for index, (screen_x, screen_y) in enumerate(path):
+            if self._stopped():
+                return False
             if not self._set_cursor(screen_x, screen_y, verify=index == steps):
                 return False
-            if not sleep_until(start_time + ((index + 1) * duration / steps)):
+            if not sleep_until(
+                start_time + ((index + 1) * duration / steps), self._stop_event
+            ):
                 return False
         return True
 
@@ -555,9 +575,7 @@ class _InterruptAdapter:
 
 class _PhysicalInputEventGovernor:
     def __init__(self) -> None:
-        self._minimum_interval_seconds = (
-            MINIMUM_PHYSICAL_INPUT_EVENT_INTERVAL_SECONDS
-        )
+        self._minimum_interval_seconds = MINIMUM_PHYSICAL_INPUT_EVENT_INTERVAL_SECONDS
         self._next_dispatch_time = 0.0
         self._dispatch_lock = threading.Lock()
 
@@ -567,9 +585,7 @@ class _PhysicalInputEventGovernor:
             if remaining > 0:
                 precise_sleep(remaining)
             dispatch_time = time.perf_counter()
-            self._next_dispatch_time = (
-                dispatch_time + self._minimum_interval_seconds
-            )
+            self._next_dispatch_time = dispatch_time + self._minimum_interval_seconds
 
     def get_minimum_interval_seconds(self) -> float:
         return self._minimum_interval_seconds

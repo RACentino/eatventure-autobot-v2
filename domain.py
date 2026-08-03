@@ -59,6 +59,7 @@ MAX_TEMPLATE_NAMES = 32
 MAX_UPGRADE_SEARCH_ATTEMPTS = 5
 MAX_LEVEL_TRANSITION_ATTEMPTS = 5
 MAX_WAIT_FOR_UNLOCK_ATTEMPTS = 4
+MAX_RUNTIME_STATE_FILE_BYTES = 4_000_000
 
 SUCCESSFUL_RED_ICON_ROWS_LIMIT = 24
 SEARCH_CYCLES_BEFORE_SCROLL = 2
@@ -78,8 +79,6 @@ UPGRADE_STATS_CYCLE_INTERVAL = 2
 
 BOT_STATE_LOOP_SLEEP_SECONDS = 0.10
 CHECK_NEW_LEVEL_PRE_CLICK_DELAY = 0.05
-CHECK_NEW_LEVEL_POST_CLICK_DELAY = 0.30
-CHECK_NEW_LEVEL_UPGRADE_CLICK_DELAY = 2.50
 TRANSITION_LEVEL_BUTTON_WAIT_SECONDS = 1.00
 TRANSITION_LEVEL_RETRY_DELAY_SECONDS = 0.20
 WAIT_FOR_UNLOCK_PRE_SCAN_DELAY = 0.05
@@ -93,7 +92,9 @@ def asset_type_value(asset_type: AssetType | str) -> str:
     return str(asset_type)
 
 
-def normalize_asset_type(value: Any, default: AssetType = AssetType.RED_ICON) -> AssetType:
+def normalize_asset_type(
+    value: Any, default: AssetType = AssetType.RED_ICON
+) -> AssetType:
     try:
         return AssetType(str(value))
     except (TypeError, ValueError):

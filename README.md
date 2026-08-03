@@ -1,4 +1,4 @@
-# Eatventure Autobot V1
+# Eatventure Autobot V2
 
 Eatventure Autobot is a Python-powered automation tool designed for the popular mobile game *Eatventure*. By leveraging advanced computer vision, state-machine logic, and adaptive AI learning, the bot autonomously manages restaurant completions with high precision and human-like interaction patterns.
 
@@ -23,7 +23,7 @@ The bot's intelligence is built upon a formal **Finite State Machine (FSM)**. Ev
 
 ### Priority and Interrupts
 
-The bot gives level transitions priority during normal state processing. Before it commits to most upgrade, box, and red-icon actions, it re-checks for the large **New Level** button or the bottom **Level Complete** indicator so completed restaurants are handled before the next search cycle continues.
+The bot gives level transitions priority during normal state processing. Before it commits to most upgrade, box, and red-icon actions, it re-checks for the large **New Level** button or the bottom **Level Complete** indicator so completed restaurants are handled before the next search cycle continues. Box actions use one fresh frame per click so a UI mutation cannot leave a queue of stale coordinates.
 
 ### Better Computer Vision
 
@@ -48,6 +48,15 @@ A comprehensive logging system tracks every decision the bot makes. It includes:
 * **Structured Tracebacks**: Detailed exception handling to prevent crashes.
 * **State Persistence**: Historical learning state is saved to JSON files, allowing the bot to retain its "knowledge" even after a restart.
 * **Performance Metrics**: Logs completion times and AI "confidence" levels for debugging.
+
+### Safety Boundaries
+
+* The configured title must identify exactly one live window; partial-title and duplicate-title matches are rejected.
+* The target is activated at startup, and every mouse action revalidates that it is still the active window.
+* Stop requests block new input and conservatively release a left button that may still be held.
+* Tracker and learner workers must report healthy startup before the bot is marked as running.
+* Restarting clears pending targets and returns the finite-state machine to `FIND_RED_ICONS`.
+* Runtime paths resolve from the project directory, not the shell's current directory.
 
 ### Forbidden Zone Configuration
 
@@ -86,6 +95,14 @@ scrcpy --window-title "EatventureAuto"
 
 *(Note: Ensure the window title matches the `WINDOW_TITLE` variable in `config.py`)*
 
+### Step 3: Run the Bot
+
+```bash
+python main.py
+```
+
+The global hotkeys are `Z` to start or stop, `X` to log the window-relative cursor position, `C` to wipe learning memory while stopped, and `P` to exit. Startup fails closed if configuration, templates, the exact target window, active-window verification, or enabled workers are unavailable.
+
 ## Telegram Notification
 
 ### Step 1: Create a Telegram Bot
@@ -99,7 +116,16 @@ scrcpy --window-title "EatventureAuto"
 1. Start a chat with your new bot and send any message.
 2. Visit `https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates` in your browser.
 3. Look for the `"chat":{"id":...}` field and copy the number.
-4. Set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, and `TELEGRAM_ENABLED = True` in `config.py` before starting the bot.
+4. Set `TELEGRAM_ENABLED = True` in `config.py`.
+5. Provide credentials through environment variables before starting the bot:
+
+```bash
+export EATVENTURE_TELEGRAM_BOT_TOKEN='replace-with-token'
+export EATVENTURE_TELEGRAM_CHAT_ID='replace-with-chat-id'
+python main.py
+```
+
+Credentials are not read from source files. Telegram's HTTP session does not inherit proxy settings from the process environment.
 
 ## Disclaimer
 

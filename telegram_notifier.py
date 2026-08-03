@@ -25,13 +25,17 @@ def _positive_timeout(value: Any, default: float) -> float:
 
 class TelegramNotifier:
     def __init__(self, bot_token: Any, chat_id: Any, enabled: bool = True) -> None:
-        self.bot_token = str(bot_token or "").strip()
-        self.chat_id = str(chat_id or "").strip()
+        self._bot_token = str(bot_token or "").strip()
+        self._chat_id = str(chat_id or "").strip()
+        if enabled and (not self._bot_token or not self._chat_id):
+            raise ValueError("Telegram is enabled but its credentials are missing")
         self.timeout = _positive_timeout(
             config.TELEGRAM_CLOSE_TIMEOUT, DEFAULT_TELEGRAM_REQUEST_TIMEOUT
         )
-        self.enabled = bool(enabled and self.bot_token and self.chat_id)
+        self.enabled = bool(enabled)
         self._session = requests.Session() if self.enabled else None
+        if self._session is not None:
+            self._session.trust_env = False
         logger.info("Telegram notifier %s", "enabled" if self.enabled else "disabled")
 
     def close(self) -> None:
@@ -46,7 +50,7 @@ class TelegramNotifier:
         text = str(message).strip()
         if not text:
             return False
-        payload = {"chat_id": self.chat_id, "text": text[:4096]}
+        payload = {"chat_id": self._chat_id, "text": text[:4096]}
         try:
             response = self._session.post(
                 self._send_message_url(),
@@ -62,7 +66,7 @@ class TelegramNotifier:
         return False
 
     def _send_message_url(self) -> str:
-        encoded_token = quote(self.bot_token, safe=":")
+        encoded_token = quote(self._bot_token, safe=":")
         return f"{TELEGRAM_API_BASE_URL}/bot{encoded_token}/sendMessage"
 
     def _notify(self, message: str) -> None:

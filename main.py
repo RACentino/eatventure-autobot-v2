@@ -1,9 +1,8 @@
 import logging
-import queue
 import sys
 import threading
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 from typing import Any
 
 from pynput import keyboard as pynput_keyboard
@@ -13,7 +12,6 @@ from bot import EatventureBot
 from mouse_controller import precise_sleep
 
 bot_instance: EatventureBot | None = None
-log_listener: QueueListener | None = None
 exit_requested = threading.Event()
 BOT_EVENT_LOOP_ITERATION_LIMIT = 2_147_483_647
 
@@ -42,9 +40,12 @@ def _toggle_bot_running(logger: logging.Logger) -> None:
     if bot_instance is None:
         return
     if bot_instance.running:
-        bot_instance.stop()
+        stopped = bot_instance.stop()
         bot_instance.telegram.notify_bot_stopped()
-        logger.info("[Z pressed] Bot STOPPED")
+        if stopped:
+            logger.info("[Z pressed] Bot STOPPED")
+        else:
+            logger.error("[Z pressed] Bot stopped with cleanup failures")
         return
     if bot_instance.start():
         bot_instance.telegram.notify_bot_started()
@@ -56,8 +57,10 @@ def _toggle_bot_running(logger: logging.Logger) -> None:
 def _wipe_bot_memory(logger: logging.Logger) -> None:
     if bot_instance is None:
         return
-    bot_instance.wipe_memory()
-    logger.info("[C pressed] AI memory wiped")
+    if bot_instance.wipe_memory():
+        logger.info("[C pressed] AI memory wiped")
+    else:
+        logger.warning("[C pressed] Stop the bot before wiping AI memory")
 
 
 def _request_program_exit(logger: logging.Logger) -> None:
@@ -91,7 +94,6 @@ def _create_keyboard_listener() -> Any:
 
 
 def setup_logging() -> None:
-    global log_listener
     logs_dir = Path(config.LOGS_DIR)
     logs_dir.mkdir(parents=True, exist_ok=True)
 
@@ -113,21 +115,11 @@ def setup_logging() -> None:
 
     root_logger = logging.getLogger()
     root_logger.setLevel(log_level)
+    for existing_handler in root_logger.handlers:
+        existing_handler.close()
     root_logger.handlers.clear()
-
-    if log_listener is not None:
-        log_listener.stop()
-
-    log_queue: queue.SimpleQueue[logging.LogRecord] = queue.SimpleQueue()
-    queue_handler = QueueHandler(log_queue)
-    root_logger.addHandler(queue_handler)
-    log_listener = QueueListener(
-        log_queue,
-        console_handler,
-        file_handler,
-        respect_handler_level=True,
-    )
-    log_listener.start()
+    root_logger.addHandler(console_handler)
+    root_logger.addHandler(file_handler)
 
 
 def _print_startup_banner() -> None:
@@ -153,10 +145,9 @@ def _run_bot_event_loop() -> None:
 
 
 def _cleanup_runtime(listener: Any | None) -> None:
-    global log_listener
     logger = logging.getLogger(__name__)
-    if bot_instance is not None and bot_instance.running:
-        bot_instance.stop()
+    if bot_instance is not None and not bot_instance.stop():
+        logger.error("Bot cleanup completed with worker or input release failures")
     if listener is not None:
         listener.stop()
         listener.join(timeout=1.0)
@@ -166,18 +157,16 @@ def _cleanup_runtime(listener: Any | None) -> None:
             bot_instance.window_capture.close()
         except Exception as exc:
             logger.debug("Window capture close failed: %s", exc)
-    if log_listener is not None:
-        log_listener.stop()
-        log_listener = None
 
 
 def main() -> int:
     global bot_instance
     listener = None
-    _print_startup_banner()
 
     try:
+        config.validate_config()
         setup_logging()
+        _print_startup_banner()
         exit_requested.clear()
         listener = _create_keyboard_listener()
         listener.start()
@@ -195,8 +184,8 @@ def main() -> int:
     except KeyboardInterrupt:
         logging.getLogger(__name__).info("Bot stopped by user (Ctrl+C)")
         return 0
-    except Exception as exc:
-        logging.getLogger(__name__).error("Fatal error: %s", exc, exc_info=True)
+    except Exception:
+        logging.getLogger(__name__).exception("Fatal error")
         return 1
     finally:
         _cleanup_runtime(listener)

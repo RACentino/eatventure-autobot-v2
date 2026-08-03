@@ -2,7 +2,6 @@ from dataclasses import dataclass
 
 import config
 
-
 FORBIDDEN_CLICK_ZONE_NAME = "FORBIDDEN_CLICK"
 NUMBERED_FORBIDDEN_ZONE_PREFIX = "FORBIDDEN_ZONE_"
 

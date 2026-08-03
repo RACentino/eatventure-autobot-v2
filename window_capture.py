@@ -6,23 +6,23 @@ import numpy as np
 
 _MSS_IMPORT_ERROR: Exception | None
 _PYWINCTL_IMPORT_ERROR: Exception | None
-mss: Any
-pywinctl: Any
+mss_module: Any = None
+pywinctl_module: Any = None
 
 try:
-    import mss
+    import mss as imported_mss
 except Exception as exc:
-    mss = None
     _MSS_IMPORT_ERROR = exc
 else:
+    mss_module = imported_mss
     _MSS_IMPORT_ERROR = None
 
 try:
-    import pywinctl
+    import pywinctl as imported_pywinctl
 except Exception as exc:
-    pywinctl = None
     _PYWINCTL_IMPORT_ERROR = exc
 else:
+    pywinctl_module = imported_pywinctl
     _PYWINCTL_IMPORT_ERROR = None
 
 logger = logging.getLogger(__name__)
@@ -93,12 +93,12 @@ class WindowCapture:
         self.hwnd = None
         self._window = None
         self._lock = threading.RLock()
-        if mss is None:
+        if mss_module is None:
             raise WindowCaptureError(
                 f"Cannot initialize screenshot backend: {_MSS_IMPORT_ERROR}"
             )
         try:
-            self._screenshotter = mss.mss()
+            self._screenshotter = mss_module.mss()
         except Exception as exc:
             raise WindowCaptureError(
                 f"Cannot initialize screenshot backend: {exc}"
@@ -128,22 +128,44 @@ class WindowCapture:
                 return None
         return getattr(window, "handle", None)
 
+    @staticmethod
+    def _title(window: Any) -> str | None:
+        try:
+            title = getattr(window, "title", None)
+        except Exception:
+            return None
+        return str(title) if title is not None else None
+
+    @staticmethod
+    def _active(window: Any) -> bool:
+        active = getattr(window, "isActive", False)
+        try:
+            return bool(active() if callable(active) else active)
+        except Exception:
+            return False
+
     def _find_window(self) -> Any | None:
-        if pywinctl is None:
+        if pywinctl_module is None:
             raise WindowCaptureError(
                 f"Could not initialize window backend: {_PYWINCTL_IMPORT_ERROR}"
             )
         try:
-            windows = pywinctl.getWindowsWithTitle(self.window_title) or []
+            windows = pywinctl_module.getWindowsWithTitle(self.window_title) or []
         except Exception as exc:
             raise WindowCaptureError(
                 f"Could not search for window '{self.window_title}': {exc}"
             ) from exc
         live_windows = [window for window in windows if self._alive(window)]
-        for window in live_windows:
-            if getattr(window, "title", None) == self.window_title:
-                return window
-        return live_windows[0] if live_windows else None
+        exact_windows = [
+            window
+            for window in live_windows
+            if self._title(window) == self.window_title
+        ]
+        if len(exact_windows) > 1:
+            raise WindowCaptureError(
+                f"Multiple live windows have title '{self.window_title}'"
+            )
+        return exact_windows[0] if exact_windows else None
 
     def ensure_window(self, resize: bool = False) -> Any:
         with self._lock:
@@ -200,6 +222,34 @@ class WindowCapture:
                 )
             return x, y, width, height
 
+    def activate_for_input(self) -> None:
+        with self._lock:
+            window = self.ensure_window()
+            activate = getattr(window, "activate", None)
+            if not callable(activate):
+                raise WindowCaptureError(
+                    f"Window '{self.window_title}' cannot be activated"
+                )
+            try:
+                activated = activate(wait=True)
+            except Exception as exc:
+                raise WindowCaptureError(
+                    f"Activating window '{self.window_title}' failed: {exc}"
+                ) from exc
+            if activated is False or not self._active(window):
+                raise WindowCaptureError(
+                    f"Window '{self.window_title}' is not the active window"
+                )
+
+    def get_input_window_rect(self) -> WindowRect:
+        with self._lock:
+            window = self.ensure_window()
+            if self._title(window) != self.window_title or not self._active(window):
+                raise WindowNotAvailableError(
+                    f"Window '{self.window_title}' is not active; input rejected"
+                )
+            return self.get_window_rect()
+
     def _window_bounds(self, window: Any) -> WindowRect:
         try:
             return _bounds_from_geometry(window.getClientFrame())
@@ -250,11 +300,14 @@ class WindowCapture:
 
     def is_window_active(self) -> bool:
         with self._lock:
-            if self._window is not None and self._alive(self._window):
-                return True
-            self._window = self._find_window()
+            if (
+                self._window is None
+                or not self._alive(self._window)
+                or self._title(self._window) != self.window_title
+            ):
+                self._window = self._find_window()
             self.hwnd = self._handle(self._window) if self._window is not None else None
-            return self._window is not None
+            return self._window is not None and self._active(self._window)
 
     def close(self) -> None:
         close_screenshotter = getattr(self._screenshotter, "close", None)

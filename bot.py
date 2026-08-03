@@ -6,7 +6,6 @@ import tempfile
 import threading
 import time
 from collections import deque
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -19,11 +18,12 @@ from domain import (
     BOX_TEMPLATE_NAMES,
     CHECK_NEW_LEVEL_PRE_CLICK_DELAY,
     CLICK_BUCKET_SIZE_PIXELS,
-    FAILED_CYCLES_BEFORE_SCROLL,
     FAILED_CLICK_BUCKET_LIMIT,
+    FAILED_CYCLES_BEFORE_SCROLL,
     ICON_MERGE_DISTANCE_PIXELS,
     LEARNING_LOOP_ITERATION_LIMIT,
     MAX_LEVEL_TRANSITION_ATTEMPTS,
+    MAX_RUNTIME_STATE_FILE_BYTES,
     MAX_TEMPLATE_FILES,
     MAX_TEMPLATE_NAMES,
     MAX_UPGRADE_SEARCH_ATTEMPTS,
@@ -41,10 +41,10 @@ from domain import (
     SUCCESSFUL_ROW_DEDUP_DISTANCE_PIXELS,
     TRANSITION_LEVEL_BUTTON_WAIT_SECONDS,
     TRANSITION_LEVEL_RETRY_DELAY_SECONDS,
-    UPGRADE_STATS_CYCLE_INTERVAL,
     UPGRADE_STATION_HOLD_MAX_VERIFY_INTERVAL,
     UPGRADE_STATION_HOLD_MIN_VERIFY_INTERVAL,
     UPGRADE_STATION_THRESHOLD_RELAXATION,
+    UPGRADE_STATS_CYCLE_INTERVAL,
     WAIT_FOR_UNLOCK_POST_CLICK_DELAY,
     WAIT_FOR_UNLOCK_PRE_SCAN_DELAY,
     WAIT_FOR_UNLOCK_RETRY_DELAY,
@@ -76,6 +76,13 @@ def _finite_float(value: Any, default: float = 0.0) -> float:
     return number if math.isfinite(number) else float(default)
 
 
+def _nonnegative_int(value: Any, default: int = 0) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return max(0, int(default))
+
+
 class RuntimePersistence:
     def __init__(self, path: str, save_interval: float) -> None:
         self.path = str(path or "")
@@ -88,7 +95,11 @@ class RuntimePersistence:
             return {}
         with self._lock:
             try:
-                with open(self.path, "r", encoding="utf-8") as handle:
+                target_path = Path(self.path)
+                if target_path.stat().st_size > MAX_RUNTIME_STATE_FILE_BYTES:
+                    logger.warning("Runtime state exceeds the configured size limit")
+                    return {}
+                with target_path.open("r", encoding="utf-8") as handle:
                     state = json.load(handle)
             except FileNotFoundError:
                 return {}
@@ -98,12 +109,12 @@ class RuntimePersistence:
         return state if isinstance(state, dict) else {}
 
     def save(self, state: dict[str, Any], force: bool = False) -> bool:
-        if not self.path:
-            return False
-        now = time.monotonic()
-        if not self._save_due(now, force):
+        if not self.path or not isinstance(state, dict):
             return False
         with self._lock:
+            now = time.monotonic()
+            if not self._save_due(now, force):
+                return False
             return self._write_state_file(state, now)
 
     def _save_due(self, now: float, force: bool) -> bool:
@@ -116,18 +127,42 @@ class RuntimePersistence:
         try:
             target_path = Path(self.path)
             target_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = json.dumps(state, indent=2, sort_keys=True)
+            if len(payload.encode("utf-8")) > MAX_RUNTIME_STATE_FILE_BYTES:
+                logger.error("Runtime state exceeds the configured size limit")
+                return False
             with tempfile.NamedTemporaryFile(
                 "w", encoding="utf-8", dir=target_path.parent, delete=False
             ) as handle:
-                json.dump(state, handle, indent=2, sort_keys=True)
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
                 temp_path = handle.name
-            os.replace(temp_path, self.path)
+            os.replace(temp_path, target_path)
+            self._sync_directory(target_path.parent)
             self._last_save_time = now
             return True
         except (OSError, TypeError, ValueError) as exc:
             logger.error("Failed to persist runtime state: %s", exc)
             self._remove_temp_state_file(temp_path)
             return False
+
+    @staticmethod
+    def _sync_directory(directory: Path) -> None:
+        if os.name == "nt":
+            return
+        try:
+            directory_descriptor = os.open(directory, os.O_RDONLY)
+        except OSError as exc:
+            logger.debug("Directory sync is unavailable: %s", exc)
+            return
+        try:
+            try:
+                os.fsync(directory_descriptor)
+            except OSError as exc:
+                logger.debug("Directory sync failed: %s", exc)
+        finally:
+            os.close(directory_descriptor)
 
     @staticmethod
     def _remove_temp_state_file(temp_path: str | None) -> None:
@@ -280,31 +315,43 @@ class HistoricalLearner:
             self._records = [item for item in records if isinstance(item, dict)]
             self._records = self._records[-config.AI_LEARNING_RECORDS_LIMIT :]
         self._total_completions = max(
-            0, int(state.get("total_completions", len(self._records)) or 0)
+            0,
+            _nonnegative_int(state.get("total_completions"), len(self._records)),
         )
-        self._last_processed_batch = max(
-            0, int(state.get("last_processed_batch", 0) or 0)
-        )
+        self._last_processed_batch = _nonnegative_int(state.get("last_processed_batch"))
         self._tuned_behavior = self.sanitize_behavior(state.get("tuned_behavior", {}))
         if self._tuned_behavior:
             self.bot.apply_learned_behavior(self._tuned_behavior)
 
-    def start(self) -> None:
+    def start(self) -> bool:
         if not self.enabled:
-            return
-        if self._thread is not None and self._thread.is_alive():
-            return
-        self._stop.clear()
-        self._thread = threading.Thread(
-            target=self._loop, name="historical_learner", daemon=True
-        )
-        self._thread.start()
+            return True
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                return not self._stop.is_set()
+            self._stop.clear()
+            self._thread = threading.Thread(
+                target=self._loop, name="historical_learner", daemon=True
+            )
+            self._thread.start()
+            return self._thread.is_alive()
 
-    def stop(self) -> None:
+    def stop(self) -> bool:
+        if not self.enabled:
+            return True
         self._stop.set()
-        if self._thread is not None and self._thread.is_alive():
-            self._thread.join(timeout=config.AI_LEARNING_THREAD_JOIN_TIMEOUT)
+        with self._lock:
+            worker_thread = self._thread
+        if worker_thread is not None and worker_thread.is_alive():
+            worker_thread.join(timeout=config.AI_LEARNING_THREAD_JOIN_TIMEOUT)
+        stopped = worker_thread is None or not worker_thread.is_alive()
+        if stopped:
+            with self._lock:
+                self._thread = None
         self._persist(force=True)
+        if not stopped:
+            logger.error("Historical learner did not stop before timeout")
+        return stopped
 
     def record_completion(self, seconds_spent: float, source: str) -> None:
         if not self.enabled or seconds_spent <= 0:
@@ -347,10 +394,11 @@ class HistoricalLearner:
         with self._lock:
             records = list(self._records[-self.batch_window :])
             batch_marker = self._total_completions // self.batch_window
-        if batch_marker <= self._last_processed_batch:
-            return
-        self._last_processed_batch = batch_marker
-        if time.monotonic() - self._last_apply_time < self.apply_cooldown:
+            if batch_marker <= self._last_processed_batch:
+                return
+            self._last_processed_batch = batch_marker
+            last_apply_time = self._last_apply_time
+        if time.monotonic() - last_apply_time < self.apply_cooldown:
             self._persist()
             return
         valid = [
@@ -366,9 +414,13 @@ class HistoricalLearner:
             if duration > 0 and behavior
         ]
         if valid and self._profile_improves(valid):
-            self._tuned_behavior = self._blend_profiles(sorted(valid)[: self.top_k])
-            self.bot.apply_learned_behavior(self._tuned_behavior)
-            self._last_apply_time = time.monotonic()
+            tuned_behavior = self._blend_profiles(
+                sorted(valid, key=lambda item: item[0])[: self.top_k]
+            )
+            with self._lock:
+                self._tuned_behavior = tuned_behavior
+                self._last_apply_time = time.monotonic()
+            self.bot.apply_learned_behavior(tuned_behavior)
         self._persist()
 
     def _profile_improves(self, valid: list[tuple[float, dict[str, float]]]) -> bool:
@@ -397,10 +449,10 @@ class HistoricalLearner:
             return
         with self._lock:
             state = {
-                "records": self._records[-config.AI_LEARNING_RECORDS_LIMIT :],
+                "records": list(self._records[-config.AI_LEARNING_RECORDS_LIMIT :]),
                 "total_completions": self._total_completions,
                 "last_processed_batch": self._last_processed_batch,
-                "tuned_behavior": self._tuned_behavior,
+                "tuned_behavior": dict(self._tuned_behavior),
             }
         if not self.persistence.save(state, force=force):
             logger.debug("Historical learner state was not persisted")
@@ -445,15 +497,17 @@ class EatventureBot:
     def __init__(self) -> None:
         logger.info("Initializing Eatventure Bot")
         self._stop_requested = threading.Event()
-        self._step_active = threading.Event()
+        self._lifecycle_lock = threading.RLock()
+        self._step_lock = threading.Lock()
         self.window_capture = WindowCapture(
             config.WINDOW_TITLE, config.WINDOW_WIDTH, config.WINDOW_HEIGHT
         )
         self.image_matcher = ImageMatcher(config.MATCH_THRESHOLD)
         self.mouse_controller = MouseController(
-            self.window_capture.get_window_rect,
+            self.window_capture.get_input_window_rect,
             config.CLICK_DELAY,
             config.MOUSE_MOVE_DELAY,
+            stop_event=self._stop_requested,
         )
         self.state_machine = StateMachine(State.FIND_RED_ICONS)
         self.telegram = TelegramNotifier(
@@ -475,14 +529,17 @@ class EatventureBot:
 
     def _reset_runtime_state(self) -> None:
         self.running = False
+        self.total_levels_completed = 0
+        self.current_level_started_at: float | None = None
+        self._reset_action_state()
+
+    def _reset_action_state(self) -> None:
         self.red_icons: list[RedIcon] = []
         self.current_red_icon_index = 0
         self.wait_for_unlock_attempts = 0
         self.max_wait_for_unlock_attempts = MAX_WAIT_FOR_UNLOCK_ATTEMPTS
-        self.work_done = False
         self.cycle_counter = 0
         self.upgrade_station_counter = 0
-        self.red_icon_processed_count = 0
         self.consecutive_failed_cycles = 0
         self.upgrade_found_in_cycle = False
         self.upgrade_station_pos: tuple[int, int] | None = None
@@ -491,12 +548,9 @@ class EatventureBot:
         self.successful_red_icon_positions: deque[int] = deque(
             maxlen=SUCCESSFUL_RED_ICON_ROWS_LIMIT
         )
-        self.total_levels_completed = 0
-        self.current_level_start_time: datetime | None = None
         self.scroll_direction = 1
         self.scroll_cycle_index = 1
         self.scroll_cycle_progress = 0
-        self.forbidden_zones = list(config.NUMBERED_FORBIDDEN_ZONE_BOUNDS)
 
     def load_templates(self) -> dict[str, TemplatePair]:
         templates: dict[str, TemplatePair] = {}
@@ -545,37 +599,55 @@ class EatventureBot:
 
     def request_stop(self) -> None:
         self._stop_requested.set()
+        self.mouse_controller.release_left_button()
 
     def start(self) -> bool:
-        if self.running:
+        with self._lifecycle_lock:
+            if self.running:
+                return True
+            if self._step_lock.locked() or not self.ready:
+                logger.warning(
+                    "Cannot start bot while not ready or while a step is active"
+                )
+                return False
+            try:
+                self.window_capture.ensure_window(resize=True)
+                self.window_capture.activate_for_input()
+                self.window_capture.get_input_window_rect()
+            except WindowCaptureError as exc:
+                logger.error("Cannot start bot: %s", exc)
+                return False
+            self._stop_requested.clear()
+            self._reset_action_state()
+            self.state_machine.reset()
+            self.asset_tracker.reset()
+            if config.ASSET_TRACKING_ENABLED and not self.asset_tracker.start():
+                self._stop_requested.set()
+                return False
+            if not self.historical_learner.start():
+                self._stop_requested.set()
+                self.asset_tracker.stop()
+                return False
+            self.current_level_started_at = time.monotonic()
+            self.running = True
             return True
-        if self._step_active.is_set() or not self.ready:
-            logger.warning("Cannot start bot while not ready or while a step is active")
-            return False
-        try:
-            self.window_capture.ensure_window(resize=True)
-        except WindowCaptureError as exc:
-            logger.error("Cannot start bot: %s", exc)
-            return False
-        self._stop_requested.clear()
-        self.running = True
-        self.current_level_start_time = self.current_level_start_time or datetime.now()
-        self.asset_tracker.start()
-        self.historical_learner.start()
-        return True
 
-    def stop(self) -> None:
-        self._stop_requested.set()
-        self.running = False
-        self.asset_tracker.stop()
-        self.historical_learner.stop()
+    def stop(self) -> bool:
+        with self._lifecycle_lock:
+            self._stop_requested.set()
+            self.running = False
+            input_released = self.mouse_controller.release_left_button()
+            tracker_stopped = self.asset_tracker.stop()
+            learner_stopped = self.historical_learner.stop()
+            return input_released and tracker_stopped and learner_stopped
 
     def step(self) -> bool:
-        if self._step_active.is_set():
+        if not self._step_lock.acquire(blocking=False):
             logger.warning("Ignoring reentrant bot step")
             return False
-        self._step_active.set()
         try:
+            if not self.running:
+                return False
             if (
                 self._stop_requested.is_set()
                 or not self.window_capture.is_window_active()
@@ -593,7 +665,7 @@ class EatventureBot:
         except Exception:
             logger.exception("Stopping bot due to unexpected state-handler failure")
         finally:
-            self._step_active.clear()
+            self._step_lock.release()
         self.stop()
         return False
 
@@ -624,14 +696,19 @@ class EatventureBot:
         self.tuner.apply_profile(learned)
         self._apply_tuning()
 
-    def wipe_memory(self) -> None:
-        self.tuner.reset()
-        self.asset_tracker.reset()
-        self.historical_learner.reset()
-        self.successful_red_icon_positions.clear()
-        self.failed_click_tracker.clear()
-        self.current_level_start_time = datetime.now() if self.running else None
-        self._apply_tuning()
+    def wipe_memory(self) -> bool:
+        with self._lifecycle_lock:
+            if self.running or self._step_lock.locked():
+                logger.warning("Cannot wipe memory while the bot is running")
+                return False
+            self.tuner.reset()
+            self.asset_tracker.reset()
+            self.historical_learner.reset()
+            self.successful_red_icon_positions.clear()
+            self.failed_click_tracker.clear()
+            self.current_level_started_at = None
+            self._apply_tuning()
+            return True
 
     def _template(self, name: str) -> TemplatePair | None:
         return self.templates.get(name)
@@ -715,10 +792,7 @@ class EatventureBot:
             height, width = template.shape[:2]
             candidates = self.image_matcher.filter_candidates_by_hsv(
                 screenshot,
-                [
-                    (confidence, x, y, width, height)
-                    for confidence, x, y in matches
-                ],
+                [(confidence, x, y, width, height) for confidence, x, y in matches],
                 template,
                 mask=mask,
                 hsv_ranges=config.RED_ICON_HSV_RANGES,
@@ -919,9 +993,12 @@ class EatventureBot:
             match = self._find_upgrade_station(threshold, use_tracked=False)
             if match is not None:
                 return match
-            if wait_between_attempts and attempt < attempts - 1:
-                if not self._sleep(config.UPGRADE_STATION_VERIFY_SEARCH_INTERVAL):
-                    return None
+            if (
+                wait_between_attempts
+                and attempt < attempts - 1
+                and not self._sleep(config.UPGRADE_STATION_VERIFY_SEARCH_INTERVAL)
+            ):
+                return None
         return None
 
     def _upgrade_candidates(
@@ -1098,8 +1175,8 @@ class EatventureBot:
         self.scroll_cycle_progress = 0
 
     def _scroll(self) -> bool:
-        distance = int(
-            round(float(config.SCROLL_PIXEL_STEP) * float(config.SCROLL_DISTANCE_RATIO))
+        distance = round(
+            float(config.SCROLL_PIXEL_STEP) * float(config.SCROLL_DISTANCE_RATIO)
         )
         start_x, start_y = config.SCROLL_START_POS
         moved = self.mouse_controller.drag(
@@ -1112,7 +1189,8 @@ class EatventureBot:
         )
         if not moved or not self._sleep(config.POST_SCROLL_SETTLE):
             return False
-        self._sleep(config.SCROLL_INTERVAL_PAUSE)
+        if not self._sleep(config.SCROLL_INTERVAL_PAUSE):
+            return False
         self.scroll_cycle_progress += 1
         cycle_limit = max(
             1, self.scroll_cycle_index * int(config.SCROLL_INCREMENT_STEP)
@@ -1127,18 +1205,6 @@ class EatventureBot:
                 else:
                     self.scroll_cycle_index += 1
         return True
-
-    def _perform_upward_verification_scroll(self) -> bool:
-        original_scroll_direction = self.scroll_direction
-        original_scroll_cycle_index = self.scroll_cycle_index
-        original_scroll_cycle_progress = self.scroll_cycle_progress
-        try:
-            self.scroll_direction = UPWARD_OSCILLATING_SCROLL_DIRECTION
-            return self._scroll()
-        finally:
-            self.scroll_direction = original_scroll_direction
-            self.scroll_cycle_index = original_scroll_cycle_index
-            self.scroll_cycle_progress = original_scroll_cycle_progress
 
     def _find_new_level_red_icon(self) -> RedIcon | None:
         screenshot = self.window_capture.capture(max_y=config.EXTENDED_SEARCH_Y)
@@ -1157,23 +1223,22 @@ class EatventureBot:
     def _record_level_completion(self, source: str) -> float:
         self.total_levels_completed += 1
         elapsed = 0.0
-        if self.current_level_start_time is not None:
-            elapsed = max(
-                0.0, (datetime.now() - self.current_level_start_time).total_seconds()
-            )
-        self.current_level_start_time = datetime.now()
+        now = time.monotonic()
+        if self.current_level_started_at is not None:
+            elapsed = max(0.0, now - self.current_level_started_at)
+        self.current_level_started_at = now
         self._reset_search_cycle()
         self.telegram.notify_new_level(self.total_levels_completed, elapsed)
         self.historical_learner.record_completion(elapsed, source)
         return elapsed
 
     def handle_find_red_icons(self) -> StateResult:
-        self._click_idle()
+        if not self._click_idle():
+            return State.FIND_RED_ICONS
         self.cycle_counter += 1
         if self.cycle_counter >= SEARCH_CYCLES_BEFORE_SCROLL:
             self.cycle_counter = 0
             return State.SCROLL
-        self.work_done = False
         screenshot = self.window_capture.capture(max_y=config.EXTENDED_SEARCH_Y)
         found, _, x, y = self._find_new_level_button(
             screenshot[: config.MAX_SEARCH_Y, :]
@@ -1205,7 +1270,6 @@ class EatventureBot:
             return State.OPEN_BOXES
         self.red_icons = sorted(stable_icons, key=self._red_icon_priority)
         self.current_red_icon_index = 0
-        self.work_done = True
         logger.info("%s red icons ready to process", len(self.red_icons))
         return State.CLICK_RED_ICON
 
@@ -1251,7 +1315,8 @@ class EatventureBot:
             x, y, relative=True
         ):
             logger.info("Unlock found at (%s, %s) [%.3f]", x, y, confidence)
-            self.mouse_controller.click(x, y, relative=True)
+            if not self.mouse_controller.click(x, y, relative=True):
+                return State.CHECK_UNLOCK
         return State.SEARCH_UPGRADE_STATION
 
     def handle_search_upgrade_station(self) -> StateResult:
@@ -1282,7 +1347,6 @@ class EatventureBot:
             ):
                 return State.OPEN_BOXES
         self._record_failed_click()
-        self.red_icon_processed_count += 1
         self.consecutive_failed_cycles += 1
         self.tuner.record_search_result(False)
         self._apply_tuning()
@@ -1292,7 +1356,11 @@ class EatventureBot:
     def handle_hold_upgrade_station(self) -> StateResult:
         if self.upgrade_station_pos is None:
             return State.OPEN_BOXES
-        x, y = self.upgrade_station_pos
+        threshold = float(config.UPGRADE_STATION_THRESHOLD)
+        match = self._verified_upgrade_station_or_clear(threshold)
+        if match is None:
+            return State.OPEN_BOXES
+        _, x, y = match
         if self.mouse_controller.is_in_forbidden_zone(x, y, relative=True):
             logger.warning(
                 "Upgrade station blocked by forbidden zone at (%s, %s)", x, y
@@ -1308,18 +1376,8 @@ class EatventureBot:
             return State.OPEN_BOXES
         if not self._sleep(config.UPGRADE_STATION_VERIFY_SETTLE_DELAY):
             return State.OPEN_BOXES
-        threshold = float(config.UPGRADE_STATION_THRESHOLD)
-        match = self._verify_upgrade_station(
-            threshold,
-            max(0.0, threshold - UPGRADE_STATION_THRESHOLD_RELAXATION),
-            wait_between_attempts=True,
-        )
+        match = self._verified_upgrade_station_or_clear(threshold)
         if match is None:
-            logger.info("Upgrade station disappeared before hold")
-            self.upgrade_station_pos = None
-            self.upgrade_found_in_cycle = False
-            self.tuner.record_search_result(False)
-            self._apply_tuning()
             return State.OPEN_BOXES
         _, x, y = match
         self.upgrade_station_pos = (x, y)
@@ -1338,18 +1396,33 @@ class EatventureBot:
         if not held and not monitor.station_lost:
             return State.OPEN_BOXES
         self._remember_successful_row()
-        self.red_icon_processed_count += 1
         self.upgrade_station_pos = None
-        self._click_idle()
-        self._sleep(config.STATE_DELAY)
+        if not self._click_idle() or not self._sleep(config.STATE_DELAY):
+            return State.OPEN_BOXES
         self.upgrade_station_counter += 1
         if self.upgrade_station_counter >= UPGRADE_STATS_CYCLE_INTERVAL:
             self.upgrade_station_counter = 0
             return State.UPGRADE_STATS
         return State.OPEN_BOXES
 
+    def _verified_upgrade_station_or_clear(self, threshold: float) -> RedIcon | None:
+        match = self._verify_upgrade_station(
+            threshold,
+            max(0.0, threshold - UPGRADE_STATION_THRESHOLD_RELAXATION),
+            wait_between_attempts=True,
+        )
+        if match is not None:
+            return match
+        logger.info("Upgrade station disappeared before hold")
+        self.upgrade_station_pos = None
+        self.upgrade_found_in_cycle = False
+        self.tuner.record_search_result(False)
+        self._apply_tuning()
+        return None
+
     def handle_upgrade_stats(self) -> StateResult:
-        self._click_idle()
+        if not self._click_idle():
+            return State.OPEN_BOXES
         screenshot = self.window_capture.capture(max_y=config.EXTENDED_SEARCH_Y)
         found, _, _, _ = self._find_new_level_button(
             screenshot[: config.MAX_SEARCH_Y, :]
@@ -1372,7 +1445,8 @@ class EatventureBot:
             *config.STATS_UPGRADE_BUTTON_POS, relative=True
         ):
             return State.OPEN_BOXES
-        self._sleep(config.STATE_DELAY)
+        if not self._sleep(config.STATE_DELAY):
+            return State.OPEN_BOXES
         clicked = self.mouse_controller.click_stats_upgrade_at(
             *config.STATS_UPGRADE_POS,
             duration=config.STATS_UPGRADE_CLICK_DURATION,
@@ -1386,7 +1460,8 @@ class EatventureBot:
         return State.OPEN_BOXES
 
     def handle_open_boxes(self) -> StateResult:
-        self._click_idle()
+        if not self._click_idle():
+            return State.FIND_RED_ICONS
         screenshot = self.window_capture.capture(max_y=config.BOX_SEARCH_Y)
         found, _, _, _ = self._find_new_level_button(
             screenshot[: config.MAX_SEARCH_Y, :]
@@ -1400,15 +1475,15 @@ class EatventureBot:
             candidates = self._box_candidates(
                 self.window_capture.capture(max_y=config.BOX_SEARCH_Y)
             )
-        boxes_found = 0
+        box_opened = False
         for _, x, y, _, _, _ in candidates:
-            if not self.mouse_controller.is_in_forbidden_zone(x, y, relative=True):
-                boxes_found += (
-                    1 if self.mouse_controller.click(x, y, relative=True) else 0
-                )
-        if boxes_found:
-            self.work_done = True
-            logger.info("Opened %s boxes", boxes_found)
+            if self.mouse_controller.is_in_forbidden_zone(x, y, relative=True):
+                continue
+            box_opened = self.mouse_controller.click(x, y, relative=True)
+            break
+        if box_opened:
+            logger.info("Opened one box")
+            return State.OPEN_BOXES
         if self.upgrade_found_in_cycle:
             self.upgrade_found_in_cycle = False
             self.cycle_counter = 0
@@ -1426,14 +1501,16 @@ class EatventureBot:
 
     def handle_scroll(self) -> StateResult:
         self.failed_click_tracker.clear()
-        self._click_idle()
+        if not self._click_idle():
+            return State.SCROLL
         screenshot = self.window_capture.capture(max_y=config.MAX_SEARCH_Y)
         found, _, _, _ = self._find_new_level_button(screenshot)
         if found:
             return State.TRANSITION_LEVEL
         if not self._scroll():
             logger.debug("Scroll action did not complete")
-        self._click_idle()
+        if not self._click_idle():
+            return State.SCROLL
         self.cycle_counter = 0
         return State.FIND_RED_ICONS
 
@@ -1484,7 +1561,8 @@ class EatventureBot:
         return State.TRANSITION_LEVEL
 
     def handle_transition_level(self) -> StateResult:
-        self._click_idle()
+        if not self._click_idle():
+            return State.CHECK_NEW_LEVEL
         for attempt in range(MAX_LEVEL_TRANSITION_ATTEMPTS):
             found, _, x, y = self._find_new_level_button(
                 self.window_capture.capture(max_y=config.MAX_SEARCH_Y)
@@ -1492,7 +1570,8 @@ class EatventureBot:
             if found:
                 if not self.mouse_controller.click(x, y, relative=True):
                     return State.CHECK_NEW_LEVEL
-                self._sleep(TRANSITION_LEVEL_BUTTON_WAIT_SECONDS)
+                if not self._sleep(TRANSITION_LEVEL_BUTTON_WAIT_SECONDS):
+                    return State.CHECK_NEW_LEVEL
                 elapsed = self._record_level_completion("transition")
                 logger.info(
                     "Level %s completed. Time spent: %.1fs",
@@ -1500,22 +1579,25 @@ class EatventureBot:
                     elapsed,
                 )
                 return State.WAIT_FOR_UNLOCK
-            if attempt < MAX_LEVEL_TRANSITION_ATTEMPTS - 1:
-                self._sleep(TRANSITION_LEVEL_RETRY_DELAY_SECONDS)
+            if attempt < MAX_LEVEL_TRANSITION_ATTEMPTS - 1 and not self._sleep(
+                TRANSITION_LEVEL_RETRY_DELAY_SECONDS
+            ):
+                return State.CHECK_NEW_LEVEL
         logger.warning("New level button not found after transition attempts")
         self._reset_search_cycle()
         return State.FIND_RED_ICONS
 
     def handle_wait_for_unlock(self) -> StateResult:
-        self._click_idle()
-        self._sleep(WAIT_FOR_UNLOCK_PRE_SCAN_DELAY)
+        if not self._click_idle() or not self._sleep(WAIT_FOR_UNLOCK_PRE_SCAN_DELAY):
+            return State.WAIT_FOR_UNLOCK
         self.wait_for_unlock_attempts += 1
         if self.wait_for_unlock_attempts > self.max_wait_for_unlock_attempts:
             self._reset_search_cycle()
             return State.FIND_RED_ICONS
         template_pair = self._template(TemplateName.UNLOCK.value)
         if template_pair is None:
-            self._sleep(WAIT_FOR_UNLOCK_RETRY_DELAY)
+            if not self._sleep(WAIT_FOR_UNLOCK_RETRY_DELAY):
+                return State.WAIT_FOR_UNLOCK
             return State.WAIT_FOR_UNLOCK
         template, mask = template_pair
         found, confidence, x, y = self.image_matcher.find_template(
@@ -1526,11 +1608,13 @@ class EatventureBot:
             template_name=TemplateName.UNLOCK.value,
         )
         if not found or self.mouse_controller.is_in_forbidden_zone(x, y, relative=True):
-            self._sleep(WAIT_FOR_UNLOCK_RETRY_DELAY)
+            if not self._sleep(WAIT_FOR_UNLOCK_RETRY_DELAY):
+                return State.WAIT_FOR_UNLOCK
             return State.WAIT_FOR_UNLOCK
         logger.info("Unlock button found at (%s, %s) [%.3f]", x, y, confidence)
         if not self.mouse_controller.click(x, y, relative=True):
             return State.WAIT_FOR_UNLOCK
-        self._sleep(WAIT_FOR_UNLOCK_POST_CLICK_DELAY)
+        if not self._sleep(WAIT_FOR_UNLOCK_POST_CLICK_DELAY):
+            return State.WAIT_FOR_UNLOCK
         self._reset_search_cycle()
         return State.FIND_RED_ICONS

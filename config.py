@@ -1,11 +1,15 @@
-# Paths
+import math
+import os
+from pathlib import Path
+from typing import Any
 
-# Path to the image template assets directory (relative to project root).
-ASSETS_DIR = "assets"
+PROJECT_ROOT = Path(__file__).resolve().parent
 
-# Path to the runtime log output directory (relative to project root).
-LOGS_DIR = "logs"
+# Path to the image template assets directory.
+ASSETS_DIR = str(PROJECT_ROOT / "assets")
 
+# Path to the runtime log output directory.
+LOGS_DIR = str(PROJECT_ROOT / "logs")
 
 
 # Window and Logging
@@ -24,7 +28,6 @@ DEBUG = False
 
 # Duration of a single frame at 60 FPS. Used as the base unit for input-event timing so physical dispatch matches display refresh rate.
 SIXTY_FPS_FRAME_DURATION_SECONDS = 0.016
-
 
 
 # Supervision NMS
@@ -52,7 +55,6 @@ SUPERVISION_RED_ICON_NMS_IOU_THRESHOLD = 0.20
 
 # IoU threshold for supervision NMS on upgrade station detections.
 SUPERVISION_UPGRADE_STATION_NMS_IOU_THRESHOLD = 0.20
-
 
 
 # ByteTrack Asset Tracking
@@ -100,7 +102,6 @@ ASSET_TRACKING_BOX_ENABLED = True
 ASSET_TRACKING_THREAD_JOIN_TIMEOUT = 2.0
 
 
-
 # SCRCPY Recovery
 
 # Enables a short retry delay after SCRCPY capture misses.
@@ -111,7 +112,6 @@ SCRCPY_RED_ICON_MISS_RECOVERY_DELAY = 0.1
 
 # Retry delay after a box scan miss.
 SCRCPY_BOX_MISS_RECOVERY_DELAY = 0.1
-
 
 
 # Vision Matching
@@ -165,15 +165,13 @@ UNLOCK_THRESHOLD = 0.905
 NEW_LEVEL_THRESHOLD = 0.965
 
 # Minimum red icon templates that must agree outside fast mode.
-RED_ICON_MIN_MATCHES = 4 
+RED_ICON_MIN_MATCHES = 4
 
 # Enables single-template red icon_scan mode for faster passes.
 RED_ICON_FAST_MODE_ENABLED = True
 
 # Red icon template names used when fast mode is enabled.
-RED_ICON_FAST_TEMPLATE_NAMES = (
-    "RedIcon15",
-)
+RED_ICON_FAST_TEMPLATE_NAMES = ("RedIcon15",)
 
 # Minimum pixel distance between fast-mode red icon matches.
 RED_ICON_FAST_MIN_DISTANCE = 32
@@ -233,21 +231,19 @@ STATS_UPGRADE_CLICK_DURATION = 1.75
 STATS_UPGRADE_CLICK_DELAY = 0.016
 
 
-
 # Telegram Notifications
 
 # Enables Telegram notifications.
 TELEGRAM_ENABLED = False
 
 # Telegram bot token used for notification delivery.
-TELEGRAM_BOT_TOKEN = ""
+TELEGRAM_BOT_TOKEN = os.environ.get("EATVENTURE_TELEGRAM_BOT_TOKEN", "").strip()
 
 # Telegram chat identifier that receives notifications.
-TELEGRAM_CHAT_ID = ""
+TELEGRAM_CHAT_ID = os.environ.get("EATVENTURE_TELEGRAM_CHAT_ID", "").strip()
 
 # Maximum Telegram request timeout in seconds.
 TELEGRAM_CLOSE_TIMEOUT = 5.0
-
 
 
 # Capture Regions
@@ -263,7 +259,6 @@ UPGRADE_STATION_SEARCH_Y = 760
 
 # Vertical capture area for box searches.
 BOX_SEARCH_Y = 780
-
 
 
 # Click Coordinates
@@ -285,7 +280,6 @@ NEW_LEVEL_BUTTON_POS = (30, 692)
 
 # Relative coordinate for the level transition confirmation.
 LEVEL_TRANSITION_POS = (174, 520)
-
 
 
 # Icon Regions and Offsets
@@ -321,7 +315,6 @@ UPGRADE_RED_ICON_Y_MIN = 665
 UPGRADE_RED_ICON_Y_MAX = 680
 
 
-
 # Scrolling
 
 # Pixel distance for each scroll drag.
@@ -344,7 +337,6 @@ POST_SCROLL_SETTLE = 0.15
 
 # Duration of the scroll drag gesture.
 SCROLL_DURATION = 0.3
-
 
 
 # Adaptive Runtime Tuning
@@ -404,14 +396,13 @@ ADAPTIVE_TUNER_MIN_SEARCH_INTERVAL = 0.2
 ADAPTIVE_TUNER_MAX_SEARCH_INTERVAL = 1.0
 
 
-
 # Historical Learning
 
 # Enables historical learning from completed levels.
 AI_LEARNING_ENABLED = False
 
-# Path for persisted historical learning state (relative to project root).
-AI_LEARNING_STATE_FILE = "memory/learning_state_stable.json"
+# Path for persisted historical learning state.
+AI_LEARNING_STATE_FILE = str(PROJECT_ROOT / "memory" / "learning_state_stable.json")
 
 # Minimum interval between historical learning state saves.
 AI_LEARNING_SAVE_INTERVAL = 300.0
@@ -462,7 +453,6 @@ AI_LEARNING_MAX_SEARCH_INTERVAL = 1.0
 LEARNING_LOOP_MIN_SLEEP = 0.1
 
 
-
 # Forbidden Zones
 
 # Minimum x-coordinate for the general forbidden click band.
@@ -481,3 +471,73 @@ NUMBERED_FORBIDDEN_ZONE_BOUNDS = (
     (145, 200, 65, 110),
     (55, 260, 660, 725),
 )
+
+
+def _validate_finite_number(
+    name: str, value: Any, minimum: float, maximum: float | None = None
+) -> str | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return f"{name} must be numeric"
+    if not math.isfinite(number) or number < minimum:
+        return f"{name} must be finite and at least {minimum}"
+    if maximum is not None and number > maximum:
+        return f"{name} must not exceed {maximum}"
+    return None
+
+
+def _validate_position(name: str, position: object) -> str | None:
+    if not isinstance(position, tuple) or len(position) != 2:
+        return f"{name} must be a two-item tuple"
+    try:
+        position_x, position_y = int(position[0]), int(position[1])
+    except (TypeError, ValueError):
+        return f"{name} coordinates must be integers"
+    if not (0 <= position_x < WINDOW_WIDTH and 0 <= position_y < WINDOW_HEIGHT):
+        return f"{name} must be inside the configured window"
+    return None
+
+
+def validate_config() -> None:
+    errors: list[str] = []
+    if not isinstance(WINDOW_TITLE, str) or not WINDOW_TITLE.strip():
+        errors.append("WINDOW_TITLE must be a non-empty string")
+    numeric_bounds = (
+        ("WINDOW_WIDTH", WINDOW_WIDTH, 1, None),
+        ("WINDOW_HEIGHT", WINDOW_HEIGHT, 1, None),
+        ("MAX_SEARCH_Y", MAX_SEARCH_Y, 1, WINDOW_HEIGHT),
+        ("EXTENDED_SEARCH_Y", EXTENDED_SEARCH_Y, 1, WINDOW_HEIGHT),
+        ("UPGRADE_STATION_SEARCH_Y", UPGRADE_STATION_SEARCH_Y, 1, WINDOW_HEIGHT),
+        ("BOX_SEARCH_Y", BOX_SEARCH_Y, 1, WINDOW_HEIGHT),
+        ("MATCH_THRESHOLD", MATCH_THRESHOLD, 0, 1),
+        ("RED_ICON_THRESHOLD", RED_ICON_THRESHOLD, 0, 1),
+        ("UPGRADE_STATION_THRESHOLD", UPGRADE_STATION_THRESHOLD, 0, 1),
+        ("BOX_THRESHOLD", BOX_THRESHOLD, 0, 1),
+        ("UNLOCK_THRESHOLD", UNLOCK_THRESHOLD, 0, 1),
+        ("NEW_LEVEL_THRESHOLD", NEW_LEVEL_THRESHOLD, 0, 1),
+        ("CLICK_DELAY", CLICK_DELAY, 0, None),
+        ("MOUSE_MOVE_DELAY", MOUSE_MOVE_DELAY, 0, None),
+        ("ASSET_TRACKING_MAX_SNAPSHOT_AGE", ASSET_TRACKING_MAX_SNAPSHOT_AGE, 0, None),
+        ("AI_LEARNING_RECORDS_LIMIT", AI_LEARNING_RECORDS_LIMIT, 1, None),
+    )
+    for name, value, minimum, maximum in numeric_bounds:
+        if error := _validate_finite_number(name, value, minimum, maximum):
+            errors.append(error)
+    for name, position in (
+        ("IDLE_CLICK_POS", IDLE_CLICK_POS),
+        ("STATS_UPGRADE_BUTTON_POS", STATS_UPGRADE_BUTTON_POS),
+        ("STATS_UPGRADE_POS", STATS_UPGRADE_POS),
+        ("SCROLL_START_POS", SCROLL_START_POS),
+        ("NEW_LEVEL_BUTTON_POS", NEW_LEVEL_BUTTON_POS),
+        ("LEVEL_TRANSITION_POS", LEVEL_TRANSITION_POS),
+    ):
+        if error := _validate_position(name, position):
+            errors.append(error)
+    if TELEGRAM_ENABLED and (not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID):
+        errors.append(
+            "Telegram requires EATVENTURE_TELEGRAM_BOT_TOKEN and "
+            "EATVENTURE_TELEGRAM_CHAT_ID"
+        )
+    if errors:
+        raise ValueError("Invalid configuration: " + "; ".join(errors))

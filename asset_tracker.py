@@ -12,7 +12,11 @@ import numpy as np
 import config
 from domain import (
     ASSET_CLASS_IDS as DOMAIN_ASSET_CLASS_IDS,
+)
+from domain import (
     ASSET_CLASS_NAMES as DOMAIN_ASSET_CLASS_NAMES,
+)
+from domain import (
     AssetType,
     asset_class_id_for,
     asset_class_name_for,
@@ -20,24 +24,22 @@ from domain import (
 )
 from forbidden_zones import (
     ForbiddenZone,
-    bounded_forbidden_zone,
-    box_intersects_bounds,
     box_intersects_forbidden_zones,
     configured_forbidden_zones,
     point_blocked_by_forbidden_zones,
-    point_inside_bounds,
 )
 
 logger = logging.getLogger(__name__)
 
 _SUPERVISION_IMPORT_ERROR: Exception | None
+supervision_module: Any = None
 
 try:
-    import supervision as supervision_module
+    import supervision as imported_supervision
 except Exception as supervision_import_exception:
-    supervision_module = None  # type: ignore[assignment]
     _SUPERVISION_IMPORT_ERROR = supervision_import_exception
 else:
+    supervision_module = imported_supervision
     _SUPERVISION_IMPORT_ERROR = None
 
 ASSET_TRACKING_LOOP_ITERATION_LIMIT = 2_147_483_647
@@ -46,6 +48,7 @@ DETECTION_COOLDOWN_MAX_FRAME_INTERVALS = 60.0
 
 DETECTION_RESULT_DRAIN_LIMIT = 8
 IMAGE_MIN_CHANNELS = 3
+WORKER_START_TIMEOUT_SECONDS = 1.0
 
 ASSET_CLASS_IDS = DOMAIN_ASSET_CLASS_IDS
 ASSET_CLASS_NAMES = DOMAIN_ASSET_CLASS_NAMES
@@ -208,12 +211,6 @@ def _target_coordinate(value: int | None, fallback: int) -> int:
     return int(fallback if value is None else value)
 
 
-def _bounded_forbidden_zone(
-    zone: ForbiddenZone, frame_width: int, frame_height: int
-) -> tuple[int, int, int, int] | None:
-    return bounded_forbidden_zone(zone, frame_width, frame_height)
-
-
 def _point_blocked_by_forbidden_zones(
     x: int,
     y: int,
@@ -224,10 +221,6 @@ def _point_blocked_by_forbidden_zones(
     return point_blocked_by_forbidden_zones(x, y, zones, frame_width, frame_height)
 
 
-def _point_inside_bounds(x: int, y: int, bounds: tuple[int, int, int, int]) -> bool:
-    return point_inside_bounds(x, y, bounds)
-
-
 def _box_intersects_forbidden_zones(
     box: tuple[float, float, float, float],
     zones: tuple[ForbiddenZone, ...],
@@ -235,16 +228,6 @@ def _box_intersects_forbidden_zones(
     frame_height: int,
 ) -> bool:
     return box_intersects_forbidden_zones(box, zones, frame_width, frame_height)
-
-
-def _box_intersects_bounds(
-    left: float,
-    top: float,
-    right: float,
-    bottom: float,
-    bounds: tuple[int, int, int, int],
-) -> bool:
-    return box_intersects_bounds(left, top, right, bottom, bounds)
 
 
 def _detection_passes_zone_check(
@@ -299,10 +282,13 @@ class AssetTracker:
         self._byte_tracker = self._create_byte_tracker()
         self._forbidden_zones = _configured_forbidden_zones()
         self._stop_flag = threading.Event()
+        self._lifecycle_lock = threading.RLock()
         self._snapshot_lock = threading.RLock()
         self._frame_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=1)
         self._capture_thread: threading.Thread | None = None
         self._detection_thread: threading.Thread | None = None
+        self._capture_ready = threading.Event()
+        self._detection_ready = threading.Event()
         self._snapshot = AssetTrackingSnapshot(0, 0.0, 0, 0, ())
 
     @staticmethod
@@ -348,28 +334,45 @@ class AssetTracker:
                 return None
 
     def start(self) -> bool:
-        if not config.ASSET_TRACKING_ENABLED:
-            return False
-        if self._worker_threads_alive():
+        with self._lifecycle_lock:
+            if not config.ASSET_TRACKING_ENABLED:
+                return False
+            if self._worker_threads_alive() and not self._stop_flag.is_set():
+                return True
+            if self._any_worker_thread_alive() and not self.stop():
+                logger.error("Asset tracker cannot restart while workers are alive")
+                return False
+            self._stop_flag.clear()
+            self._clear_frame_queue()
+            self._capture_ready.clear()
+            self._detection_ready.clear()
+            self._capture_thread = threading.Thread(
+                target=self._run_capture_thread,
+                name="asset_capture",
+                daemon=True,
+            )
+            self._detection_thread = threading.Thread(
+                target=self._run_detection_thread,
+                name="asset_detection",
+                daemon=True,
+            )
+            self._capture_thread.start()
+            self._detection_thread.start()
+            if not self._workers_ready():
+                self._stop_flag.set()
+                self.stop()
+                logger.error("Asset tracker workers failed to start")
+                return False
+            logger.info("Asset tracker started (dual-thread pipeline)")
             return True
-        if self._any_worker_thread_alive():
-            self.stop()
-        self._stop_flag.clear()
-        self._clear_frame_queue()
-        self._capture_thread = threading.Thread(
-            target=self._run_capture_thread,
-            name="asset_capture",
-            daemon=True,
-        )
-        self._detection_thread = threading.Thread(
-            target=self._run_detection_thread,
-            name="asset_detection",
-            daemon=True,
-        )
-        self._capture_thread.start()
-        self._detection_thread.start()
-        logger.info("Asset tracker started (dual-thread pipeline)")
-        return True
+
+    def _workers_ready(self) -> bool:
+        deadline = time.monotonic() + WORKER_START_TIMEOUT_SECONDS
+        for ready_event in (self._capture_ready, self._detection_ready):
+            remaining = max(0.0, deadline - time.monotonic())
+            if not ready_event.wait(remaining):
+                return False
+        return self._worker_threads_alive() and not self._stop_flag.is_set()
 
     def _worker_threads_alive(self) -> bool:
         return (
@@ -395,16 +398,26 @@ class AssetTracker:
             except queue.Empty:
                 return
 
-    def stop(self) -> None:
-        self._stop_flag.set()
-        join_timeout = _nonnegative_float_value(
-            config.ASSET_TRACKING_THREAD_JOIN_TIMEOUT, 1.5
-        )
-        if self._capture_thread is not None and self._capture_thread.is_alive():
-            self._capture_thread.join(timeout=join_timeout)
-        if self._detection_thread is not None and self._detection_thread.is_alive():
-            self._detection_thread.join(timeout=join_timeout)
-        logger.info("Asset tracker stopped")
+    def stop(self) -> bool:
+        with self._lifecycle_lock:
+            self._stop_flag.set()
+            join_timeout = _nonnegative_float_value(
+                config.ASSET_TRACKING_THREAD_JOIN_TIMEOUT, 1.5
+            )
+            for worker_thread in (self._capture_thread, self._detection_thread):
+                if worker_thread is not None and worker_thread.is_alive():
+                    worker_thread.join(timeout=join_timeout)
+            stopped = not self._any_worker_thread_alive()
+            if stopped:
+                self._capture_thread = None
+                self._detection_thread = None
+                self._clear_frame_queue()
+                self._capture_ready.clear()
+                self._detection_ready.clear()
+                logger.info("Asset tracker stopped")
+            else:
+                logger.error("Asset tracker workers did not stop before timeout")
+            return stopped
 
     def reset(self) -> None:
         byte_tracker_reset = getattr(self._byte_tracker, "reset", None)
@@ -418,7 +431,7 @@ class AssetTracker:
             snapshot = self._snapshot
         snapshot_is_stale = (
             snapshot.timestamp <= 0
-            or time.time() - snapshot.timestamp
+            or time.monotonic() - snapshot.timestamp
             > float(config.ASSET_TRACKING_MAX_SNAPSHOT_AGE)
         )
         if snapshot_is_stale:
@@ -460,6 +473,7 @@ class AssetTracker:
                 "Asset capture thread could not initialise screenshotter; exiting"
             )
             return
+        self._capture_ready.set()
         try:
             frame_interval = _asset_tracking_frame_interval()
             last_capture_time = 0.0
@@ -539,6 +553,7 @@ class AssetTracker:
         return bgr_frame
 
     def _run_detection_thread(self) -> None:
+        self._detection_ready.set()
         frame_interval = _asset_tracking_frame_interval()
         for _ in range(ASSET_TRACKING_LOOP_ITERATION_LIMIT):
             if self._stop_flag.is_set():
@@ -590,7 +605,9 @@ class AssetTracker:
     def _safe_call_detection_provider(self, frame: np.ndarray) -> list[AssetDetection]:
         try:
             result = self.detection_provider(frame)
-            return result if isinstance(result, list) else []
+            if not isinstance(result, list):
+                return []
+            return [item for item in result if isinstance(item, AssetDetection)]
         except Exception as provider_error:
             logger.debug("Detection provider raised an exception: %s", provider_error)
             return []
@@ -619,7 +636,11 @@ class AssetTracker:
         with self._snapshot_lock:
             new_frame_number = self._snapshot.frame_number + 1
             self._snapshot = AssetTrackingSnapshot(
-                new_frame_number, time.time(), frame_width, frame_height, tracked_assets
+                new_frame_number,
+                time.monotonic(),
+                frame_width,
+                frame_height,
+                tracked_assets,
             )
 
     def _filter_trackable_detections(
@@ -634,7 +655,7 @@ class AssetTracker:
     def _detection_is_trackable(
         self, candidate: AssetDetection, frame_width: int, frame_height: int
     ) -> bool:
-        if not _valid_detection(candidate):
+        if not isinstance(candidate, AssetDetection) or not _valid_detection(candidate):
             return False
         target_x = _target_coordinate(candidate.target_x, candidate.center_x)
         target_y = _target_coordinate(candidate.target_y, candidate.center_y)
@@ -679,13 +700,13 @@ class AssetTracker:
     def _track_detections(self, detections: list[AssetDetection]) -> list[TrackedAsset]:
         if self._byte_tracker is None:
             return self._build_fallback_assets(detections)
-        supervision_detections = self._to_supervision_detections(detections)
         try:
+            supervision_detections = self._to_supervision_detections(detections)
             tracked = self._byte_tracker.update_with_detections(supervision_detections)
+            return self._from_supervision_detections(tracked)
         except Exception as tracking_error:
             logger.debug("ByteTrack update failed: %s", tracking_error)
             return self._build_fallback_assets(detections)
-        return self._from_supervision_detections(tracked)
 
     def _to_supervision_detections(self, detections: list[AssetDetection]) -> Any:
         if supervision_module is None:

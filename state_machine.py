@@ -52,6 +52,14 @@ class StateMachine:
             self.current_state = new_state
         return True
 
+    def reset(self, initial_state: State = State.FIND_RED_ICONS) -> None:
+        if not isinstance(initial_state, State):
+            raise TypeError(
+                f"initial_state must be a State, got {type(initial_state).__name__}"
+            )
+        self.current_state = initial_state
+        self.previous_state = None
+
     def update(self) -> bool:
         handler = self.state_handlers.get(self.current_state)
         if handler is None:
