@@ -19,7 +19,6 @@ class BoxTemplateName(StrEnum):
     BOX_TWO = "box2"
     BOX_THREE = "box3"
     BOX_FOUR = "box4"
-    BOX_FIVE = "box5"
 
 
 class SupervisionFlag(StrEnum):
