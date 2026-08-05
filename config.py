@@ -156,7 +156,7 @@ BOX_HSV_RANGES = (
 )
 
 # Minimum HSV mask ratio for accepting a box candidate.
-BOX_HSV_MIN_MATCH_RATIO = 0.390
+BOX_HSV_MIN_MATCH_RATIO = 0.45
 
 # Template confidence threshold for unlock button scans.
 UNLOCK_THRESHOLD = 0.905
