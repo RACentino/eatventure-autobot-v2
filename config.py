@@ -1,15 +1,8 @@
-import math
-import os
-from pathlib import Path
-from typing import Any
-
-PROJECT_ROOT = Path(__file__).resolve().parent
-
 # Path to the image template assets directory.
-ASSETS_DIR = str(PROJECT_ROOT / "assets")
+ASSETS_DIR = "assets"
 
 # Path to the runtime log output directory.
-LOGS_DIR = str(PROJECT_ROOT / "logs")
+LOGS_DIR = "logs"
 
 
 # Window and Logging
@@ -237,10 +230,10 @@ STATS_UPGRADE_CLICK_DELAY = 0.016
 TELEGRAM_ENABLED = False
 
 # Telegram bot token used for notification delivery.
-TELEGRAM_BOT_TOKEN = os.environ.get("EATVENTURE_TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_BOT_TOKEN = ""
 
 # Telegram chat identifier that receives notifications.
-TELEGRAM_CHAT_ID = os.environ.get("EATVENTURE_TELEGRAM_CHAT_ID", "").strip()
+TELEGRAM_CHAT_ID = ""
 
 # Maximum Telegram request timeout in seconds.
 TELEGRAM_CLOSE_TIMEOUT = 5.0
@@ -402,7 +395,7 @@ ADAPTIVE_TUNER_MAX_SEARCH_INTERVAL = 1.0
 AI_LEARNING_ENABLED = False
 
 # Path for persisted historical learning state.
-AI_LEARNING_STATE_FILE = str(PROJECT_ROOT / "memory" / "learning_state_stable.json")
+AI_LEARNING_STATE_FILE = "memory/learning_state_stable.json"
 
 # Minimum interval between historical learning state saves.
 AI_LEARNING_SAVE_INTERVAL = 300.0
@@ -471,73 +464,3 @@ NUMBERED_FORBIDDEN_ZONE_BOUNDS = (
     (145, 200, 65, 110),
     (55, 260, 660, 725),
 )
-
-
-def _validate_finite_number(
-    name: str, value: Any, minimum: float, maximum: float | None = None
-) -> str | None:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return f"{name} must be numeric"
-    if not math.isfinite(number) or number < minimum:
-        return f"{name} must be finite and at least {minimum}"
-    if maximum is not None and number > maximum:
-        return f"{name} must not exceed {maximum}"
-    return None
-
-
-def _validate_position(name: str, position: object) -> str | None:
-    if not isinstance(position, tuple) or len(position) != 2:
-        return f"{name} must be a two-item tuple"
-    try:
-        position_x, position_y = int(position[0]), int(position[1])
-    except (TypeError, ValueError):
-        return f"{name} coordinates must be integers"
-    if not (0 <= position_x < WINDOW_WIDTH and 0 <= position_y < WINDOW_HEIGHT):
-        return f"{name} must be inside the configured window"
-    return None
-
-
-def validate_config() -> None:
-    errors: list[str] = []
-    if not isinstance(WINDOW_TITLE, str) or not WINDOW_TITLE.strip():
-        errors.append("WINDOW_TITLE must be a non-empty string")
-    numeric_bounds = (
-        ("WINDOW_WIDTH", WINDOW_WIDTH, 1, None),
-        ("WINDOW_HEIGHT", WINDOW_HEIGHT, 1, None),
-        ("MAX_SEARCH_Y", MAX_SEARCH_Y, 1, WINDOW_HEIGHT),
-        ("EXTENDED_SEARCH_Y", EXTENDED_SEARCH_Y, 1, WINDOW_HEIGHT),
-        ("UPGRADE_STATION_SEARCH_Y", UPGRADE_STATION_SEARCH_Y, 1, WINDOW_HEIGHT),
-        ("BOX_SEARCH_Y", BOX_SEARCH_Y, 1, WINDOW_HEIGHT),
-        ("MATCH_THRESHOLD", MATCH_THRESHOLD, 0, 1),
-        ("RED_ICON_THRESHOLD", RED_ICON_THRESHOLD, 0, 1),
-        ("UPGRADE_STATION_THRESHOLD", UPGRADE_STATION_THRESHOLD, 0, 1),
-        ("BOX_THRESHOLD", BOX_THRESHOLD, 0, 1),
-        ("UNLOCK_THRESHOLD", UNLOCK_THRESHOLD, 0, 1),
-        ("NEW_LEVEL_THRESHOLD", NEW_LEVEL_THRESHOLD, 0, 1),
-        ("CLICK_DELAY", CLICK_DELAY, 0, None),
-        ("MOUSE_MOVE_DELAY", MOUSE_MOVE_DELAY, 0, None),
-        ("ASSET_TRACKING_MAX_SNAPSHOT_AGE", ASSET_TRACKING_MAX_SNAPSHOT_AGE, 0, None),
-        ("AI_LEARNING_RECORDS_LIMIT", AI_LEARNING_RECORDS_LIMIT, 1, None),
-    )
-    for name, value, minimum, maximum in numeric_bounds:
-        if error := _validate_finite_number(name, value, minimum, maximum):
-            errors.append(error)
-    for name, position in (
-        ("IDLE_CLICK_POS", IDLE_CLICK_POS),
-        ("STATS_UPGRADE_BUTTON_POS", STATS_UPGRADE_BUTTON_POS),
-        ("STATS_UPGRADE_POS", STATS_UPGRADE_POS),
-        ("SCROLL_START_POS", SCROLL_START_POS),
-        ("NEW_LEVEL_BUTTON_POS", NEW_LEVEL_BUTTON_POS),
-        ("LEVEL_TRANSITION_POS", LEVEL_TRANSITION_POS),
-    ):
-        if error := _validate_position(name, position):
-            errors.append(error)
-    if TELEGRAM_ENABLED and (not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID):
-        errors.append(
-            "Telegram requires EATVENTURE_TELEGRAM_BOT_TOKEN and "
-            "EATVENTURE_TELEGRAM_CHAT_ID"
-        )
-    if errors:
-        raise ValueError("Invalid configuration: " + "; ".join(errors))

@@ -1,4 +1,5 @@
 import logging
+import math
 import sys
 import threading
 from logging.handlers import RotatingFileHandler
@@ -14,6 +15,113 @@ from mouse_controller import precise_sleep
 bot_instance: EatventureBot | None = None
 exit_requested = threading.Event()
 BOT_EVENT_LOOP_ITERATION_LIMIT = 2_147_483_647
+
+
+def _validate_finite_number(
+    configuration_name: str,
+    configuration_value: Any,
+    minimum_value: float,
+    maximum_value: float | None = None,
+) -> str | None:
+    try:
+        numeric_value = float(configuration_value)
+    except (TypeError, ValueError):
+        return f"{configuration_name} must be numeric"
+    if not math.isfinite(numeric_value) or numeric_value < minimum_value:
+        return f"{configuration_name} must be finite and at least {minimum_value}"
+    if maximum_value is not None and numeric_value > maximum_value:
+        return f"{configuration_name} must not exceed {maximum_value}"
+    return None
+
+
+def _validate_position(configuration_name: str, position: object) -> str | None:
+    if not isinstance(position, tuple) or len(position) != 2:
+        return f"{configuration_name} must be a two-item tuple"
+    try:
+        position_x, position_y = int(position[0]), int(position[1])
+    except (TypeError, ValueError):
+        return f"{configuration_name} coordinates must be integers"
+    if not (
+        0 <= position_x < config.WINDOW_WIDTH and 0 <= position_y < config.WINDOW_HEIGHT
+    ):
+        return f"{configuration_name} must be inside the configured window"
+    return None
+
+
+def _numeric_configuration_errors() -> list[str]:
+    numeric_bounds = (
+        ("WINDOW_WIDTH", config.WINDOW_WIDTH, 1, None),
+        ("WINDOW_HEIGHT", config.WINDOW_HEIGHT, 1, None),
+        ("MAX_SEARCH_Y", config.MAX_SEARCH_Y, 1, config.WINDOW_HEIGHT),
+        ("EXTENDED_SEARCH_Y", config.EXTENDED_SEARCH_Y, 1, config.WINDOW_HEIGHT),
+        (
+            "UPGRADE_STATION_SEARCH_Y",
+            config.UPGRADE_STATION_SEARCH_Y,
+            1,
+            config.WINDOW_HEIGHT,
+        ),
+        ("BOX_SEARCH_Y", config.BOX_SEARCH_Y, 1, config.WINDOW_HEIGHT),
+        ("MATCH_THRESHOLD", config.MATCH_THRESHOLD, 0, 1),
+        ("RED_ICON_THRESHOLD", config.RED_ICON_THRESHOLD, 0, 1),
+        ("UPGRADE_STATION_THRESHOLD", config.UPGRADE_STATION_THRESHOLD, 0, 1),
+        ("BOX_THRESHOLD", config.BOX_THRESHOLD, 0, 1),
+        ("UNLOCK_THRESHOLD", config.UNLOCK_THRESHOLD, 0, 1),
+        ("NEW_LEVEL_THRESHOLD", config.NEW_LEVEL_THRESHOLD, 0, 1),
+        ("CLICK_DELAY", config.CLICK_DELAY, 0, None),
+        ("MOUSE_MOVE_DELAY", config.MOUSE_MOVE_DELAY, 0, None),
+        (
+            "ASSET_TRACKING_MAX_SNAPSHOT_AGE",
+            config.ASSET_TRACKING_MAX_SNAPSHOT_AGE,
+            0,
+            None,
+        ),
+        ("AI_LEARNING_RECORDS_LIMIT", config.AI_LEARNING_RECORDS_LIMIT, 1, None),
+    )
+    validation_errors: list[str] = []
+    for (
+        configuration_name,
+        configuration_value,
+        minimum_value,
+        maximum_value,
+    ) in numeric_bounds:
+        validation_error = _validate_finite_number(
+            configuration_name, configuration_value, minimum_value, maximum_value
+        )
+        if validation_error is not None:
+            validation_errors.append(validation_error)
+    return validation_errors
+
+
+def _position_configuration_errors() -> list[str]:
+    validation_errors: list[str] = []
+    for configuration_name, position in (
+        ("IDLE_CLICK_POS", config.IDLE_CLICK_POS),
+        ("STATS_UPGRADE_BUTTON_POS", config.STATS_UPGRADE_BUTTON_POS),
+        ("STATS_UPGRADE_POS", config.STATS_UPGRADE_POS),
+        ("SCROLL_START_POS", config.SCROLL_START_POS),
+        ("NEW_LEVEL_BUTTON_POS", config.NEW_LEVEL_BUTTON_POS),
+        ("LEVEL_TRANSITION_POS", config.LEVEL_TRANSITION_POS),
+    ):
+        validation_error = _validate_position(configuration_name, position)
+        if validation_error is not None:
+            validation_errors.append(validation_error)
+    return validation_errors
+
+
+def _validate_configuration() -> None:
+    validation_errors: list[str] = []
+    if not isinstance(config.WINDOW_TITLE, str) or not config.WINDOW_TITLE.strip():
+        validation_errors.append("WINDOW_TITLE must be a non-empty string")
+    validation_errors.extend(_numeric_configuration_errors())
+    validation_errors.extend(_position_configuration_errors())
+    if config.TELEGRAM_ENABLED and (
+        not config.TELEGRAM_BOT_TOKEN or not config.TELEGRAM_CHAT_ID
+    ):
+        validation_errors.append(
+            "Telegram requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID"
+        )
+    if validation_errors:
+        raise ValueError("Invalid configuration: " + "; ".join(validation_errors))
 
 
 def _get_key_character(key: Any) -> str | None:
@@ -164,7 +272,7 @@ def main() -> int:
     listener = None
 
     try:
-        config.validate_config()
+        _validate_configuration()
         setup_logging()
         _print_startup_banner()
         exit_requested.clear()

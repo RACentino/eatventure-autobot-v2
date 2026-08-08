@@ -117,15 +117,14 @@ The global hotkeys are `Z` to start or stop, `X` to log the window-relative curs
 2. Visit `https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates` in your browser.
 3. Look for the `"chat":{"id":...}` field and copy the number.
 4. Set `TELEGRAM_ENABLED = True` in `config.py`.
-5. Provide credentials through environment variables before starting the bot:
+5. Set the static credential values in `config.py` before starting the bot:
 
-```bash
-export EATVENTURE_TELEGRAM_BOT_TOKEN='replace-with-token'
-export EATVENTURE_TELEGRAM_CHAT_ID='replace-with-chat-id'
-python main.py
+```python
+TELEGRAM_BOT_TOKEN = "replace-with-token"
+TELEGRAM_CHAT_ID = "replace-with-chat-id"
 ```
 
-Credentials are not read from source files. Telegram's HTTP session does not inherit proxy settings from the process environment.
+Telegram's HTTP session does not inherit proxy settings from the process environment.
 
 ## Disclaimer
 
