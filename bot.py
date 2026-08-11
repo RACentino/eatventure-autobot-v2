@@ -48,6 +48,10 @@ RedIconRecord = tuple[float, int, int, str]
 BoxCandidate = tuple[float, int, int, int, int, str]
 StateResult = State | None
 UPWARD_OSCILLATING_SCROLL_DIRECTION = -1
+RUNTIME_RECOVERY_RETRY_DELAY_SECONDS = 1.0
+WINDOW_RECOVERY_MESSAGE = "Target window is unavailable"
+SCROLL_RECOVERY_MESSAGE = "Scroll input failed repeatedly"
+LEVEL_TRANSITION_RECOVERY_MESSAGE = "Level transition was not verified"
 
 
 def _finite_float(value: Any, default: float = 0.0) -> float:
@@ -142,6 +146,7 @@ class EatventureBot:
         self.empty_cycle_count = 0
         self.upgrade_station_counter = 0
         self.scroll_failures = 0
+        self._active_recoveries: set[str] = set()
         self.needs_dismissal = False
         self.last_clicked_pos: tuple[int, int] | None = None
         self.failed_click_tracker: dict[tuple[int, int], int] = {}
@@ -216,12 +221,16 @@ class EatventureBot:
         try:
             if not self.running:
                 return False
-            if (
-                self._stop_requested.is_set()
-                or not self.window_capture.is_window_active()
-            ):
+            if self._stop_requested.is_set():
                 self.stop()
                 return False
+            if not self.window_capture.is_window_active():
+                return self._wait_for_window_recovery(
+                    "Target window is not active"
+                )
+            if WINDOW_RECOVERY_MESSAGE in self._active_recoveries:
+                self.window_capture.ensure_window(resize=True)
+                self.window_capture.get_input_window_rect()
             current_state = self.state
             handler = self._state_handlers.get(current_state)
             if handler is None:
@@ -241,9 +250,10 @@ class EatventureBot:
                 self.state.name,
                 (time.perf_counter() - started_at) * 1000.0,
             )
+            self._complete_recovery(WINDOW_RECOVERY_MESSAGE)
             return True
         except (WindowNotAvailableError, WindowCaptureError) as exc:
-            logger.error("Stopping bot: %s", exc)
+            return self._wait_for_window_recovery(str(exc))
         except Exception:
             logger.exception("Stopping bot due to unexpected state-handler failure")
         finally:
@@ -268,11 +278,26 @@ class EatventureBot:
         self.needs_dismissal = False
         return True
 
-    def _pause_after_failure(self, message: str) -> None:
-        logger.error(message)
-        self.running = False
-        self.request_stop()
+    def _begin_recovery(self, message: str) -> None:
+        if message in self._active_recoveries:
+            return
+        self._active_recoveries.add(message)
+        logger.error("%s; bot will retry", message)
         self.telegram.notify_failure(message)
+
+    def _complete_recovery(self, message: str) -> None:
+        if message not in self._active_recoveries:
+            return
+        self._active_recoveries.remove(message)
+        logger.info("Recovered from: %s", message)
+        self.telegram.notify_recovered(message)
+
+    def _wait_for_window_recovery(self, detail: str) -> bool:
+        self._begin_recovery(WINDOW_RECOVERY_MESSAGE)
+        logger.debug("%s: %s", WINDOW_RECOVERY_MESSAGE, detail)
+        if not self.mouse_controller.release_left_button():
+            logger.error("Could not release mouse input during window recovery")
+        return self._sleep(RUNTIME_RECOVERY_RETRY_DELAY_SECONDS)
 
     def _red_icon_names(self) -> tuple[str, ...]:
         names = (
@@ -901,8 +926,12 @@ class EatventureBot:
         if not self._scroll():
             self.scroll_failures += 1
             if self.scroll_failures >= 2:
-                self._pause_after_failure("Scroll failed twice; bot paused")
+                self.scroll_failures = 0
+                self._begin_recovery(SCROLL_RECOVERY_MESSAGE)
+            if not self._sleep(RUNTIME_RECOVERY_RETRY_DELAY_SECONDS):
+                logger.debug("Scroll recovery wait was interrupted")
             return State.SCROLL
+        self._complete_recovery(SCROLL_RECOVERY_MESSAGE)
         self.scroll_failures = 0
         self.empty_cycle_count = 0
         return State.FIND_RED_ICONS
@@ -926,10 +955,17 @@ class EatventureBot:
             self.scroll_cycle_index = original_scroll_cycle_index
             self.scroll_cycle_progress = original_scroll_cycle_progress
         if not verification_scroll_completed:
+            if self._stop_requested.is_set():
+                return State.CHECK_NEW_LEVEL
+            self._begin_recovery(SCROLL_RECOVERY_MESSAGE)
+            if not self._sleep(RUNTIME_RECOVERY_RETRY_DELAY_SECONDS):
+                logger.debug("Verification scroll recovery wait was interrupted")
             return State.CHECK_NEW_LEVEL
+        self._complete_recovery(SCROLL_RECOVERY_MESSAGE)
 
         verified_new_level_red_icon = self._find_new_level_red_icon()
         if verified_new_level_red_icon is None:
+            self._complete_recovery(LEVEL_TRANSITION_RECOVERY_MESSAGE)
             logger.info(
                 "New level red icon disappeared after verification scroll; "
                 "resuming main flow"
@@ -973,13 +1009,16 @@ class EatventureBot:
                     self.total_levels_completed,
                     elapsed,
                 )
+                self._complete_recovery(LEVEL_TRANSITION_RECOVERY_MESSAGE)
                 return State.WAIT_FOR_UNLOCK
             if attempt < MAX_LEVEL_TRANSITION_ATTEMPTS - 1 and not self._sleep(
                 TRANSITION_LEVEL_RETRY_DELAY_SECONDS
             ):
                 return State.CHECK_NEW_LEVEL
-        self._pause_after_failure("Level transition was not verified; bot paused")
-        return State.TRANSITION_LEVEL
+        self._begin_recovery(LEVEL_TRANSITION_RECOVERY_MESSAGE)
+        if not self._sleep(RUNTIME_RECOVERY_RETRY_DELAY_SECONDS):
+            logger.debug("Level transition recovery wait was interrupted")
+        return State.CHECK_NEW_LEVEL
 
     def handle_wait_for_unlock(self) -> StateResult:
         if not self._dismiss_if_needed() or not self._sleep(

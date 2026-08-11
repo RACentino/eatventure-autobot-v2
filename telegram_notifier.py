@@ -139,4 +139,7 @@ class TelegramNotifier:
         self._notify(f"Milestone Reached\nTotal cities completed: {total_levels}")
 
     def notify_failure(self, message: str) -> None:
-        self._notify(f"Bot paused: {message}")
+        self._notify(f"Bot recovering: {message}")
+
+    def notify_recovered(self, message: str) -> None:
+        self._notify(f"Bot resumed: {message}")

@@ -16,7 +16,7 @@ The bot uses direct state dispatch with these handlers:
 
 Targets are matched at their native template size with transparent masks and HSV color gates. One HSV mask is reused for each asset class per frame, and overlapping matches are removed with deterministic IoU suppression. Red-icon detection can use fast single-template matching or full multi-template consensus. There are no background trackers, learning workers, or persisted runtime state.
 
-The bot pauses and optionally sends a Telegram alert after repeated scroll failure, an unverifiable level transition, or an unlock timeout.
+Recoverable window, capture, scroll, and level-transition failures are retried indefinitely with incident-level Telegram alerts. Explicit stop requests, invalid startup configuration, and unexpected state-machine failures still stop the bot safely.
 
 ## Safety
 
