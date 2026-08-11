@@ -16,7 +16,6 @@ from domain import (
     ICON_MERGE_DISTANCE_PIXELS,
     MAX_LEVEL_TRANSITION_ATTEMPTS,
     MAX_UPGRADE_SEARCH_ATTEMPTS,
-    MAX_WAIT_FOR_UNLOCK_ATTEMPTS,
     RED_ICON_FALLBACK_MIN_DISTANCE,
     RED_ICON_TEMPLATE_NAMES,
     REQUIRED_TEMPLATE_NAMES,
@@ -140,8 +139,6 @@ class EatventureBot:
 
     def _reset_action_state(self) -> None:
         self.red_icon: RedIcon | None = None
-        self.wait_for_unlock_attempts = 0
-        self.max_wait_for_unlock_attempts = MAX_WAIT_FOR_UNLOCK_ATTEMPTS
         self.empty_cycle_count = 0
         self.upgrade_station_counter = 0
         self.scroll_failures = 0
@@ -610,7 +607,6 @@ class EatventureBot:
 
     def _reset_search_cycle(self) -> None:
         self.empty_cycle_count = 0
-        self.wait_for_unlock_attempts = 0
         self.scroll_failures = 0
         self.scroll_direction = 1
         self.scroll_cycle_index = 1
@@ -989,10 +985,6 @@ class EatventureBot:
         if not self._dismiss_if_needed() or not self._sleep(
             WAIT_FOR_UNLOCK_PRE_SCAN_DELAY
         ):
-            return State.WAIT_FOR_UNLOCK
-        self.wait_for_unlock_attempts += 1
-        if self.wait_for_unlock_attempts > self.max_wait_for_unlock_attempts:
-            self._pause_after_failure("Unlock did not appear before timeout; bot paused")
             return State.WAIT_FOR_UNLOCK
         found, confidence, x, y = self._find_unlock_button(
             self.window_capture.capture()
