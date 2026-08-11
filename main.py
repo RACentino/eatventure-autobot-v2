@@ -10,11 +10,9 @@ from pynput import keyboard as pynput_keyboard
 
 import config
 from bot import EatventureBot
-from mouse_controller import precise_sleep
 
 bot_instance: EatventureBot | None = None
 exit_requested = threading.Event()
-BOT_EVENT_LOOP_ITERATION_LIMIT = 2_147_483_647
 
 
 def _validate_finite_number(
@@ -69,13 +67,8 @@ def _numeric_configuration_errors() -> list[str]:
         ("NEW_LEVEL_THRESHOLD", config.NEW_LEVEL_THRESHOLD, 0, 1),
         ("CLICK_DELAY", config.CLICK_DELAY, 0, None),
         ("MOUSE_MOVE_DELAY", config.MOUSE_MOVE_DELAY, 0, None),
-        (
-            "ASSET_TRACKING_MAX_SNAPSHOT_AGE",
-            config.ASSET_TRACKING_MAX_SNAPSHOT_AGE,
-            0,
-            None,
-        ),
-        ("AI_LEARNING_RECORDS_LIMIT", config.AI_LEARNING_RECORDS_LIMIT, 1, None),
+        ("TELEGRAM_REQUEST_TIMEOUT", config.TELEGRAM_REQUEST_TIMEOUT, 0.001, None),
+        ("TELEGRAM_SHUTDOWN_TIMEOUT", config.TELEGRAM_SHUTDOWN_TIMEOUT, 0.001, None),
     )
     validation_errors: list[str] = []
     for (
@@ -162,15 +155,6 @@ def _toggle_bot_running(logger: logging.Logger) -> None:
     logger.warning("[Z pressed] Bot START failed")
 
 
-def _wipe_bot_memory(logger: logging.Logger) -> None:
-    if bot_instance is None:
-        return
-    if bot_instance.wipe_memory():
-        logger.info("[C pressed] AI memory wiped")
-    else:
-        logger.warning("[C pressed] Stop the bot before wiping AI memory")
-
-
 def _request_program_exit(logger: logging.Logger) -> None:
     logger.info("[P pressed] Exiting program")
     exit_requested.set()
@@ -187,7 +171,6 @@ def on_press(key: Any) -> None:
         key_handlers = {
             "x": _log_window_relative_cursor_position,
             "z": _toggle_bot_running,
-            "c": _wipe_bot_memory,
             "p": _request_program_exit,
         }
         handler = key_handlers.get(character)
@@ -241,15 +224,11 @@ def _print_startup_banner() -> None:
 
 
 def _run_bot_event_loop() -> None:
-    logger = logging.getLogger(__name__)
-    for _ in range(BOT_EVENT_LOOP_ITERATION_LIMIT):
-        if exit_requested.is_set():
-            return
+    while not exit_requested.is_set():
         if bot_instance is not None and bot_instance.running:
             bot_instance.step()
-        precise_sleep(0.1)
-    logger.error("Bot event loop reached iteration limit")
-    exit_requested.set()
+        else:
+            exit_requested.wait(0.1)
 
 
 def _cleanup_runtime(listener: Any | None) -> None:
@@ -284,7 +263,6 @@ def main() -> int:
         logger.info("Bot initialized and ready")
         logger.info("Press Z to START/STOP the bot")
         logger.info("Press X to see window-relative cursor position")
-        logger.info("Press C to wipe AI memory")
         logger.info("Press P to EXIT the program")
 
         _run_bot_event_loop()

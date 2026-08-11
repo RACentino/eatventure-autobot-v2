@@ -1,8 +1,12 @@
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+
 # Path to the image template assets directory.
-ASSETS_DIR = "assets"
+ASSETS_DIR = str(PROJECT_ROOT / "assets")
 
 # Path to the runtime log output directory.
-LOGS_DIR = "logs"
+LOGS_DIR = str(PROJECT_ROOT / "logs")
 
 
 # Window and Logging
@@ -23,76 +27,12 @@ DEBUG = False
 SIXTY_FPS_FRAME_DURATION_SECONDS = 0.016
 
 
-# Supervision NMS
+# Detection overlap suppression
 
-# Enables supervision-based non-max suppression globally.
-SUPERVISION_ENABLED = True
-
-# Enables supervision NMS for box detections.
-SUPERVISION_BOX_NMS_ENABLED = True
-
-# Enables supervision NMS for red icon detections.
-SUPERVISION_RED_ICON_NMS_ENABLED = True
-
-# Enables supervision NMS for upgrade station detections.
-SUPERVISION_UPGRADE_STATION_NMS_ENABLED = True
-
-# Allows supervision NMS to suppress candidates across classes.
-SUPERVISION_CLASS_AGNOSTIC_NMS = True
-
-# IoU threshold for supervision NMS on box detections.
+# IoU thresholds used by the built-in class-agnostic NMS.
 SUPERVISION_BOX_NMS_IOU_THRESHOLD = 0.14
-
-# IoU threshold for supervision NMS on red icon detections.
 SUPERVISION_RED_ICON_NMS_IOU_THRESHOLD = 0.20
-
-# IoU threshold for supervision NMS on upgrade station detections.
 SUPERVISION_UPGRADE_STATION_NMS_IOU_THRESHOLD = 0.20
-
-
-# ByteTrack Asset Tracking
-
-# Enables continuous background asset tracking.
-ASSET_TRACKING_ENABLED = True
-
-# Maximum vertical capture area used by the background tracker.
-ASSET_TRACKING_CAPTURE_Y = 780
-
-# Delay between tracker capture passes.
-ASSET_TRACKING_INTERVAL = 0.035
-
-# Frame rate passed to supervision ByteTrack.
-ASSET_TRACKING_FRAME_RATE = 30.0
-
-# Maximum age in seconds for tracker snapshots used by bot actions.
-ASSET_TRACKING_MAX_SNAPSHOT_AGE = 0.5
-
-# Maximum detections passed through each tracking frame.
-ASSET_TRACKING_MAX_DETECTIONS = 256
-
-# Detection confidence threshold for ByteTrack track activation.
-ASSET_TRACKING_TRACK_ACTIVATION_THRESHOLD = 0.25
-
-# Number of lost frames ByteTrack keeps before removing a track.
-ASSET_TRACKING_LOST_TRACK_BUFFER = 3
-
-# ByteTrack association threshold between existing tracks and detections.
-ASSET_TRACKING_MINIMUM_MATCHING_THRESHOLD = 0.8
-
-# Consecutive tracked frames required before a track is considered valid.
-ASSET_TRACKING_MINIMUM_CONSECUTIVE_FRAMES = 2
-
-# Enables background red icon detections.
-ASSET_TRACKING_RED_ICON_ENABLED = True
-
-# Enables background upgrade station detections.
-ASSET_TRACKING_UPGRADE_STATION_ENABLED = True
-
-# Enables background box detections.
-ASSET_TRACKING_BOX_ENABLED = True
-
-# Maximum wait for the background tracker thread to stop.
-ASSET_TRACKING_THREAD_JOIN_TIMEOUT = 2.0
 
 
 # SCRCPY Recovery
@@ -134,22 +74,35 @@ UPGRADE_STATION_HSV_RANGES = (
 UPGRADE_STATION_HSV_MIN_MATCH_RATIO = 0.4
 
 # Template confidence threshold for box scans.
-BOX_THRESHOLD = 0.950
+BOX_THRESHOLD = 0.860
 
 # Accepted HSV ranges for box candidate gating.
 BOX_HSV_RANGES = (
     ((10, 65, 180), (13, 105, 255)),
-    ((13, 90, 120), (15, 190, 245)),
     ((18, 90, 120), (18, 129, 245)),
     ((18, 130, 120), (18, 130, 229)),
     ((18, 130, 235), (18, 130, 245)),
-    ((18, 131, 120), (18, 190, 245)),
     ((20, 115, 220), (20, 125, 245)),
     ((23, 65, 140), (30, 115, 255)),
+    ((24, 48, 208), (25, 63, 223)),
+    ((26, 48, 192), (27, 63, 207)),
+    ((22, 120, 248), (22, 127, 255)),
+    ((26, 112, 168), (26, 119, 175)),
+    ((26, 120, 160), (26, 127, 167)),
+    ((13, 136, 136), (13, 143, 143)),
+    ((14, 136, 136), (14, 143, 151)),
+    ((14, 144, 144), (14, 151, 151)),
+    ((14, 144, 168), (14, 151, 175)),
+    ((14, 152, 144), (14, 159, 175)),
+    ((14, 160, 136), (14, 167, 143)),
+    ((15, 128, 168), (15, 135, 175)),
+    ((15, 144, 152), (15, 151, 183)),
+    ((15, 152, 144), (15, 159, 175)),
+    ((15, 160, 136), (15, 167, 143)),
 )
 
 # Minimum HSV mask ratio for accepting a box candidate.
-BOX_HSV_MIN_MATCH_RATIO = 0.45
+BOX_HSV_MIN_MATCH_RATIO = 0.275
 
 # Template confidence threshold for unlock button scans.
 UNLOCK_THRESHOLD = 0.905
@@ -157,16 +110,13 @@ UNLOCK_THRESHOLD = 0.905
 # Template confidence threshold for new-level button scans.
 NEW_LEVEL_THRESHOLD = 0.965
 
-# Minimum red icon templates that must agree outside fast mode.
-RED_ICON_MIN_MATCHES = 4
-
-# Enables single-template red icon_scan mode for faster passes.
+# Uses only RedIcon15 when true; uses all red-icon templates with consensus when false.
 RED_ICON_FAST_MODE_ENABLED = True
 
-# Red icon template names used when fast mode is enabled.
-RED_ICON_FAST_TEMPLATE_NAMES = ("RedIcon15",)
+# Minimum distinct templates that must agree in full mode.
+RED_ICON_MIN_MATCHES = 4
 
-# Minimum pixel distance between fast-mode red icon matches.
+# Minimum pixel distance between red icon matches.
 RED_ICON_FAST_MIN_DISTANCE = 32
 
 # Accepted HSV ranges for red icon candidate gating.
@@ -202,9 +152,6 @@ HOVER_DURATION = 0.0
 # Delay between upgrade station search attempts.
 UPGRADE_SEARCH_INTERVAL = 0.005
 
-# Delay between state-machine actions.
-STATE_DELAY = 0.0
-
 # Settling delay before verifying an upgrade station hold target.
 UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.15
 
@@ -235,8 +182,9 @@ TELEGRAM_BOT_TOKEN = ""
 # Telegram chat identifier that receives notifications.
 TELEGRAM_CHAT_ID = ""
 
-# Maximum Telegram request timeout in seconds.
-TELEGRAM_CLOSE_TIMEOUT = 5.0
+# Maximum Telegram request and shutdown waits in seconds.
+TELEGRAM_REQUEST_TIMEOUT = 2.0
+TELEGRAM_SHUTDOWN_TIMEOUT = 2.0
 
 
 # Capture Regions
@@ -330,120 +278,6 @@ POST_SCROLL_SETTLE = 0.15
 
 # Duration of the scroll drag gesture.
 SCROLL_DURATION = 0.3
-
-
-# Adaptive Runtime Tuning
-
-# Enables adaptive runtime timing adjustments.
-ADAPTIVE_TUNER_ENABLED = False
-
-# EMA alpha used by the adaptive tuner.
-ADAPTIVE_TUNER_ALPHA = 0.3
-
-# Click success rate below which delays are increased.
-ADAPTIVE_TUNER_CLICK_LOW_THRESHOLD = 1.0
-
-# Click success rate above which delays are reduced.
-ADAPTIVE_TUNER_CLICK_HIGH_THRESHOLD = 0.0
-
-# Search success rate below which search interval is increased.
-ADAPTIVE_TUNER_SEARCH_LOW_THRESHOLD = 1.0
-
-# Search success rate above which search interval is reduced.
-ADAPTIVE_TUNER_SEARCH_HIGH_THRESHOLD = 0.0
-
-# Amount added to click delay after low click success.
-ADAPTIVE_TUNER_CLICK_DELAY_STEP = 0.02
-
-# Amount added to move delay after low click success.
-ADAPTIVE_TUNER_MOVE_DELAY_STEP = 0.02
-
-# Amount subtracted from click delay after high click success.
-ADAPTIVE_TUNER_CLICK_DECREMENT = 0.01
-
-# Amount subtracted from move delay after high click success.
-ADAPTIVE_TUNER_MOVE_DECREMENT = 0.01
-
-# Amount added to search interval after low search success.
-ADAPTIVE_TUNER_SEARCH_INTERVAL_STEP = 0.05
-
-# Amount subtracted from search interval after high search success.
-ADAPTIVE_TUNER_SEARCH_DECREMENT = 0.02
-
-# Minimum click delay allowed by adaptive tuning.
-ADAPTIVE_TUNER_MIN_CLICK_DELAY = 0.01
-
-# Maximum click delay allowed by adaptive tuning.
-ADAPTIVE_TUNER_MAX_CLICK_DELAY = 0.2
-
-# Minimum move delay allowed by adaptive tuning.
-ADAPTIVE_TUNER_MIN_MOVE_DELAY = 0.01
-
-# Maximum move delay allowed by adaptive tuning.
-ADAPTIVE_TUNER_MAX_MOVE_DELAY = 0.2
-
-# Minimum search interval allowed by adaptive tuning.
-ADAPTIVE_TUNER_MIN_SEARCH_INTERVAL = 0.2
-
-# Maximum search interval allowed by adaptive tuning.
-ADAPTIVE_TUNER_MAX_SEARCH_INTERVAL = 1.0
-
-
-# Historical Learning
-
-# Enables historical learning from completed levels.
-AI_LEARNING_ENABLED = False
-
-# Path for persisted historical learning state.
-AI_LEARNING_STATE_FILE = "memory/learning_state_stable.json"
-
-# Minimum interval between historical learning state saves.
-AI_LEARNING_SAVE_INTERVAL = 300.0
-
-# Maximum historical learning records kept in memory and persisted state.
-AI_LEARNING_RECORDS_LIMIT = 500
-
-# Maximum wait for the historical learning worker to stop.
-AI_LEARNING_THREAD_JOIN_TIMEOUT = 2.0
-
-# Delay between historical learning worker passes.
-AI_LEARNING_THREAD_INTERVAL = 1.0
-
-# Number of level records considered for a learning batch.
-AI_LEARNING_BATCH_WINDOW = 2
-
-# EMA alpha used for historical behavior profiles.
-AI_LEARNING_EMA_ALPHA = 0.8
-
-# Number of best profiles blended into a learned behavior.
-AI_LEARNING_PROFILE_BLEND_TOP_K = 1
-
-# Minimum improvement ratio needed before applying learned behavior.
-AI_LEARNING_MIN_IMPROVEMENT_RATIO = 0.05
-
-# Cooldown between learned behavior applications.
-AI_LEARNING_APPLY_COOLDOWN = 10.0
-
-# Minimum click delay allowed by historical learning.
-AI_LEARNING_MIN_CLICK_DELAY = 0.01
-
-# Maximum click delay allowed by historical learning.
-AI_LEARNING_MAX_CLICK_DELAY = 0.2
-
-# Minimum move delay allowed by historical learning.
-AI_LEARNING_MIN_MOVE_DELAY = 0.01
-
-# Maximum move delay allowed by historical learning.
-AI_LEARNING_MAX_MOVE_DELAY = 0.2
-
-# Minimum search interval allowed by historical learning.
-AI_LEARNING_MIN_SEARCH_INTERVAL = 0.2
-
-# Maximum search interval allowed by historical learning.
-AI_LEARNING_MAX_SEARCH_INTERVAL = 1.0
-
-# Minimum sleep between historical learning worker loops.
-LEARNING_LOOP_MIN_SLEEP = 0.1
 
 
 # Forbidden Zones

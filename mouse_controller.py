@@ -161,10 +161,16 @@ class MouseController:
         return self._stop_event is not None and self._stop_event.is_set()
 
     def _relative_position(
-        self, x: Any, y: Any, relative: bool
+        self,
+        x: Any,
+        y: Any,
+        relative: bool,
+        bounds: WindowBounds | None = None,
     ) -> tuple[int, int, int, int, int, int] | None:
         try:
-            window_x, window_y, width, height = self.get_window_bounds()
+            window_x, window_y, width, height = (
+                self.get_window_bounds() if bounds is None else bounds
+            )
             if relative:
                 rel_x, rel_y = int(x), int(y)
             else:
@@ -184,16 +190,28 @@ class MouseController:
         return rel_x, rel_y, window_x, window_y, width, height
 
     def _screen_position(
-        self, x: Any, y: Any, relative: bool = True, check_forbidden: bool = True
+        self,
+        x: Any,
+        y: Any,
+        relative: bool = True,
+        check_forbidden: bool = True,
+        bounds: WindowBounds | None = None,
     ) -> Point | None:
         if self._stopped():
             return None
-        position = self._relative_position(x, y, relative)
+        position = self._relative_position(x, y, relative, bounds)
         if position is None:
             return None
         rel_x, rel_y, window_x, window_y, _, _ = position
-        if check_forbidden and self.is_in_forbidden_zone(rel_x, rel_y, relative=True):
-            return None
+        if check_forbidden:
+            zone = first_forbidden_zone_containing_point(
+                rel_x, rel_y, self._forbidden_zones
+            )
+            if zone is not None:
+                logger.debug(
+                    "Coordinates (%s, %s) blocked by %s", rel_x, rel_y, zone.name
+                )
+                return None
         return window_x + rel_x, window_y + rel_y
 
     def _resolve_screen_position(
@@ -492,8 +510,17 @@ class MouseController:
         relative: bool = True,
     ) -> bool:
         with self._input_lock:
-            start_pos = self._screen_position(from_x, from_y, relative=relative)
-            end_pos = self._screen_position(to_x, to_y, relative=relative)
+            try:
+                bounds = self.get_window_bounds()
+            except RuntimeError as exc:
+                logger.error("Cannot resolve drag bounds: %s", exc)
+                return False
+            start_pos = self._screen_position(
+                from_x, from_y, relative=relative, bounds=bounds
+            )
+            end_pos = self._screen_position(
+                to_x, to_y, relative=relative, bounds=bounds
+            )
             if start_pos is None or end_pos is None:
                 return False
             duration = max(
@@ -504,7 +531,7 @@ class MouseController:
                 ),
             )
             steps = min(MAX_DRAG_STEPS, 20)
-            path = self._drag_path(start_pos, end_pos, steps)
+            path = self._drag_path(start_pos, end_pos, steps, bounds)
             if path is None or not self._set_cursor(*start_pos):
                 return False
             precise_sleep(self.move_delay)
@@ -539,7 +566,11 @@ class MouseController:
         return True
 
     def _drag_path(
-        self, start_pos: Point, end_pos: Point, steps: int
+        self,
+        start_pos: Point,
+        end_pos: Point,
+        steps: int,
+        bounds: WindowBounds,
     ) -> list[Point] | None:
         path = []
         start_x, start_y = start_pos
@@ -548,7 +579,13 @@ class MouseController:
             ratio = index / steps
             x = int(start_x + (end_x - start_x) * ratio)
             y = int(start_y + (end_y - start_y) * ratio)
-            if self.is_in_forbidden_zone(x, y, relative=False):
+            position = self._relative_position(x, y, relative=False, bounds=bounds)
+            if position is None:
+                return None
+            rel_x, rel_y, _, _, _, _ = position
+            if first_forbidden_zone_containing_point(
+                rel_x, rel_y, self._forbidden_zones
+            ) is not None:
                 return None
             path.append((x, y))
         return path

@@ -1,135 +1,80 @@
 # Eatventure Autobot V2
 
-Eatventure Autobot is a Python-powered automation tool designed for the popular mobile game *Eatventure*. By leveraging advanced computer vision, state-machine logic, and adaptive AI learning, the bot autonomously manages restaurant completions with high precision and human-like interaction patterns.
+A small OpenCV-driven desktop bot for Eatventure running in a dedicated `scrcpy` window. It captures the target window, detects current UI targets, and advances one verified action at a time.
 
-## Bot Description
+## Runtime flow
 
-The Eatventure Autobot is a sophisticated screen automation tool that interacts with an Android device via `scrcpy`. It uses OpenCV-based image recognition to identify game assets—such as Station Unlocks (Red Icons), upgrade stations, and gift boxes—and executes precise mouse actions to progress through the game. The bot is designed to be resilient, featuring a robust state machine that handles everything from basic gameplay to complex level transitions and reward collection.
+The bot uses direct state dispatch with these handlers:
 
-## Features
+1. Find and click one red icon from the current frame.
+2. Click an unlock button when present.
+3. Find, verify, and hold the upgrade station.
+4. Open one box from a fresh frame.
+5. Periodically upgrade stats.
+6. Scroll after two complete empty search cycles.
+7. Verify level completion and wait for the next unlock.
 
-### State Handlers
+Targets are matched at their native template size with transparent masks and HSV color gates. One HSV mask is reused for each asset class per frame, and overlapping matches are removed with deterministic IoU suppression. Red-icon detection can use fast single-template matching or full multi-template consensus. There are no background trackers, learning workers, or persisted runtime state.
 
-The bot's intelligence is built upon a formal **Finite State Machine (FSM)**. Every action is encapsulated within dedicated handlers that manage transitions based on real-time visual feedback:
+The bot pauses and optionally sends a Telegram alert after repeated scroll failure, an unverifiable level transition, or an unlock timeout.
 
-* **FIND_RED_ICONS**: Scans the screen for actionable red icons.
-* **CLICK_RED_ICON**: Executes precise clicks on detected targets with sub-pixel refinement.
-* **SEARCH_UPGRADE_STATION**: Locates the active cooking station to apply upgrades.
-* **HOLD_UPGRADE_STATION**: Simulates a "long-press" to rapidly purchase upgrades.
-* **OPEN_BOXES**: Automatically detects and collects gift box rewards.
-* **UPGRADE_STATS**: Manages the secondary stat-boost menu to maximize efficiency.
-* **SCROLL**: Executes intelligent, oscillating search patterns when no targets are visible.
-* **CHECK_NEW_LEVEL / TRANSITION_LEVEL**: Detects restaurant completion and handles the travel sequence to the next city.
+## Safety
 
-### Priority and Interrupts
-
-The bot gives level transitions priority during normal state processing. Before it commits to most upgrade, box, and red-icon actions, it re-checks for the large **New Level** button or the bottom **Level Complete** indicator so completed restaurants are handled before the next search cycle continues. Box actions use one fresh frame per click so a UI mutation cannot leave a queue of stale coordinates.
-
-### Better Computer Vision
-
-The vision system is built around masked OpenCV template matching with a few practical safeguards:
-
-* **Masked Template Matching**: Uses transparent PNG masks so icon shape matching stays stable.
-* **Multi-Template Consensus**: Red icons are only trusted after enough template variants agree on roughly the same location.
-* **HSV Gate Validation**: Red icons, upgrade stations, and boxes use HSV range gates to reject color-inconsistent candidates.
-* **Continuous ByteTrack Asset Tracking**: A background tracker maps red icons, upgrade stations, and boxes while the bot continues moving and acting.
-
-### Adaptive and Historical Learning
-
-The bot features a self-optimizing AI layer that adapts to your device's performance:
-
-* **Adaptive Tuner**: Automatically monitors success rates and adjusts `CLICK_DELAY` and `MOUSE_MOVE_DELAY` in real-time. If clicks are missing, it slows down; if successful, it speeds up to find the "sweet spot" of efficiency.
-* **Historical Learner**: Records the time taken for every restaurant completion. Over time, it identifies the most efficient timing profiles and applies them as the "Global Best" configuration, learning the optimal cadence for your specific game progress.
-
-### Better Logging System
-
-A comprehensive logging system tracks every decision the bot makes. It includes:
-
-* **Structured Tracebacks**: Detailed exception handling to prevent crashes.
-* **State Persistence**: Historical learning state is saved to JSON files, allowing the bot to retain its "knowledge" even after a restart.
-* **Performance Metrics**: Logs completion times and AI "confidence" levels for debugging.
-
-### Safety Boundaries
-
-* The configured title must identify exactly one live window; partial-title and duplicate-title matches are rejected.
-* The target is activated at startup, and every mouse action revalidates that it is still the active window.
-* Stop requests block new input and conservatively release a left button that may still be held.
-* Tracker and learner workers must report healthy startup before the bot is marked as running.
-* Restarting clears pending targets and returns the finite-state machine to `FIND_RED_ICONS`.
-* Runtime paths resolve from the project directory, not the shell's current directory.
-
-### Forbidden Zone Configuration
-
-The bot utilizes a refactored **Forbidden Zone Handling** system. Zones are defined in `config.py` using relative coordinates. The bot automatically:
-
-1. Filters out any detections located inside these zones.
-2. If a critical asset (like an Upgrade Station) is trapped in a forbidden zone, the bot triggers an **Oscillating Scroll** to move the asset into a safe, clickable area.
-3. Prioritizes previously successful red-icon rows so the search tends to revisit productive regions first.
+- The configured title must identify exactly one live window.
+- The target window must remain active for input to be accepted.
+- Every click and drag is checked against the configured window bounds and forbidden zones.
+- Stop requests prevent new input and release a held left mouse button.
+- Templates and log paths resolve from the project directory.
 
 ## Requirements
 
-* **Operating System**: Windows or Linux with an X11/XWayland desktop session. The live window-capture and input backend uses cross-platform Python automation libraries for window geometry, screenshots, and mouse control.
-* **Python**: Use a version supported by the pinned packages in `requirements.txt`; the project has been verified locally with Python 3.14.
-* **Android Device**: Connected via USB or Wireless ADB, with **Developer Options** and **USB Debugging** enabled.
+- Python supported by the pinned packages in `requirements.txt`
+- Windows or Linux desktop supported by PyWinCtl, MSS, and pynput
+- Android device connected through ADB
+- `scrcpy` available on `PATH`
 
-## Installation Instructions
-
-### Step 1: Install Dependencies
-
-Open your terminal in the project directory and run:
+Install dependencies:
 
 ```bash
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
-### Step 2: Configure scrcpy
-
-1. Download **scrcpy**: [https://github.com/Genymobile/scrcpy](https://github.com/Genymobile/scrcpy)
-2. Extract the files and add the executable directory to your `PATH`.
-3. Connect your Android device and ensure it is recognized (`adb devices`).
-4. Run scrcpy with the specific title used in `config.py`:
+Start scrcpy with the configured exact title:
 
 ```bash
 scrcpy --window-title "EatventureAuto"
 ```
 
-*(Note: Ensure the window title matches the `WINDOW_TITLE` variable in `config.py`)*
-
-### Step 3: Run the Bot
+Run the bot:
 
 ```bash
 python main.py
 ```
 
-The global hotkeys are `Z` to start or stop, `X` to log the window-relative cursor position, `C` to wipe learning memory while stopped, and `P` to exit. Startup fails closed if configuration, templates, the exact target window, active-window verification, or enabled workers are unavailable.
+Hotkeys:
 
-## Telegram Notification
+- `Z`: start or stop automation
+- `X`: log the cursor position relative to the target window
+- `P`: exit
 
-### Step 1: Create a Telegram Bot
+## Configuration
 
-1. Search for `@BotFather` on Telegram.
-2. Send `/newbot` and follow the instructions to name your bot.
-3. Copy the provided **API Token**.
+Runtime thresholds, timings, coordinates, and forbidden zones live in `config.py`. The bot loads these templates from `assets/`:
 
-### Step 2: Get Chat ID
+- `RedIcon.png`, `RedIcon2.png` through `RedIcon15.png`, and `RedIconNoBG.png`
+- `upgradeStation.png`
+- `newLevel.png`
+- `unlock.png`
+- `box1.png` through `box4.png`
 
-1. Start a chat with your new bot and send any message.
-2. Visit `https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates` in your browser.
-3. Look for the `"chat":{"id":...}` field and copy the number.
-4. Set `TELEGRAM_ENABLED = True` in `config.py`.
-5. Set the static credential values in `config.py` before starting the bot:
+Set `RED_ICON_FAST_MODE_ENABLED = True` to detect with `RedIcon15.png` only. Set it to `False` to use all red-icon templates and require `RED_ICON_MIN_MATCHES` distinct templates to agree on a detection.
 
-```python
-TELEGRAM_BOT_TOKEN = "replace-with-token"
-TELEGRAM_CHAT_ID = "replace-with-chat-id"
-```
-
-Telegram's HTTP session does not inherit proxy settings from the process environment.
+Telegram is optional. Set `TELEGRAM_ENABLED`, `TELEGRAM_BOT_TOKEN`, and `TELEGRAM_CHAT_ID` in `config.py`. Notifications are queued so network requests do not block state processing.
 
 ## Disclaimer
 
-This bot is developed for **educational purposes only**. Using automation tools or scripts may violate the game's Terms of Service and could result in account suspension or banning. Use this software at your own risk. The developers are not responsible for any consequences resulting from the use of this bot.
+This project is for educational use. Game automation may violate the game's terms and may lead to account restrictions. Use it at your own risk.
 
 ## License
 
-Eatventure Autobot is open-source software. It is free to use, modify, and distribute for personal and educational use.
+See `LICENSE`.

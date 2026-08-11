@@ -4,17 +4,6 @@ from typing import Any, cast
 import cv2
 import numpy as np
 
-_SUPERVISION_IMPORT_ERROR: Exception | None
-supervision_module: Any = None
-
-try:
-    import supervision as imported_supervision
-except Exception as exc:
-    _SUPERVISION_IMPORT_ERROR = exc
-else:
-    supervision_module = imported_supervision
-    _SUPERVISION_IMPORT_ERROR = None
-
 logger = logging.getLogger(__name__)
 
 MatchResult = tuple[bool, float, int, int]
@@ -28,7 +17,6 @@ HSV_REGION_MAX_COVERAGE_RATIO = 0.45
 HSV_REGION_MAX_TOTAL_AREA_RATIO = 0.70
 HSV_REGION_MERGE_PADDING_PIXELS = 2
 HSV_REGION_MINIMUM_COMPONENT_AREA = 1
-MIN_SCALED_TEMPLATE_DIMENSION = 1
 
 
 def _threshold(value: Any, default: float = 0.85) -> float:
@@ -132,10 +120,6 @@ class ImageMatcher:
     def __init__(self, threshold: float = 0.85) -> None:
         self.threshold = _threshold(threshold)
 
-    @staticmethod
-    def supervision_available() -> bool:
-        return supervision_module is not None
-
     def load_template(self, template_path: Any) -> tuple[np.ndarray, np.ndarray | None]:
         template = cv2.imread(str(template_path), cv2.IMREAD_UNCHANGED)
         if template is None:
@@ -183,33 +167,6 @@ class ImageMatcher:
             return False, confidence, 0, 0
         return True, confidence, center_x, center_y
 
-    def find_all_templates(
-        self,
-        screenshot: np.ndarray,
-        template: np.ndarray,
-        mask: np.ndarray | None = None,
-        threshold: float | None = None,
-        min_distance: int = 15,
-        scales: list[float] | None = None,
-        template_name: str = "Unknown",
-        use_supervision_nms: bool = False,
-        supervision_iou_threshold: float = 0.5,
-        supervision_class_agnostic: bool = True,
-    ) -> list[tuple[float, int, int]]:
-        matches = self.find_template_candidates(
-            screenshot, template, mask, threshold, min_distance, scales, template_name
-        )
-        matches = self._non_max_suppression(matches, min_distance)
-        if use_supervision_nms:
-            filtered = self.filter_candidates_with_supervision_nms(
-                matches,
-                iou_threshold=supervision_iou_threshold,
-                class_agnostic=supervision_class_agnostic,
-            )
-            if filtered is not None:
-                matches = filtered
-        return [(confidence, x, y) for confidence, x, y, _, _ in matches]
-
     def find_all_color_gated_templates(
         self,
         screenshot: np.ndarray,
@@ -217,12 +174,12 @@ class ImageMatcher:
         mask: np.ndarray | None = None,
         threshold: float | None = None,
         min_distance: int = 15,
-        scales: list[float] | None = None,
         template_name: str = "Unknown",
         hsv_ranges: Any = None,
         use_supervision_nms: bool = False,
         supervision_iou_threshold: float = 0.5,
         supervision_class_agnostic: bool = True,
+        hsv_mask: np.ndarray | None = None,
     ) -> list[tuple[float, int, int]]:
         matches = self.find_color_gated_template_candidates(
             screenshot,
@@ -230,9 +187,9 @@ class ImageMatcher:
             mask,
             threshold,
             min_distance,
-            scales,
             template_name,
             hsv_ranges,
+            hsv_mask=hsv_mask,
         )
         matches = self._non_max_suppression(matches, min_distance)
         if use_supervision_nms:
@@ -244,41 +201,6 @@ class ImageMatcher:
             if filtered is not None:
                 matches = filtered
         return [(confidence, x, y) for confidence, x, y, _, _ in matches]
-
-    def find_template_candidates(
-        self,
-        screenshot: np.ndarray,
-        template: np.ndarray,
-        mask: np.ndarray | None = None,
-        threshold: float | None = None,
-        min_distance: int = 15,
-        scales: list[float] | None = None,
-        template_name: str = "Unknown",
-    ) -> list[MatchCandidate]:
-        try:
-            screenshot = _as_bgr(screenshot, "screenshot")
-            template = _as_bgr(template, template_name)
-            mask = _normalized_mask(mask, template.shape, template_name)
-        except (ValueError, cv2.error) as exc:
-            logger.warning("[%s] Invalid multi-match input: %s", template_name, exc)
-            return []
-        matches: list[MatchCandidate] = []
-        max_score = 1.0 - _threshold(threshold, self.threshold)
-        for scale in self._valid_scales(scales, template.shape):
-            matches.extend(
-                self._template_candidates_for_scale(
-                    screenshot,
-                    template,
-                    mask,
-                    scale,
-                    max_score,
-                    min_distance,
-                    template_name,
-                )
-            )
-        return sorted(matches, key=lambda match: match[0], reverse=True)[
-            :MAX_TEMPLATE_CANDIDATES
-        ]
 
     def find_color_gated_template_candidates(
         self,
@@ -287,10 +209,10 @@ class ImageMatcher:
         mask: np.ndarray | None = None,
         threshold: float | None = None,
         min_distance: int = 15,
-        scales: list[float] | None = None,
         template_name: str = "Unknown",
         hsv_ranges: Any = None,
         hsv_match_threshold: float | None = None,
+        hsv_mask: np.ndarray | None = None,
     ) -> list[MatchCandidate]:
         try:
             screenshot = _as_bgr(screenshot, "screenshot")
@@ -310,13 +232,13 @@ class ImageMatcher:
             mask,
             hsv_match_threshold,
             min_distance,
+            hsv_mask,
         ):
             for candidate in self._region_template_candidates(
                 screenshot,
                 template,
                 mask,
                 region,
-                scales,
                 max_score,
                 min_distance,
                 template_name,
@@ -339,6 +261,7 @@ class ImageMatcher:
         mask: np.ndarray | None = None,
         hsv_ranges: Any = None,
         hsv_match_threshold: float = 0.9,
+        hsv_mask: np.ndarray | None = None,
     ) -> list[tuple[Any, ...]]:
         if not candidates:
             return []
@@ -346,7 +269,11 @@ class ImageMatcher:
             screenshot = _as_bgr(screenshot, "screenshot")
             template = _as_bgr(template, "template")
             mask = _normalized_mask(mask, template.shape, "template")
-            combined_mask = self._combined_hsv_mask(screenshot, hsv_ranges)
+            combined_mask = (
+                self._validated_hsv_mask(hsv_mask, screenshot.shape)
+                if hsv_mask is not None
+                else self._combined_hsv_mask(screenshot, hsv_ranges)
+            )
         except (ValueError, cv2.error) as exc:
             logger.warning("Invalid HSV candidate input: %s", exc)
             return []
@@ -441,26 +368,23 @@ class ImageMatcher:
         template: np.ndarray,
         mask: np.ndarray | None,
         region: MatchRegion,
-        scales: list[float] | None,
         max_score: float,
         min_distance: int,
         template_name: str,
     ) -> list[MatchCandidate]:
         left, top, right, bottom = region
         regional_screenshot = screenshot[top:bottom, left:right]
-        matches: list[MatchCandidate] = []
-        for scale in self._valid_scales(scales, template.shape):
+        return [
+            self._offset_candidate(candidate, left, top)
             for candidate in self._template_candidates_for_scale(
                 regional_screenshot,
                 template,
                 mask,
-                scale,
                 max_score,
                 min_distance,
                 template_name,
-            ):
-                matches.append(self._offset_candidate(candidate, left, top))
-        return matches
+            )
+        ]
 
     @staticmethod
     def _candidate_location_key(candidate: MatchCandidate) -> tuple[int, int, int, int]:
@@ -482,11 +406,16 @@ class ImageMatcher:
         mask: np.ndarray | None = None,
         hsv_match_threshold: float | None = None,
         min_distance: int = 0,
+        hsv_mask: np.ndarray | None = None,
     ) -> list[MatchRegion]:
         full_frame_region = self._full_frame_region(screenshot)
         if hsv_ranges is None:
             return [full_frame_region]
-        combined_mask = self._combined_hsv_mask(screenshot, hsv_ranges)
+        combined_mask = (
+            self._validated_hsv_mask(hsv_mask, screenshot.shape)
+            if hsv_mask is not None
+            else self._combined_hsv_mask(screenshot, hsv_ranges)
+        )
         if combined_mask is None or not np.any(combined_mask):
             return []
         if hsv_match_threshold is not None:
@@ -601,6 +530,26 @@ class ImageMatcher:
             )
         return combined_mask
 
+    def build_hsv_mask(
+        self, screenshot: np.ndarray, hsv_ranges: Any
+    ) -> np.ndarray | None:
+        """Build one reusable HSV mask for all templates matched on a frame."""
+        try:
+            screenshot = _as_bgr(screenshot, "screenshot")
+        except (ValueError, cv2.error) as exc:
+            logger.warning("Invalid HSV mask input: %s", exc)
+            return None
+        return self._combined_hsv_mask(screenshot, hsv_ranges)
+
+    @staticmethod
+    def _validated_hsv_mask(
+        hsv_mask: np.ndarray, screenshot_shape: tuple[int, ...]
+    ) -> np.ndarray:
+        mask = np.asarray(hsv_mask)
+        if mask.ndim != 2 or mask.shape != screenshot_shape[:2]:
+            raise ValueError("HSV mask does not match screenshot dimensions")
+        return mask
+
     @staticmethod
     def _mask_coverage_ratio(mask: np.ndarray) -> float:
         if mask.size == 0:
@@ -712,18 +661,14 @@ class ImageMatcher:
         screenshot: np.ndarray,
         template: np.ndarray,
         mask: np.ndarray | None,
-        scale: float,
         max_score: float,
         min_distance: int,
         template_name: str,
     ) -> list[MatchCandidate]:
-        scaled_template, scaled_mask = self._scaled(template, mask, scale)
-        result = _match_template(
-            screenshot, scaled_template, scaled_mask, template_name
-        )
+        result = _match_template(screenshot, template, mask, template_name)
         if result is None:
             return []
-        height, width = scaled_template.shape[:2]
+        height, width = template.shape[:2]
         candidates = []
         for x, y in self._candidate_points(result, max_score, min_distance):
             confidence = float(1.0 - result[y, x])
@@ -739,81 +684,34 @@ class ImageMatcher:
         iou_threshold: float = 0.5,
         class_agnostic: bool = True,
         class_ids: list[int] | tuple[int, ...] | None = None,
-    ) -> list[tuple[Any, ...]] | None:
+    ) -> list[tuple[Any, ...]]:
         if not candidates:
             return []
-        if supervision_module is None:
-            if _SUPERVISION_IMPORT_ERROR is not None:
-                logger.debug("Supervision unavailable: %s", _SUPERVISION_IMPORT_ERROR)
-            return None
-        arrays = self._supervision_arrays(candidates, class_ids)
-        if arrays is None:
-            return []
-        boxes, confidences, normalized_class_ids, indexes = arrays
-        try:
-            detections = supervision_module.Detections(
-                xyxy=boxes, confidence=confidences, class_id=normalized_class_ids
-            )
-            detections["candidate_index"] = indexes
-            retained = detections.with_nms(
-                threshold=_threshold(iou_threshold, 0.5),
-                class_agnostic=bool(class_agnostic),
-            )
-        except Exception as exc:
-            logger.debug("Supervision NMS failed: %s", exc)
-            return None
-        data = getattr(retained, "data", None)
-        if isinstance(data, dict) and "candidate_index" in data:
-            retained_indexes = [int(index) for index in data["candidate_index"]]
-            return sorted(
-                (candidates[index] for index in retained_indexes),
-                key=lambda item: item[0],
-                reverse=True,
-            )
-        return None
-
-    @staticmethod
-    def _valid_scales(
-        scales: list[float] | None, template_shape: tuple[int, ...]
-    ) -> list[float]:
-        values = [1.0] if scales is None else scales[:32]
-        normalized = []
-        template_height, template_width = template_shape[:2]
-        for scale in values:
+        ranked = []
+        for index, candidate in enumerate(candidates[:MAX_TEMPLATE_CANDIDATES]):
+            box = _candidate_box(candidate)
             try:
-                scale = float(scale)
-            except (TypeError, ValueError):
+                confidence = float(candidate[0])
+            except (IndexError, TypeError, ValueError):
                 continue
-            if not np.isfinite(scale) or scale <= 0:
+            if box is None or not np.isfinite(confidence):
                 continue
             try:
-                scaled_width = round(float(template_width) * scale)
-                scaled_height = round(float(template_height) * scale)
-            except OverflowError:
-                continue
-            if (
-                scaled_width >= MIN_SCALED_TEMPLATE_DIMENSION
-                and scaled_height >= MIN_SCALED_TEMPLATE_DIMENSION
+                class_id = 0 if class_ids is None else int(class_ids[index])
+            except (IndexError, TypeError, ValueError):
+                class_id = 0
+            ranked.append((confidence, index, class_id, box, candidate))
+        ranked.sort(key=lambda item: (-item[0], item[1]))
+        retained: list[tuple[Any, ...]] = []
+        threshold = _threshold(iou_threshold, 0.5)
+        for item in ranked:
+            if all(
+                (not class_agnostic and item[2] != kept[2])
+                or self._box_iou(item[3], kept[3]) <= threshold
+                for kept in retained
             ):
-                normalized.append(scale)
-        return normalized or [1.0]
-
-    @staticmethod
-    def _scaled(
-        template: np.ndarray, mask: np.ndarray | None, scale: float
-    ) -> tuple[np.ndarray, np.ndarray | None]:
-        if scale == 1.0:
-            return template, mask
-        scaled_template = cv2.resize(
-            template, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA
-        )
-        if mask is None:
-            return scaled_template, None
-        scaled_mask = cv2.resize(
-            mask, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST
-        )
-        scaled_mask[scaled_mask > 0] = 255
-        return scaled_template, scaled_mask
+                retained.append(item)
+        return [item[4] for item in retained]
 
     @staticmethod
     def _candidate_points(
@@ -859,39 +757,21 @@ class ImageMatcher:
         return filtered
 
     @staticmethod
-    def _supervision_arrays(
-        candidates: list[tuple[Any, ...]], class_ids: list[int] | tuple[int, ...] | None
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
-        boxes = []
-        confidences = []
-        normalized_class_ids = []
-        indexes = []
-        for index, candidate in enumerate(candidates[:MAX_TEMPLATE_CANDIDATES]):
-            box = _candidate_box(candidate)
-            if box is None:
-                continue
-            try:
-                confidence = float(candidate[0])
-            except (TypeError, ValueError):
-                continue
-            if not np.isfinite(confidence):
-                continue
-            boxes.append(box)
-            confidences.append(max(0.0, min(1.0, confidence)))
-            try:
-                class_id = 0 if class_ids is None else int(class_ids[index])
-            except (IndexError, TypeError, ValueError):
-                class_id = 0
-            normalized_class_ids.append(class_id)
-            indexes.append(index)
-        if not boxes:
-            return None
-        return (
-            np.asarray(boxes, dtype=np.float32),
-            np.asarray(confidences, dtype=np.float32),
-            np.asarray(normalized_class_ids, dtype=np.int32),
-            np.asarray(indexes, dtype=np.int32),
+    def _box_iou(
+        first: tuple[float, float, float, float],
+        second: tuple[float, float, float, float],
+    ) -> float:
+        left = max(first[0], second[0])
+        top = max(first[1], second[1])
+        right = min(first[2], second[2])
+        bottom = min(first[3], second[3])
+        intersection = max(0.0, right - left) * max(0.0, bottom - top)
+        first_area = max(0.0, first[2] - first[0]) * max(0.0, first[3] - first[1])
+        second_area = max(0.0, second[2] - second[0]) * max(
+            0.0, second[3] - second[1]
         )
+        union = first_area + second_area - intersection
+        return intersection / union if union > 0 else 0.0
 
     @staticmethod
     def _normalize_hsv_range(hsv_range: Any) -> tuple[np.ndarray, np.ndarray] | None:
