@@ -652,6 +652,8 @@ class EatventureBot:
         )
         if not moved or not self._sleep(config.POST_SCROLL_SETTLE):
             return False
+        if not self._click_idle():
+            return False
         if not self._sleep(config.SCROLL_INTERVAL_PAUSE):
             return False
         self.scroll_cycle_progress += 1
