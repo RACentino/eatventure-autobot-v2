@@ -24,7 +24,7 @@ WINDOW_HEIGHT = 780
 DEBUG = False
 
 # Duration of a single frame at 60 FPS. Used as the base unit for input-event timing so physical dispatch matches display refresh rate.
-SIXTY_FPS_FRAME_DURATION_SECONDS = 0.016
+SIXTY_FPS_FRAME_DURATION_SECONDS = 0.0
 
 
 # Detection overlap suppression
@@ -41,10 +41,10 @@ SUPERVISION_UPGRADE_STATION_NMS_IOU_THRESHOLD = 0.20
 SCRCPY_MISS_RECOVERY_ENABLED = True
 
 # Retry delay after a red icon scan miss.
-SCRCPY_RED_ICON_MISS_RECOVERY_DELAY = 0.1
+SCRCPY_RED_ICON_MISS_RECOVERY_DELAY = 0.0
 
 # Retry delay after a box scan miss.
-SCRCPY_BOX_MISS_RECOVERY_DELAY = 0.1
+SCRCPY_BOX_MISS_RECOVERY_DELAY = 0.0
 
 
 # Vision Matching
@@ -119,16 +119,16 @@ RED_ICON_HSV_MIN_MATCH_RATIO = 0.45
 # Mouse and Action Timing
 
 # Delay after normal click actions.
-CLICK_DELAY = 0.05
+CLICK_DELAY = 0.0
 
 # Delay after cursor movement.
-MOUSE_MOVE_DELAY = 0.05
+MOUSE_MOVE_DELAY = 0.0
 
 # Duration to hold the mouse button down during click actions.
-MOUSE_DOWN_DURATION = 0.1
+MOUSE_DOWN_DURATION = 0.0
 
 # Delay after releasing the mouse button.
-MOUSE_UP_DURATION = 0.1
+MOUSE_UP_DURATION = 0.0
 
 # Enables hover movement before click actions.
 HOVER_ENABLED = False
@@ -137,16 +137,16 @@ HOVER_ENABLED = False
 HOVER_DURATION = 0.0
 
 # Delay between upgrade station search attempts.
-UPGRADE_SEARCH_INTERVAL = 0.005
+UPGRADE_SEARCH_INTERVAL = 0.0
 
 # Settling delay before verifying an upgrade station hold target.
-UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.15
+UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.0
 
 # Maximum attempts for upgrade station verification.
 UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 2
 
 # Delay between upgrade station verification attempts.
-UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.025
+UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.0
 
 # Maximum duration for holding an upgrade station click.
 CLICK_HOLD_MAX_DURATION = 9.0
@@ -170,8 +170,8 @@ TELEGRAM_BOT_TOKEN = ""
 TELEGRAM_CHAT_ID = ""
 
 # Maximum Telegram request and shutdown waits in seconds.
-TELEGRAM_REQUEST_TIMEOUT = 2.0
-TELEGRAM_SHUTDOWN_TIMEOUT = 2.0
+TELEGRAM_REQUEST_TIMEOUT = 0.0
+TELEGRAM_SHUTDOWN_TIMEOUT = 0.0
 
 
 # Capture Regions
@@ -252,16 +252,16 @@ SCROLL_PIXEL_STEP = 180
 SCROLL_DISTANCE_RATIO = 1.0
 
 # Maximum oscillating scroll cycles before reset.
-MAX_SCROLL_CYCLES = 2
+MAX_SCROLL_CYCLES = 1
 
 # Step increment applied to each oscillating scroll cycle.
-SCROLL_INCREMENT_STEP = 3
+SCROLL_INCREMENT_STEP = 5
 
 # Delay between scroll intervals.
-SCROLL_INTERVAL_PAUSE = 0.15
+SCROLL_INTERVAL_PAUSE = 0.2
 
 # Settling delay after a scroll.
-POST_SCROLL_SETTLE = 0.15
+POST_SCROLL_SETTLE = 0.2
 
 # Duration of the scroll drag gesture.
 SCROLL_DURATION = 0.3
