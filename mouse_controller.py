@@ -259,11 +259,32 @@ class MouseController:
         logger.error("Cursor positioning failed at (%s, %s)", screen_x, screen_y)
         return False
 
+    def _cursor_matches_safe_position(self, screen_x: int, screen_y: int) -> bool:
+        current_x, current_y = self.get_cursor_position()
+        safe_position = self._screen_position(current_x, current_y, relative=False)
+        if safe_position == (screen_x, screen_y):
+            return True
+        logger.warning(
+            "Rejected left down: expected cursor=(%s, %s), actual=(%s, %s)",
+            screen_x,
+            screen_y,
+            current_x,
+            current_y,
+        )
+        return False
+
     def _button(
-        self, action_name: str, action: Callable[[], Any], x: int, y: int
-    ) -> bool:
+        self,
+        action_name: str,
+        action: Callable[[], Any],
+        x: int,
+        y: int,
+        require_safe_cursor: bool = False,
+    ) -> bool | None:
         try:
             self._physical_input_event_governor.wait_for_next_dispatch()
+            if require_safe_cursor and not self._cursor_matches_safe_position(x, y):
+                return None
             action()
             return True
         except Exception as exc:
@@ -279,12 +300,19 @@ class MouseController:
     ) -> bool:
         if self._stopped():
             return False
-        self._left_button_is_down = True
-        if not self._button(
-            "left down", lambda: self._mouse.press(self._left_button), x, y
-        ):
+        press_completed = self._button(
+            "left down",
+            lambda: self._mouse.press(self._left_button),
+            x,
+            y,
+            require_safe_cursor=True,
+        )
+        if press_completed is None:
+            return False
+        if not press_completed:
             self._release_after_failed_sequence(x, y)
             return False
+        self._left_button_is_down = True
         wait_time = _duration(
             config.MOUSE_DOWN_DURATION if duration is None else duration,
             config.MOUSE_DOWN_DURATION,
