@@ -69,7 +69,7 @@ Runtime thresholds, timings, coordinates, and forbidden zones live in `config.py
 
 Set `RED_ICON_FAST_MODE_ENABLED = True` to detect with `RedIcon15.png` only. Set it to `False` to use all red-icon templates and require `RED_ICON_MIN_MATCHES` distinct templates to agree on a detection.
 
-Telegram is optional. Set `TELEGRAM_ENABLED`, `TELEGRAM_BOT_TOKEN`, and `TELEGRAM_CHAT_ID` in `config.py`. Notifications are queued so network requests do not block state processing.
+Telegram is optional. Set `TELEGRAM_ENABLED = True` in `config.py`, then provide `EATVENTURE_TELEGRAM_BOT_TOKEN` and `EATVENTURE_TELEGRAM_CHAT_ID` through the process environment. Notifications are queued so network requests do not block state processing.
 
 ## Disclaimer
 

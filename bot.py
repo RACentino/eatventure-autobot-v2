@@ -3,6 +3,7 @@ import math
 import threading
 import time
 from collections import deque
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
@@ -103,36 +104,42 @@ class EatventureBot:
         self._stop_requested = threading.Event()
         self._lifecycle_lock = threading.RLock()
         self._step_lock = threading.Lock()
-        self.window_capture = WindowCapture(
-            config.WINDOW_TITLE, config.WINDOW_WIDTH, config.WINDOW_HEIGHT
-        )
-        self.image_matcher = ImageMatcher(config.MATCH_THRESHOLD)
-        self.mouse_controller = MouseController(
-            self.window_capture.get_input_window_rect,
-            config.CLICK_DELAY,
-            config.MOUSE_MOVE_DELAY,
-            stop_event=self._stop_requested,
-        )
-        self.telegram = TelegramNotifier(
-            config.TELEGRAM_BOT_TOKEN, config.TELEGRAM_CHAT_ID, config.TELEGRAM_ENABLED
-        )
-        self.templates = self.load_templates()
-        self.state = State.FIND_RED_ICONS
-        self._state_handlers = {
-            State.FIND_RED_ICONS: self.handle_find_red_icons,
-            State.CLICK_RED_ICON: self.handle_click_red_icon,
-            State.CHECK_UNLOCK: self.handle_check_unlock,
-            State.SEARCH_UPGRADE_STATION: self.handle_search_upgrade_station,
-            State.HOLD_UPGRADE_STATION: self.handle_hold_upgrade_station,
-            State.OPEN_BOXES: self.handle_open_boxes,
-            State.UPGRADE_STATS: self.handle_upgrade_stats,
-            State.SCROLL: self.handle_scroll,
-            State.CHECK_NEW_LEVEL: self.handle_check_new_level,
-            State.TRANSITION_LEVEL: self.handle_transition_level,
-            State.WAIT_FOR_UNLOCK: self.handle_wait_for_unlock,
-        }
-        self._reset_runtime_state()
-        self.ready = self._validate_required_templates()
+        with ExitStack() as pending_resources:
+            self.window_capture = WindowCapture(
+                config.WINDOW_TITLE, config.WINDOW_WIDTH, config.WINDOW_HEIGHT
+            )
+            pending_resources.callback(self.window_capture.close)
+            self.image_matcher = ImageMatcher(config.MATCH_THRESHOLD)
+            self.mouse_controller = MouseController(
+                self.window_capture.get_input_window_rect,
+                config.CLICK_DELAY,
+                config.MOUSE_MOVE_DELAY,
+                stop_event=self._stop_requested,
+            )
+            self.telegram = TelegramNotifier(
+                config.TELEGRAM_BOT_TOKEN,
+                config.TELEGRAM_CHAT_ID,
+                config.TELEGRAM_ENABLED,
+            )
+            pending_resources.callback(self.telegram.close)
+            self.templates = self.load_templates()
+            self.state = State.FIND_RED_ICONS
+            self._state_handlers = {
+                State.FIND_RED_ICONS: self.handle_find_red_icons,
+                State.CLICK_RED_ICON: self.handle_click_red_icon,
+                State.CHECK_UNLOCK: self.handle_check_unlock,
+                State.SEARCH_UPGRADE_STATION: self.handle_search_upgrade_station,
+                State.HOLD_UPGRADE_STATION: self.handle_hold_upgrade_station,
+                State.OPEN_BOXES: self.handle_open_boxes,
+                State.UPGRADE_STATS: self.handle_upgrade_stats,
+                State.SCROLL: self.handle_scroll,
+                State.CHECK_NEW_LEVEL: self.handle_check_new_level,
+                State.TRANSITION_LEVEL: self.handle_transition_level,
+                State.WAIT_FOR_UNLOCK: self.handle_wait_for_unlock,
+            }
+            self._reset_runtime_state()
+            self.ready = self._validate_required_templates()
+            pending_resources.pop_all()
         logger.info("Bot initialized successfully")
 
     def _reset_runtime_state(self) -> None:
@@ -225,9 +232,7 @@ class EatventureBot:
                 self.stop()
                 return False
             if not self.window_capture.is_window_active():
-                return self._wait_for_window_recovery(
-                    "Target window is not active"
-                )
+                return self._wait_for_window_recovery("Target window is not active")
             if WINDOW_RECOVERY_MESSAGE in self._active_recoveries:
                 self.window_capture.ensure_window(resize=True)
                 self.window_capture.get_input_window_rect()

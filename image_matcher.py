@@ -1,4 +1,5 @@
 import logging
+from itertools import islice
 from typing import Any, cast
 
 import cv2
@@ -19,6 +20,13 @@ HSV_REGION_MERGE_PADDING_PIXELS = 2
 HSV_REGION_MINIMUM_COMPONENT_AREA = 1
 
 
+def _bounded_hsv_range_values(hsv_ranges: Any) -> tuple[Any, ...]:
+    try:
+        return tuple(islice(iter(hsv_ranges), HSV_REGION_RANGE_LIMIT))
+    except TypeError:
+        return ()
+
+
 def _threshold(value: Any, default: float = 0.85) -> float:
     try:
         fallback = float(default)
@@ -37,11 +45,11 @@ def _as_bgr(image: Any, label: str) -> np.ndarray:
     if image is None or not hasattr(image, "shape") or image.size == 0:
         raise ValueError(f"{label} is empty")
     if image.ndim == 2:
-        return cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+        return cast(np.ndarray, cv2.cvtColor(image, cv2.COLOR_GRAY2BGR))
     if image.ndim == 3 and image.shape[2] == 3:
-        return image
+        return cast(np.ndarray, image)
     if image.ndim == 3 and image.shape[2] == 4:
-        return cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
+        return cast(np.ndarray, cv2.cvtColor(image, cv2.COLOR_BGRA2BGR))
     raise ValueError(f"{label} has unsupported shape {image.shape}")
 
 
@@ -509,10 +517,7 @@ class ImageMatcher:
     def _combined_hsv_mask(
         self, screenshot: np.ndarray, hsv_ranges: Any
     ) -> np.ndarray | None:
-        try:
-            hsv_range_values = list(hsv_ranges)[:HSV_REGION_RANGE_LIMIT]
-        except TypeError:
-            return None
+        hsv_range_values = _bounded_hsv_range_values(hsv_ranges)
         if not hsv_range_values:
             return None
         hsv_screenshot = cv2.cvtColor(screenshot, cv2.COLOR_BGR2HSV)
@@ -767,9 +772,7 @@ class ImageMatcher:
         bottom = min(first[3], second[3])
         intersection = max(0.0, right - left) * max(0.0, bottom - top)
         first_area = max(0.0, first[2] - first[0]) * max(0.0, first[3] - first[1])
-        second_area = max(0.0, second[2] - second[0]) * max(
-            0.0, second[3] - second[1]
-        )
+        second_area = max(0.0, second[2] - second[0]) * max(0.0, second[3] - second[1])
         union = first_area + second_area - intersection
         return intersection / union if union > 0 else 0.0
 
@@ -840,14 +843,14 @@ class ImageMatcher:
             return False
         ranges = [
             item
-            for value in hsv_ranges
+            for value in _bounded_hsv_range_values(hsv_ranges)
             if (item := self._normalize_hsv_range(value)) is not None
         ]
         if not ranges:
             return False
         hsv_region = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
         combined = np.zeros((height, width), dtype=np.uint8)
-        for lower, upper in ranges[:32]:
+        for lower, upper in ranges:
             combined = cast(
                 np.ndarray,
                 cv2.bitwise_or(combined, self._hsv_mask(hsv_region, lower, upper)),

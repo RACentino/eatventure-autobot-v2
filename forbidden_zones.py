@@ -105,7 +105,9 @@ def box_intersects_forbidden_zones(
     left, top, right, bottom = box
     for zone in zones:
         bounds = bounded_forbidden_zone(zone, frame_width, frame_height)
-        if bounds is not None and box_intersects_bounds(left, top, right, bottom, bounds):
+        if bounds is not None and box_intersects_bounds(
+            left, top, right, bottom, bounds
+        ):
             return True
     return False
 

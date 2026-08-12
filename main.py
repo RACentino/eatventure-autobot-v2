@@ -10,9 +10,65 @@ from pynput import keyboard as pynput_keyboard
 
 import config
 from bot import EatventureBot
+from domain import (
+    MAX_RUNTIME_LOOP_ITERATIONS,
+    MAX_UPGRADE_SEARCH_ATTEMPTS,
+    RED_ICON_TEMPLATE_NAMES,
+)
+from image_matcher import HSV_REGION_RANGE_LIMIT
 
 bot_instance: EatventureBot | None = None
 exit_requested = threading.Event()
+MAX_NUMBERED_FORBIDDEN_ZONES = 32
+HSV_CHANNEL_MAXIMUMS = (179, 255, 255)
+POSITIVE_UNIT_INTERVAL_CONFIGURATION_NAMES = (
+    "MATCH_THRESHOLD",
+    "RED_ICON_THRESHOLD",
+    "NEW_LEVEL_RED_ICON_THRESHOLD",
+    "STATS_RED_ICON_THRESHOLD",
+    "UPGRADE_STATION_THRESHOLD",
+    "BOX_THRESHOLD",
+    "UNLOCK_THRESHOLD",
+    "NEW_LEVEL_THRESHOLD",
+    "UPGRADE_STATION_HSV_MIN_MATCH_RATIO",
+    "BOX_HSV_MIN_MATCH_RATIO",
+    "RED_ICON_HSV_MIN_MATCH_RATIO",
+)
+NMS_CONFIGURATION_NAMES = (
+    "SUPERVISION_BOX_NMS_IOU_THRESHOLD",
+    "SUPERVISION_RED_ICON_NMS_IOU_THRESHOLD",
+    "SUPERVISION_UPGRADE_STATION_NMS_IOU_THRESHOLD",
+)
+NONNEGATIVE_CONFIGURATION_NAMES = (
+    "STATE_DELAY",
+    "SCRCPY_RED_ICON_MISS_RECOVERY_DELAY",
+    "SCRCPY_BOX_MISS_RECOVERY_DELAY",
+    "CLICK_DELAY",
+    "MOUSE_MOVE_DELAY",
+    "MOUSE_DOWN_DURATION",
+    "MOUSE_UP_DURATION",
+    "HOVER_DURATION",
+    "UPGRADE_SEARCH_INTERVAL",
+    "UPGRADE_STATION_VERIFY_SETTLE_DELAY",
+    "UPGRADE_STATION_VERIFY_SEARCH_INTERVAL",
+    "SCROLL_INTERVAL_PAUSE",
+    "POST_SCROLL_SETTLE",
+)
+POSITIVE_CONFIGURATION_NAMES = (
+    "SIXTY_FPS_FRAME_DURATION_SECONDS",
+    "CLICK_HOLD_MAX_DURATION",
+    "STATS_UPGRADE_CLICK_DURATION",
+    "STATS_UPGRADE_CLICK_DELAY",
+    "SCROLL_DURATION",
+    "SCROLL_DISTANCE_RATIO",
+)
+BOOLEAN_CONFIGURATION_NAMES = (
+    "DEBUG",
+    "SCRCPY_MISS_RECOVERY_ENABLED",
+    "HOVER_ENABLED",
+    "RED_ICON_FAST_MODE_ENABLED",
+    "TELEGRAM_ENABLED",
+)
 
 
 def _validate_finite_number(
@@ -21,6 +77,8 @@ def _validate_finite_number(
     minimum_value: float,
     maximum_value: float | None = None,
 ) -> str | None:
+    if isinstance(configuration_value, bool):
+        return f"{configuration_name} must be numeric"
     try:
         numeric_value = float(configuration_value)
     except (TypeError, ValueError):
@@ -32,13 +90,32 @@ def _validate_finite_number(
     return None
 
 
+def _validate_integer(
+    configuration_name: str,
+    configuration_value: Any,
+    minimum_value: int | None = None,
+    maximum_value: int | None = None,
+) -> str | None:
+    if isinstance(configuration_value, bool) or not isinstance(
+        configuration_value, int
+    ):
+        return f"{configuration_name} must be an integer"
+    if minimum_value is not None and configuration_value < minimum_value:
+        return f"{configuration_name} must be at least {minimum_value}"
+    if maximum_value is not None and configuration_value > maximum_value:
+        return f"{configuration_name} must not exceed {maximum_value}"
+    return None
+
+
 def _validate_position(configuration_name: str, position: object) -> str | None:
     if not isinstance(position, tuple) or len(position) != 2:
         return f"{configuration_name} must be a two-item tuple"
-    try:
-        position_x, position_y = int(position[0]), int(position[1])
-    except (TypeError, ValueError):
+    if any(
+        isinstance(coordinate, bool) or not isinstance(coordinate, int)
+        for coordinate in position
+    ):
         return f"{configuration_name} coordinates must be integers"
+    position_x, position_y = position
     if not (
         0 <= position_x < config.WINDOW_WIDTH and 0 <= position_y < config.WINDOW_HEIGHT
     ):
@@ -46,43 +123,113 @@ def _validate_position(configuration_name: str, position: object) -> str | None:
     return None
 
 
-def _numeric_configuration_errors() -> list[str]:
-    numeric_bounds = (
-        ("WINDOW_WIDTH", config.WINDOW_WIDTH, 1, None),
-        ("WINDOW_HEIGHT", config.WINDOW_HEIGHT, 1, None),
-        ("MAX_SEARCH_Y", config.MAX_SEARCH_Y, 1, config.WINDOW_HEIGHT),
-        ("EXTENDED_SEARCH_Y", config.EXTENDED_SEARCH_Y, 1, config.WINDOW_HEIGHT),
-        (
-            "UPGRADE_STATION_SEARCH_Y",
-            config.UPGRADE_STATION_SEARCH_Y,
-            1,
-            config.WINDOW_HEIGHT,
-        ),
-        ("BOX_SEARCH_Y", config.BOX_SEARCH_Y, 1, config.WINDOW_HEIGHT),
-        ("MATCH_THRESHOLD", config.MATCH_THRESHOLD, 0, 1),
-        ("RED_ICON_THRESHOLD", config.RED_ICON_THRESHOLD, 0, 1),
-        ("UPGRADE_STATION_THRESHOLD", config.UPGRADE_STATION_THRESHOLD, 0, 1),
-        ("BOX_THRESHOLD", config.BOX_THRESHOLD, 0, 1),
-        ("UNLOCK_THRESHOLD", config.UNLOCK_THRESHOLD, 0, 1),
-        ("NEW_LEVEL_THRESHOLD", config.NEW_LEVEL_THRESHOLD, 0, 1),
-        ("CLICK_DELAY", config.CLICK_DELAY, 0, None),
-        ("MOUSE_MOVE_DELAY", config.MOUSE_MOVE_DELAY, 0, None),
-        ("TELEGRAM_REQUEST_TIMEOUT", config.TELEGRAM_REQUEST_TIMEOUT, 0.001, None),
-        ("TELEGRAM_SHUTDOWN_TIMEOUT", config.TELEGRAM_SHUTDOWN_TIMEOUT, 0.001, None),
-    )
-    validation_errors: list[str] = []
-    for (
-        configuration_name,
-        configuration_value,
-        minimum_value,
-        maximum_value,
-    ) in numeric_bounds:
+def _number_configuration_errors(
+    names: tuple[str, ...], minimum: float, maximum: float | None = None
+) -> list[str]:
+    validation_errors = []
+    for name in names:
         validation_error = _validate_finite_number(
-            configuration_name, configuration_value, minimum_value, maximum_value
+            name, getattr(config, name), minimum, maximum
         )
         if validation_error is not None:
             validation_errors.append(validation_error)
     return validation_errors
+
+
+def _integer_configuration_errors(
+    bounds: tuple[tuple[str, Any, int | None, int | None], ...],
+) -> list[str]:
+    validation_errors = []
+    for name, value, minimum, maximum in bounds:
+        validation_error = _validate_integer(name, value, minimum, maximum)
+        if validation_error is not None:
+            validation_errors.append(validation_error)
+    return validation_errors
+
+
+def _configuration_dimension_limits() -> tuple[int | None, int | None]:
+    limits = []
+    for name, value in (
+        ("WINDOW_WIDTH", config.WINDOW_WIDTH),
+        ("WINDOW_HEIGHT", config.WINDOW_HEIGHT),
+    ):
+        limits.append(value if _validate_integer(name, value, 1) is None else None)
+    return limits[0], limits[1]
+
+
+def _integer_configuration_bounds() -> tuple[
+    tuple[str, Any, int | None, int | None], ...
+]:
+    window_width_limit, window_height_limit = _configuration_dimension_limits()
+    return (
+        ("WINDOW_WIDTH", config.WINDOW_WIDTH, 1, None),
+        ("WINDOW_HEIGHT", config.WINDOW_HEIGHT, 1, None),
+        ("MAX_SEARCH_Y", config.MAX_SEARCH_Y, 1, window_height_limit),
+        ("EXTENDED_SEARCH_Y", config.EXTENDED_SEARCH_Y, 1, window_height_limit),
+        (
+            "UPGRADE_STATION_SEARCH_Y",
+            config.UPGRADE_STATION_SEARCH_Y,
+            1,
+            window_height_limit,
+        ),
+        ("BOX_SEARCH_Y", config.BOX_SEARCH_Y, 1, window_height_limit),
+        (
+            "RED_ICON_MIN_MATCHES",
+            config.RED_ICON_MIN_MATCHES,
+            1,
+            len(RED_ICON_TEMPLATE_NAMES),
+        ),
+        ("RED_ICON_FAST_MIN_DISTANCE", config.RED_ICON_FAST_MIN_DISTANCE, 1, None),
+        (
+            "UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS",
+            config.UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS,
+            1,
+            MAX_UPGRADE_SEARCH_ATTEMPTS,
+        ),
+        ("SCROLL_PIXEL_STEP", config.SCROLL_PIXEL_STEP, 1, window_height_limit),
+        (
+            "MAX_SCROLL_CYCLES",
+            config.MAX_SCROLL_CYCLES,
+            1,
+            MAX_RUNTIME_LOOP_ITERATIONS,
+        ),
+        (
+            "SCROLL_INCREMENT_STEP",
+            config.SCROLL_INCREMENT_STEP,
+            1,
+            MAX_RUNTIME_LOOP_ITERATIONS,
+        ),
+        (
+            "RED_ICON_OFFSET_X",
+            config.RED_ICON_OFFSET_X,
+            -window_width_limit if window_width_limit is not None else None,
+            window_width_limit,
+        ),
+        (
+            "RED_ICON_OFFSET_Y",
+            config.RED_ICON_OFFSET_Y,
+            -window_height_limit if window_height_limit is not None else None,
+            window_height_limit,
+        ),
+    )
+
+
+def _numeric_configuration_errors() -> list[str]:
+    errors = _integer_configuration_errors(_integer_configuration_bounds())
+    errors.extend(
+        _number_configuration_errors(
+            POSITIVE_UNIT_INTERVAL_CONFIGURATION_NAMES, 0.000001, 1
+        )
+    )
+    errors.extend(_number_configuration_errors(NMS_CONFIGURATION_NAMES, 0, 1))
+    errors.extend(_number_configuration_errors(NONNEGATIVE_CONFIGURATION_NAMES, 0))
+    errors.extend(_number_configuration_errors(POSITIVE_CONFIGURATION_NAMES, 0.000001))
+    errors.extend(
+        _number_configuration_errors(
+            ("TELEGRAM_REQUEST_TIMEOUT", "TELEGRAM_SHUTDOWN_TIMEOUT"), 0.001
+        )
+    )
+    return errors
 
 
 def _position_configuration_errors() -> list[str]:
@@ -101,15 +248,157 @@ def _position_configuration_errors() -> list[str]:
     return validation_errors
 
 
-def _validate_configuration() -> None:
-    validation_errors: list[str] = []
-    if not isinstance(config.WINDOW_TITLE, str) or not config.WINDOW_TITLE.strip():
-        validation_errors.append("WINDOW_TITLE must be a non-empty string")
-    validation_errors.extend(_numeric_configuration_errors())
-    validation_errors.extend(_position_configuration_errors())
-    if config.TELEGRAM_ENABLED and (
-        not config.TELEGRAM_BOT_TOKEN or not config.TELEGRAM_CHAT_ID
+def _validate_rectangle(configuration_name: str, bounds: object) -> str | None:
+    if not isinstance(bounds, tuple) or len(bounds) != 4:
+        return f"{configuration_name} must be a four-item tuple"
+    if any(
+        isinstance(coordinate, bool) or not isinstance(coordinate, int)
+        for coordinate in bounds
     ):
+        return f"{configuration_name} coordinates must be integers"
+    x_minimum, x_maximum, y_minimum, y_maximum = bounds
+    if not (
+        0 <= x_minimum <= x_maximum < config.WINDOW_WIDTH
+        and 0 <= y_minimum <= y_maximum < config.WINDOW_HEIGHT
+    ):
+        return f"{configuration_name} must be ordered inside the configured window"
+    return None
+
+
+def _rectangle_configuration_errors() -> list[str]:
+    rectangles = (
+        (
+            "NEW_LEVEL_RED_ICON_BOUNDS",
+            (
+                config.NEW_LEVEL_RED_ICON_X_MIN,
+                config.NEW_LEVEL_RED_ICON_X_MAX,
+                config.NEW_LEVEL_RED_ICON_Y_MIN,
+                config.NEW_LEVEL_RED_ICON_Y_MAX,
+            ),
+        ),
+        (
+            "UPGRADE_RED_ICON_BOUNDS",
+            (
+                config.UPGRADE_RED_ICON_X_MIN,
+                config.UPGRADE_RED_ICON_X_MAX,
+                config.UPGRADE_RED_ICON_Y_MIN,
+                config.UPGRADE_RED_ICON_Y_MAX,
+            ),
+        ),
+        (
+            "FORBIDDEN_CLICK_BOUNDS",
+            (
+                config.FORBIDDEN_CLICK_X_MIN,
+                config.FORBIDDEN_CLICK_X_MAX,
+                config.FORBIDDEN_CLICK_Y_MIN,
+                config.WINDOW_HEIGHT - 1,
+            ),
+        ),
+    )
+    errors = [
+        error
+        for name, bounds in rectangles
+        if (error := _validate_rectangle(name, bounds)) is not None
+    ]
+    zones = config.NUMBERED_FORBIDDEN_ZONE_BOUNDS
+    if (
+        not isinstance(zones, tuple)
+        or not zones
+        or len(zones) > MAX_NUMBERED_FORBIDDEN_ZONES
+    ):
+        errors.append(
+            "NUMBERED_FORBIDDEN_ZONE_BOUNDS must be a bounded tuple of rectangles"
+        )
+        return errors
+    for zone_index, bounds in enumerate(zones, start=1):
+        error = _validate_rectangle(f"FORBIDDEN_ZONE_{zone_index}", bounds)
+        if error is not None:
+            errors.append(error)
+    return errors
+
+
+def _validate_hsv_bound(
+    configuration_name: str, range_index: int, bound: object
+) -> str | None:
+    if not isinstance(bound, tuple) or len(bound) != 3:
+        return f"{configuration_name}[{range_index}] bounds must have three channels"
+    for channel_index, value in enumerate(bound):
+        if isinstance(value, bool) or not isinstance(value, int):
+            return f"{configuration_name}[{range_index}] channels must be integers"
+        if not 0 <= value <= HSV_CHANNEL_MAXIMUMS[channel_index]:
+            return f"{configuration_name}[{range_index}] channel is out of range"
+    return None
+
+
+def _validate_hsv_range(
+    configuration_name: str, range_index: int, hsv_range: object
+) -> str | None:
+    if not isinstance(hsv_range, tuple) or len(hsv_range) != 2:
+        return f"{configuration_name}[{range_index}] must contain lower and upper"
+    lower, upper = hsv_range
+    for bound in (lower, upper):
+        validation_error = _validate_hsv_bound(configuration_name, range_index, bound)
+        if validation_error is not None:
+            return validation_error
+    if lower[1] > upper[1] or lower[2] > upper[2]:
+        return f"{configuration_name}[{range_index}] saturation/value is reversed"
+    return None
+
+
+def _validate_hsv_ranges(configuration_name: str, ranges: object) -> str | None:
+    if not isinstance(ranges, tuple) or not 1 <= len(ranges) <= HSV_REGION_RANGE_LIMIT:
+        return f"{configuration_name} must contain 1..{HSV_REGION_RANGE_LIMIT} ranges"
+    for range_index, hsv_range in enumerate(ranges, start=1):
+        validation_error = _validate_hsv_range(
+            configuration_name, range_index, hsv_range
+        )
+        if validation_error is not None:
+            return validation_error
+    return None
+
+
+def _hsv_configuration_errors() -> list[str]:
+    errors = []
+    for name, ranges in (
+        ("RED_ICON_HSV_RANGES", config.RED_ICON_HSV_RANGES),
+        ("UPGRADE_STATION_HSV_RANGES", config.UPGRADE_STATION_HSV_RANGES),
+        ("BOX_HSV_RANGES", config.BOX_HSV_RANGES),
+    ):
+        error = _validate_hsv_ranges(name, ranges)
+        if error is not None:
+            errors.append(error)
+    return errors
+
+
+def _general_configuration_errors() -> list[str]:
+    errors = []
+    for name, value in (
+        ("WINDOW_TITLE", config.WINDOW_TITLE),
+        ("ASSETS_DIR", config.ASSETS_DIR),
+        ("LOGS_DIR", config.LOGS_DIR),
+    ):
+        if not isinstance(value, str) or not value.strip():
+            errors.append(f"{name} must be a non-empty string")
+    for name in BOOLEAN_CONFIGURATION_NAMES:
+        value = getattr(config, name)
+        if not isinstance(value, bool):
+            errors.append(f"{name} must be a boolean")
+    return errors
+
+
+def _validate_configuration() -> None:
+    validation_errors = _general_configuration_errors()
+    validation_errors.extend(_numeric_configuration_errors())
+    window_width_limit, window_height_limit = _configuration_dimension_limits()
+    if window_width_limit is not None and window_height_limit is not None:
+        validation_errors.extend(_position_configuration_errors())
+        validation_errors.extend(_rectangle_configuration_errors())
+    validation_errors.extend(_hsv_configuration_errors())
+    credentials_are_valid = all(
+        isinstance(value, str) and bool(value.strip())
+        for value in (config.TELEGRAM_BOT_TOKEN, config.TELEGRAM_CHAT_ID)
+    )
+    if config.TELEGRAM_ENABLED and not credentials_are_valid:
         validation_errors.append(
             "Telegram requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID"
         )
@@ -224,11 +513,14 @@ def _print_startup_banner() -> None:
 
 
 def _run_bot_event_loop() -> None:
-    while not exit_requested.is_set():
+    for _ in range(MAX_RUNTIME_LOOP_ITERATIONS):
+        if exit_requested.is_set():
+            return
         if bot_instance is not None and bot_instance.running:
             bot_instance.step()
         else:
             exit_requested.wait(0.1)
+    raise RuntimeError("Bot event loop exhausted its iteration limit")
 
 
 def _cleanup_runtime(listener: Any | None) -> None:
@@ -259,6 +551,10 @@ def main() -> int:
         listener.start()
 
         bot_instance = EatventureBot()
+        if not bot_instance.ready:
+            raise RuntimeError(
+                "Bot initialization failed: required templates unavailable"
+            )
         logger = logging.getLogger(__name__)
         logger.info("Bot initialized and ready")
         logger.info("Press Z to START/STOP the bot")

@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -167,10 +168,10 @@ STATS_UPGRADE_CLICK_DELAY = 0.016
 TELEGRAM_ENABLED = False
 
 # Telegram bot token used for notification delivery.
-TELEGRAM_BOT_TOKEN = ""
+TELEGRAM_BOT_TOKEN = os.environ.get("EATVENTURE_TELEGRAM_BOT_TOKEN", "").strip()
 
 # Telegram chat identifier that receives notifications.
-TELEGRAM_CHAT_ID = ""
+TELEGRAM_CHAT_ID = os.environ.get("EATVENTURE_TELEGRAM_CHAT_ID", "").strip()
 
 # Maximum Telegram request and shutdown waits in seconds.
 TELEGRAM_REQUEST_TIMEOUT = 5.0

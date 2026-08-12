@@ -8,6 +8,7 @@ from urllib.parse import quote
 import requests
 
 import config
+from domain import MAX_RUNTIME_LOOP_ITERATIONS
 
 logger = logging.getLogger(__name__)
 TELEGRAM_API_BASE_URL = "https://api.telegram.org"
@@ -51,7 +52,13 @@ class TelegramNotifier:
             self._worker = threading.Thread(
                 target=self._run, name="telegram_notifier", daemon=True
             )
-            self._worker.start()
+            try:
+                self._worker.start()
+            except RuntimeError:
+                self._worker = None
+                self._session.close()
+                self._session = None
+                raise
         logger.info("Telegram notifier %s", "enabled" if self.enabled else "disabled")
 
     def close(self) -> None:
@@ -81,7 +88,9 @@ class TelegramNotifier:
             return False
 
     def _run(self) -> None:
-        while not self._stop.is_set():
+        for _ in range(MAX_RUNTIME_LOOP_ITERATIONS):
+            if self._stop.is_set():
+                return
             if self._messages is None:
                 return
             try:
@@ -92,6 +101,7 @@ class TelegramNotifier:
                 self._deliver(message)
             finally:
                 self._messages.task_done()
+        logger.critical("Telegram worker exhausted its iteration limit")
 
     def _deliver(self, text: str) -> bool:
         if self._session is None:

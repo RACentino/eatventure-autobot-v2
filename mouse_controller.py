@@ -283,13 +283,30 @@ class MouseController:
     ) -> bool | None:
         try:
             self._physical_input_event_governor.wait_for_next_dispatch()
-            if require_safe_cursor and not self._cursor_matches_safe_position(x, y):
-                return None
+            safe_cursor = not require_safe_cursor or self._cursor_matches_safe_position(
+                x, y
+            )
+        except Exception as exc:
+            logger.error(
+                "%s pre-dispatch validation failed at (%s, %s): %s",
+                action_name,
+                x,
+                y,
+                exc,
+            )
+            return None
+        if not safe_cursor:
+            return None
+        try:
             action()
             return True
         except Exception as exc:
             logger.error("%s failed at (%s, %s): %s", action_name, x, y, exc)
             return False
+
+    def _dispatch_left_down(self) -> None:
+        self._left_button_is_down = True
+        self._mouse.press(self._left_button)
 
     def _press_left(
         self,
@@ -302,7 +319,7 @@ class MouseController:
             return False
         press_completed = self._button(
             "left down",
-            lambda: self._mouse.press(self._left_button),
+            self._dispatch_left_down,
             x,
             y,
             require_safe_cursor=True,
@@ -312,7 +329,6 @@ class MouseController:
         if not press_completed:
             self._release_after_failed_sequence(x, y)
             return False
-        self._left_button_is_down = True
         wait_time = _duration(
             config.MOUSE_DOWN_DURATION if duration is None else duration,
             config.MOUSE_DOWN_DURATION,
@@ -611,9 +627,12 @@ class MouseController:
             if position is None:
                 return None
             rel_x, rel_y, _, _, _, _ = position
-            if first_forbidden_zone_containing_point(
-                rel_x, rel_y, self._forbidden_zones
-            ) is not None:
+            if (
+                first_forbidden_zone_containing_point(
+                    rel_x, rel_y, self._forbidden_zones
+                )
+                is not None
+            ):
                 return None
             path.append((x, y))
         return path
