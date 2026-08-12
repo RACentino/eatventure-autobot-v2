@@ -24,7 +24,10 @@ WINDOW_HEIGHT = 780
 DEBUG = False
 
 # Duration of a single frame at 60 FPS. Used as the base unit for input-event timing so physical dispatch matches display refresh rate.
-SIXTY_FPS_FRAME_DURATION_SECONDS = 0.0
+SIXTY_FPS_FRAME_DURATION_SECONDS = 0.016666666666666666
+
+# Global delay between state-machine steps.
+STATE_DELAY = 0.0
 
 
 # Detection overlap suppression
@@ -41,10 +44,10 @@ SUPERVISION_UPGRADE_STATION_NMS_IOU_THRESHOLD = 0.20
 SCRCPY_MISS_RECOVERY_ENABLED = True
 
 # Retry delay after a red icon scan miss.
-SCRCPY_RED_ICON_MISS_RECOVERY_DELAY = 0.0
+SCRCPY_RED_ICON_MISS_RECOVERY_DELAY = 0.03333333333333333
 
 # Retry delay after a box scan miss.
-SCRCPY_BOX_MISS_RECOVERY_DELAY = 0.0
+SCRCPY_BOX_MISS_RECOVERY_DELAY = 0.03333333333333333
 
 
 # Vision Matching
@@ -119,16 +122,16 @@ RED_ICON_HSV_MIN_MATCH_RATIO = 0.45
 # Mouse and Action Timing
 
 # Delay after normal click actions.
-CLICK_DELAY = 0.0
+CLICK_DELAY = 0.03333333333333333
 
 # Delay after cursor movement.
-MOUSE_MOVE_DELAY = 0.0
+MOUSE_MOVE_DELAY = 0.016666666666666666
 
 # Duration to hold the mouse button down during click actions.
-MOUSE_DOWN_DURATION = 0.0
+MOUSE_DOWN_DURATION = 0.11666666666666667
 
 # Delay after releasing the mouse button.
-MOUSE_UP_DURATION = 0.0
+MOUSE_UP_DURATION = 0.11666666666666667
 
 # Enables hover movement before click actions.
 HOVER_ENABLED = False
@@ -137,16 +140,16 @@ HOVER_ENABLED = False
 HOVER_DURATION = 0.0
 
 # Delay between upgrade station search attempts.
-UPGRADE_SEARCH_INTERVAL = 0.0
+UPGRADE_SEARCH_INTERVAL = 0.05
 
 # Settling delay before verifying an upgrade station hold target.
-UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.0
+UPGRADE_STATION_VERIFY_SETTLE_DELAY = 0.13333333333333333
 
 # Maximum attempts for upgrade station verification.
 UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS = 2
 
 # Delay between upgrade station verification attempts.
-UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.0
+UPGRADE_STATION_VERIFY_SEARCH_INTERVAL = 0.1
 
 # Maximum duration for holding an upgrade station click.
 CLICK_HOLD_MAX_DURATION = 9.0
@@ -170,8 +173,8 @@ TELEGRAM_BOT_TOKEN = ""
 TELEGRAM_CHAT_ID = ""
 
 # Maximum Telegram request and shutdown waits in seconds.
-TELEGRAM_REQUEST_TIMEOUT = 0.0
-TELEGRAM_SHUTDOWN_TIMEOUT = 0.0
+TELEGRAM_REQUEST_TIMEOUT = 5.0
+TELEGRAM_SHUTDOWN_TIMEOUT = 5.0
 
 
 # Capture Regions
