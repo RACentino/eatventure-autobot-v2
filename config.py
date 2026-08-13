@@ -102,7 +102,7 @@ UNLOCK_THRESHOLD = 0.905
 NEW_LEVEL_THRESHOLD = 0.965
 
 # Uses only RedIcon15 when true; uses all red-icon templates with consensus when false.
-RED_ICON_FAST_MODE_ENABLED = True
+RED_ICON_FAST_MODE_ENABLED = False
 
 # Minimum distinct templates that must agree in full mode.
 RED_ICON_MIN_MATCHES = 4
