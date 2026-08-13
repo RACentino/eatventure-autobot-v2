@@ -574,12 +574,21 @@ class MouseController:
                     config.SCROLL_DURATION,
                 ),
             )
-            steps = min(MAX_DRAG_STEPS, 20)
+            steps = min(
+                MAX_DRAG_STEPS,
+                max(
+                    1,
+                    math.floor(
+                        duration
+                        / self._physical_input_event_governor.get_minimum_interval_seconds()
+                    ),
+                ),
+            )
             path = self._drag_path(start_pos, end_pos, steps, bounds)
             if path is None or not self._set_cursor(*start_pos):
                 return False
             precise_sleep(self.move_delay)
-            if not self._press_left(*start_pos):
+            if not self._press_left(*start_pos, duration=0.0):
                 return False
             release_completed = False
             try:
@@ -598,13 +607,13 @@ class MouseController:
     def _move_along_drag_path(
         self, path: list[Point], duration: float, steps: int, start_time: float
     ) -> bool:
-        for index, (screen_x, screen_y) in enumerate(path):
+        for index, (screen_x, screen_y) in enumerate(path, start=1):
             if self._stopped():
                 return False
             if not self._set_cursor(screen_x, screen_y, verify=index == steps):
                 return False
             if not sleep_until(
-                start_time + ((index + 1) * duration / steps), self._stop_event
+                start_time + (index * duration / steps), self._stop_event
             ):
                 return False
         return True
@@ -619,7 +628,7 @@ class MouseController:
         path = []
         start_x, start_y = start_pos
         end_x, end_y = end_pos
-        for index in range(steps + 1):
+        for index in range(1, steps + 1):
             ratio = index / steps
             x = int(start_x + (end_x - start_x) * ratio)
             y = int(start_y + (end_y - start_y) * ratio)
