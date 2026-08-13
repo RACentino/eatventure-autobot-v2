@@ -105,7 +105,7 @@ NEW_LEVEL_THRESHOLD = 0.965
 RED_ICON_FAST_MODE_ENABLED = False
 
 # Minimum distinct templates that must agree in full mode.
-RED_ICON_MIN_MATCHES = 4
+RED_ICON_MIN_MATCHES = 3
 
 # Minimum pixel distance between red icon matches.
 RED_ICON_FAST_MIN_DISTANCE = 32
@@ -262,13 +262,13 @@ MAX_SCROLL_CYCLES = 1
 SCROLL_INCREMENT_STEP = 5
 
 # Delay between scroll intervals.
-SCROLL_INTERVAL_PAUSE = 0.2
+SCROLL_INTERVAL_PAUSE = 0.200
 
 # Settling delay after a scroll.
-POST_SCROLL_SETTLE = 0.2
+POST_SCROLL_SETTLE = 0.200
 
 # Duration of the scroll drag gesture.
-SCROLL_DURATION = 0.3
+SCROLL_DURATION = 0.300
 
 
 # Forbidden Zones
