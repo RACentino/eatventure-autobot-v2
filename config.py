@@ -30,7 +30,7 @@ SIXTY_FPS_FRAME_DURATION_SECONDS = 0.016666666666666666
 # Detection overlap suppression
 
 # IoU thresholds used by the built-in class-agnostic NMS.
-SUPERVISION_BOX_NMS_IOU_THRESHOLD = 0.14
+SUPERVISION_BOX_NMS_IOU_THRESHOLD = 0.16453
 SUPERVISION_RED_ICON_NMS_IOU_THRESHOLD = 0.20
 SUPERVISION_UPGRADE_STATION_NMS_IOU_THRESHOLD = 0.20
 
@@ -74,11 +74,10 @@ UPGRADE_STATION_HSV_RANGES = (
 UPGRADE_STATION_HSV_MIN_MATCH_RATIO = 0.4
 
 # Template confidence threshold for box scans.
-BOX_THRESHOLD = 0.860
+BOX_THRESHOLD = 0.84585
 
 # Accepted HSV ranges for box candidate gating.
 BOX_HSV_RANGES = (
-    ((10, 65, 180), (13, 105, 255)),
     ((18, 90, 120), (18, 129, 245)),
     ((18, 130, 120), (18, 130, 229)),
     ((18, 130, 235), (18, 130, 245)),
@@ -102,7 +101,7 @@ BOX_HSV_RANGES = (
 )
 
 # Minimum HSV mask ratio for accepting a box candidate.
-BOX_HSV_MIN_MATCH_RATIO = 0.275
+BOX_HSV_MIN_MATCH_RATIO = 0.28478
 
 # Template confidence threshold for unlock button scans.
 UNLOCK_THRESHOLD = 0.905
