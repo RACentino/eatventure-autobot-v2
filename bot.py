@@ -46,6 +46,7 @@ logger = logging.getLogger(__name__)
 TemplatePair = tuple[Any, Any]
 RedIcon = tuple[float, int, int]
 RedIconRecord = tuple[float, int, int, str]
+UpgradeStationCandidate = tuple[float, int, int, int, int]
 BoxCandidate = tuple[float, int, int, int, int, str]
 StateResult = State | None
 UPWARD_OSCILLATING_SCROLL_DIRECTION = -1
@@ -63,9 +64,26 @@ def _finite_float(value: Any, default: float = 0.0) -> float:
     return number if math.isfinite(number) else float(default)
 
 
+def _same_upgrade_station_target(
+    locked_target: UpgradeStationCandidate,
+    candidate: UpgradeStationCandidate,
+) -> bool:
+    _, locked_x, locked_y, locked_width, locked_height = locked_target
+    _, candidate_x, candidate_y, candidate_width, candidate_height = candidate
+    return abs(candidate_x - locked_x) * 2 <= max(
+        candidate_width, locked_width
+    ) and abs(candidate_y - locked_y) * 2 <= max(candidate_height, locked_height)
+
+
 class _UpgradeStationHoldMonitor:
-    def __init__(self, bot: Any, threshold: float) -> None:
+    def __init__(
+        self,
+        bot: Any,
+        target: UpgradeStationCandidate,
+        threshold: float,
+    ) -> None:
         self.bot = bot
+        self.target = target
         self.threshold = max(0.0, float(threshold))
         self.relaxed_threshold = max(
             0.0, self.threshold - UPGRADE_STATION_THRESHOLD_RELAXATION
@@ -87,6 +105,7 @@ class _UpgradeStationHoldMonitor:
         if time.perf_counter() < self.next_verify_at:
             return False
         match = self.bot._verify_upgrade_station(
+            self.target,
             self.threshold,
             self.relaxed_threshold,
             wait_between_attempts=False,
@@ -94,6 +113,7 @@ class _UpgradeStationHoldMonitor:
         if match is None:
             self.station_lost = True
             return True
+        self.target = match
         self.next_verify_at = time.perf_counter() + self.interval
         return False
 
@@ -150,6 +170,7 @@ class EatventureBot:
 
     def _reset_action_state(self) -> None:
         self.red_icon: RedIcon | None = None
+        self.active_upgrade_station_target: UpgradeStationCandidate | None = None
         self.empty_cycle_count = 0
         self.upgrade_station_counter = 0
         self.scroll_failures = 0
@@ -531,24 +552,34 @@ class EatventureBot:
         if self.last_clicked_pos is not None:
             self.failed_click_tracker.pop(self._bucket(*self.last_clicked_pos), None)
 
-    def _find_upgrade_station(self, threshold: float) -> RedIcon | None:
+    def _find_upgrade_station(
+        self,
+        threshold: float,
+        locked_target: UpgradeStationCandidate | None = None,
+    ) -> UpgradeStationCandidate | None:
         screenshot = self.window_capture.capture(max_y=config.UPGRADE_STATION_SEARCH_Y)
-        for confidence, x, y, _, _ in self._upgrade_candidates(screenshot, threshold):
-            if not self.mouse_controller.is_in_forbidden_zone(x, y, relative=True):
-                return float(confidence), int(x), int(y)
+        for candidate in self._upgrade_candidates(screenshot, threshold):
+            _, x, y, _, _ = candidate
+            if self.mouse_controller.is_in_forbidden_zone(x, y, relative=True):
+                continue
+            if locked_target is None or _same_upgrade_station_target(
+                locked_target, candidate
+            ):
+                return candidate
         return None
 
     def _verify_upgrade_station(
         self,
+        locked_target: UpgradeStationCandidate,
         base_threshold: float,
         relaxed_threshold: float,
         wait_between_attempts: bool,
-    ) -> RedIcon | None:
+    ) -> UpgradeStationCandidate | None:
         attempts = max(1, int(config.UPGRADE_STATION_VERIFY_SEARCH_ATTEMPTS))
         attempts = min(attempts, MAX_UPGRADE_SEARCH_ATTEMPTS)
         for attempt in range(attempts):
             threshold = base_threshold if attempt == 0 else relaxed_threshold
-            match = self._find_upgrade_station(threshold)
+            match = self._find_upgrade_station(threshold, locked_target)
             if match is not None:
                 return match
             if (
@@ -561,7 +592,7 @@ class EatventureBot:
 
     def _upgrade_candidates(
         self, screenshot: Any, threshold: float
-    ) -> list[tuple[float, int, int, int, int]]:
+    ) -> list[UpgradeStationCandidate]:
         template_pair = self._template(TemplateName.UPGRADE_STATION.value)
         if template_pair is None:
             return []
@@ -772,6 +803,7 @@ class EatventureBot:
         return State.SEARCH_UPGRADE_STATION
 
     def handle_search_upgrade_station(self) -> StateResult:
+        self.active_upgrade_station_target = None
         base_threshold = float(config.UPGRADE_STATION_THRESHOLD)
         relaxed_threshold = max(
             0.0, base_threshold - UPGRADE_STATION_THRESHOLD_RELAXATION
@@ -784,8 +816,8 @@ class EatventureBot:
             )
             match = self._find_upgrade_station(threshold)
             if match is not None:
-                _, x, y = match
-                self._remember_successful_row()
+                _, x, y, _, _ = match
+                self.active_upgrade_station_target = match
                 self.empty_cycle_count = 0
                 logger.info("Upgrade station found at (%s, %s)", x, y)
                 return State.HOLD_UPGRADE_STATION
@@ -798,56 +830,69 @@ class EatventureBot:
         return State.OPEN_BOXES
 
     def handle_hold_upgrade_station(self) -> StateResult:
+        locked_target = self.active_upgrade_station_target
+        if locked_target is None:
+            return State.OPEN_BOXES
         threshold = float(config.UPGRADE_STATION_THRESHOLD)
-        match = self._verified_upgrade_station_or_clear(threshold)
-        if match is None:
-            return State.OPEN_BOXES
-        _, x, y = match
-        if self.mouse_controller.is_in_forbidden_zone(x, y, relative=True):
-            logger.warning(
-                "Upgrade station blocked by forbidden zone at (%s, %s)", x, y
+        try:
+            match = self._verified_upgrade_station_or_clear(locked_target, threshold)
+            if match is None:
+                return State.OPEN_BOXES
+            self.active_upgrade_station_target = match
+            _, x, y, _, _ = match
+            if self.mouse_controller.is_in_forbidden_zone(x, y, relative=True):
+                logger.warning(
+                    "Upgrade station blocked by forbidden zone at (%s, %s)", x, y
+                )
+                return State.OPEN_BOXES
+            clicked = self.mouse_controller.precise_click(x, y, relative=True)
+            if not clicked:
+                logger.warning(
+                    "Upgrade station verification click failed at (%s, %s)", x, y
+                )
+                return State.OPEN_BOXES
+            if not self._sleep(config.UPGRADE_STATION_VERIFY_SETTLE_DELAY):
+                return State.OPEN_BOXES
+            match = self._verified_upgrade_station_or_clear(match, threshold)
+            if match is None:
+                return State.OPEN_BOXES
+            self.active_upgrade_station_target = match
+            _, x, y, _, _ = match
+            monitor = _UpgradeStationHoldMonitor(self, match, threshold)
+            held = self.mouse_controller.hold_at(
+                x,
+                y,
+                duration=config.CLICK_HOLD_MAX_DURATION,
+                relative=True,
+                interrupt_check=monitor,
             )
+            if not held and not monitor.station_lost:
+                return State.OPEN_BOXES
+            self._remember_successful_row()
+            self.empty_cycle_count = 0
+            self.needs_dismissal = True
+            self.upgrade_station_counter += 1
+            if self.upgrade_station_counter >= UPGRADE_STATS_CYCLE_INTERVAL:
+                self.upgrade_station_counter = 0
+                return State.UPGRADE_STATS
             return State.OPEN_BOXES
-        clicked = self.mouse_controller.precise_click(x, y, relative=True)
-        if not clicked:
-            logger.warning(
-                "Upgrade station verification click failed at (%s, %s)", x, y
-            )
-            return State.OPEN_BOXES
-        if not self._sleep(config.UPGRADE_STATION_VERIFY_SETTLE_DELAY):
-            return State.OPEN_BOXES
-        match = self._verified_upgrade_station_or_clear(threshold)
-        if match is None:
-            return State.OPEN_BOXES
-        _, x, y = match
-        monitor = _UpgradeStationHoldMonitor(self, threshold)
-        held = self.mouse_controller.hold_at(
-            x,
-            y,
-            duration=config.CLICK_HOLD_MAX_DURATION,
-            relative=True,
-            interrupt_check=monitor,
-        )
-        if not held and not monitor.station_lost:
-            return State.OPEN_BOXES
-        self._remember_successful_row()
-        self.empty_cycle_count = 0
-        self.needs_dismissal = True
-        self.upgrade_station_counter += 1
-        if self.upgrade_station_counter >= UPGRADE_STATS_CYCLE_INTERVAL:
-            self.upgrade_station_counter = 0
-            return State.UPGRADE_STATS
-        return State.OPEN_BOXES
+        finally:
+            self.active_upgrade_station_target = None
 
-    def _verified_upgrade_station_or_clear(self, threshold: float) -> RedIcon | None:
+    def _verified_upgrade_station_or_clear(
+        self,
+        locked_target: UpgradeStationCandidate,
+        threshold: float,
+    ) -> UpgradeStationCandidate | None:
         match = self._verify_upgrade_station(
+            locked_target,
             threshold,
             max(0.0, threshold - UPGRADE_STATION_THRESHOLD_RELAXATION),
             wait_between_attempts=True,
         )
         if match is not None:
             return match
-        logger.info("Upgrade station disappeared before hold")
+        logger.info("Locked upgrade station disappeared before hold")
         return None
 
     def handle_upgrade_stats(self) -> StateResult:
