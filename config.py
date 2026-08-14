@@ -101,8 +101,11 @@ UNLOCK_THRESHOLD = 0.905
 # Template confidence threshold for new-level button scans.
 NEW_LEVEL_THRESHOLD = 0.965
 
-# Uses only RedIcon15 when true; uses all red-icon templates with consensus when false.
+# Uses only the configured fast templates when true; uses all red-icon templates with consensus when false.
 RED_ICON_FAST_MODE_ENABLED = False
+
+# Red icon template filename stems matched exclusively in fast mode.
+RED_ICON_FAST_TEMPLATE_NAMES = ("RedIcon5",)
 
 # Minimum distinct templates that must agree in full mode.
 RED_ICON_MIN_MATCHES = 4

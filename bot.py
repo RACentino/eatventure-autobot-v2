@@ -327,7 +327,7 @@ class EatventureBot:
 
     def _red_icon_names(self) -> tuple[str, ...]:
         names = (
-            (TemplateName.RED_ICON.value,)
+            config.RED_ICON_FAST_TEMPLATE_NAMES
             if config.RED_ICON_FAST_MODE_ENABLED
             else RED_ICON_TEMPLATE_NAMES
         )

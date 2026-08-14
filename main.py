@@ -386,8 +386,30 @@ def _general_configuration_errors() -> list[str]:
     return errors
 
 
+def _red_icon_template_configuration_errors() -> list[str]:
+    names = config.RED_ICON_FAST_TEMPLATE_NAMES
+    if (
+        not isinstance(names, tuple)
+        or not names
+        or len(names) > len(RED_ICON_TEMPLATE_NAMES)
+    ):
+        return ["RED_ICON_FAST_TEMPLATE_NAMES must be a non-empty bounded tuple"]
+    if any(not isinstance(name, str) or not name.strip() for name in names):
+        return ["RED_ICON_FAST_TEMPLATE_NAMES must contain non-empty strings"]
+    if len(set(names)) != len(names):
+        return ["RED_ICON_FAST_TEMPLATE_NAMES must not contain duplicates"]
+    unknown_names = tuple(name for name in names if name not in RED_ICON_TEMPLATE_NAMES)
+    if unknown_names:
+        return [
+            "RED_ICON_FAST_TEMPLATE_NAMES contains unknown names: "
+            + ", ".join(unknown_names)
+        ]
+    return []
+
+
 def _validate_configuration() -> None:
     validation_errors = _general_configuration_errors()
+    validation_errors.extend(_red_icon_template_configuration_errors())
     validation_errors.extend(_numeric_configuration_errors())
     window_width_limit, window_height_limit = _configuration_dimension_limits()
     if window_width_limit is not None and window_height_limit is not None:
