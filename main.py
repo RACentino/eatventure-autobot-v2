@@ -11,7 +11,6 @@ from pynput import keyboard as pynput_keyboard
 import config
 from bot import EatventureBot
 from domain import (
-    MAX_RUNTIME_LOOP_ITERATIONS,
     MAX_UPGRADE_SEARCH_ATTEMPTS,
     RED_ICON_TEMPLATE_NAMES,
 )
@@ -40,7 +39,6 @@ NMS_CONFIGURATION_NAMES = (
     "SUPERVISION_UPGRADE_STATION_NMS_IOU_THRESHOLD",
 )
 NONNEGATIVE_CONFIGURATION_NAMES = (
-    "STATE_DELAY",
     "SCRCPY_RED_ICON_MISS_RECOVERY_DELAY",
     "SCRCPY_BOX_MISS_RECOVERY_DELAY",
     "CLICK_DELAY",
@@ -191,13 +189,13 @@ def _integer_configuration_bounds() -> tuple[
             "MAX_SCROLL_CYCLES",
             config.MAX_SCROLL_CYCLES,
             1,
-            MAX_RUNTIME_LOOP_ITERATIONS,
+            None,
         ),
         (
             "SCROLL_INCREMENT_STEP",
             config.SCROLL_INCREMENT_STEP,
             1,
-            MAX_RUNTIME_LOOP_ITERATIONS,
+            None,
         ),
         (
             "RED_ICON_OFFSET_X",
@@ -470,7 +468,7 @@ def _request_program_exit(logger: logging.Logger) -> None:
     logger.info("[P pressed] Exiting program")
     exit_requested.set()
     if bot_instance is not None:
-        bot_instance.request_stop()
+        bot_instance.stop()
 
 
 def on_press(key: Any) -> None:
@@ -535,29 +533,20 @@ def _print_startup_banner() -> None:
 
 
 def _run_bot_event_loop() -> None:
-    for _ in range(MAX_RUNTIME_LOOP_ITERATIONS):
-        if exit_requested.is_set():
-            return
+    while not exit_requested.is_set():
         if bot_instance is not None and bot_instance.running:
             bot_instance.step()
         else:
             exit_requested.wait(0.1)
-    raise RuntimeError("Bot event loop exhausted its iteration limit")
 
 
 def _cleanup_runtime(listener: Any | None) -> None:
     logger = logging.getLogger(__name__)
-    if bot_instance is not None and not bot_instance.stop():
-        logger.error("Bot cleanup completed with worker or input release failures")
+    if bot_instance is not None and not bot_instance.close():
+        logger.error("Bot cleanup completed with resource or input release failures")
     if listener is not None:
         listener.stop()
         listener.join(timeout=1.0)
-    if bot_instance is not None:
-        bot_instance.telegram.close()
-        try:
-            bot_instance.window_capture.close()
-        except Exception as exc:
-            logger.debug("Window capture close failed: %s", exc)
 
 
 def main() -> int:

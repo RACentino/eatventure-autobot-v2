@@ -27,10 +27,6 @@ DEBUG = False
 # Duration of a single frame at 60 FPS. Used as the base unit for input-event timing so physical dispatch matches display refresh rate.
 SIXTY_FPS_FRAME_DURATION_SECONDS = 0.016666666666666666
 
-# Global delay between state-machine steps.
-STATE_DELAY = 0.0
-
-
 # Detection overlap suppression
 
 # IoU thresholds used by the built-in class-agnostic NMS.
@@ -78,22 +74,35 @@ UPGRADE_STATION_HSV_RANGES = (
 UPGRADE_STATION_HSV_MIN_MATCH_RATIO = 0.4
 
 # Template confidence threshold for box scans.
-BOX_THRESHOLD = 0.950
+BOX_THRESHOLD = 0.860
 
 # Accepted HSV ranges for box candidate gating.
 BOX_HSV_RANGES = (
     ((10, 65, 180), (13, 105, 255)),
-    ((13, 90, 120), (15, 190, 245)),
     ((18, 90, 120), (18, 129, 245)),
     ((18, 130, 120), (18, 130, 229)),
     ((18, 130, 235), (18, 130, 245)),
-    ((18, 131, 120), (18, 190, 245)),
     ((20, 115, 220), (20, 125, 245)),
     ((23, 65, 140), (30, 115, 255)),
+    ((24, 48, 208), (25, 63, 223)),
+    ((26, 48, 192), (27, 63, 207)),
+    ((22, 120, 248), (22, 127, 255)),
+    ((26, 112, 168), (26, 119, 175)),
+    ((26, 120, 160), (26, 127, 167)),
+    ((13, 136, 136), (13, 143, 143)),
+    ((14, 136, 136), (14, 143, 151)),
+    ((14, 144, 144), (14, 151, 151)),
+    ((14, 144, 168), (14, 151, 175)),
+    ((14, 152, 144), (14, 159, 175)),
+    ((14, 160, 136), (14, 167, 143)),
+    ((15, 128, 168), (15, 135, 175)),
+    ((15, 144, 152), (15, 151, 183)),
+    ((15, 152, 144), (15, 159, 175)),
+    ((15, 160, 136), (15, 167, 143)),
 )
 
 # Minimum HSV mask ratio for accepting a box candidate.
-BOX_HSV_MIN_MATCH_RATIO = 0.45
+BOX_HSV_MIN_MATCH_RATIO = 0.275
 
 # Template confidence threshold for unlock button scans.
 UNLOCK_THRESHOLD = 0.905

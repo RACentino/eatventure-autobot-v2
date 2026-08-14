@@ -12,7 +12,6 @@ from forbidden_zones import (
     ForbiddenZone,
     configured_forbidden_zones,
     first_forbidden_zone_containing_point,
-    point_inside_forbidden_zone,
 )
 
 logger = logging.getLogger(__name__)
@@ -94,10 +93,6 @@ def _as_bounds(bounds: Any) -> WindowBounds:
     if width <= 0 or height <= 0:
         raise ValueError(f"Target window has invalid client size: {width}x{height}")
     return x, y, width, height
-
-
-def _inside_forbidden_zone(x: int, y: int, zone: ForbiddenZone) -> bool:
-    return point_inside_forbidden_zone(x, y, zone)
 
 
 class MouseController:

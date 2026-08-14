@@ -48,7 +48,6 @@ RedIcon = tuple[float, int, int]
 RedIconRecord = tuple[float, int, int, str]
 UpgradeStationCandidate = tuple[float, int, int, int, int]
 BoxCandidate = tuple[float, int, int, int, int, str]
-StateResult = State | None
 UPWARD_OSCILLATING_SCROLL_DIRECTION = -1
 RUNTIME_RECOVERY_RETRY_DELAY_SECONDS = 1.0
 WINDOW_RECOVERY_MESSAGE = "Target window is unavailable"
@@ -124,6 +123,8 @@ class EatventureBot:
         self._stop_requested = threading.Event()
         self._lifecycle_lock = threading.RLock()
         self._step_lock = threading.Lock()
+        self._closed = False
+        self._close_succeeded = True
         with ExitStack() as pending_resources:
             self.window_capture = WindowCapture(
                 config.WINDOW_TITLE, config.WINDOW_WIDTH, config.WINDOW_HEIGHT
@@ -157,6 +158,10 @@ class EatventureBot:
                 State.TRANSITION_LEVEL: self.handle_transition_level,
                 State.WAIT_FOR_UNLOCK: self.handle_wait_for_unlock,
             }
+            missing_states = set(State).difference(self._state_handlers)
+            if missing_states:
+                missing_names = ", ".join(state.name for state in missing_states)
+                raise RuntimeError(f"Missing state handlers: {missing_names}")
             self._reset_runtime_state()
             self.ready = self._validate_required_templates()
             pending_resources.pop_all()
@@ -209,17 +214,13 @@ class EatventureBot:
             return False
         return True
 
-    def request_stop(self) -> None:
-        self._stop_requested.set()
-        self.mouse_controller.release_left_button()
-
     def start(self) -> bool:
         with self._lifecycle_lock:
             if self.running:
                 return True
-            if self._step_lock.locked() or not self.ready:
+            if self._closed or self._step_lock.locked() or not self.ready:
                 logger.warning(
-                    "Cannot start bot while not ready or while a step is active"
+                    "Cannot start bot while closed, not ready, or while a step is active"
                 )
                 return False
             try:
@@ -241,6 +242,25 @@ class EatventureBot:
             self._stop_requested.set()
             self.running = False
             return self.mouse_controller.release_left_button()
+
+    def close(self) -> bool:
+        with self._lifecycle_lock:
+            if self._closed:
+                return self._close_succeeded
+            succeeded = self.stop()
+            try:
+                self.telegram.close()
+            except Exception as exc:
+                logger.debug("Telegram close failed: %s", exc)
+                succeeded = False
+            try:
+                self.window_capture.close()
+            except Exception as exc:
+                logger.debug("Window capture close failed: %s", exc)
+                succeeded = False
+            self._closed = True
+            self._close_succeeded = succeeded
+            return succeeded
 
     def step(self) -> bool:
         if not self._step_lock.acquire(blocking=False):
@@ -264,12 +284,11 @@ class EatventureBot:
                 raise RuntimeError(f"Missing handler for {current_state.name}")
             started_at = time.perf_counter()
             next_state = handler()
-            if next_state is not None:
-                if not isinstance(next_state, State):
-                    raise TypeError(
-                        f"Handler for {current_state.name} returned {next_state!r}"
-                    )
-                self.state = next_state
+            if not isinstance(next_state, State):
+                raise TypeError(
+                    f"Handler for {current_state.name} returned {next_state!r}"
+                )
+            self.state = next_state
             logger.debug(
                 "State step %s -> %s in %.1fms",
                 current_state.name,
@@ -523,12 +542,13 @@ class EatventureBot:
             < FAILED_CLICK_BUCKET_LIMIT
         ]
 
-    def _red_icon_priority(self, icon: RedIcon) -> tuple[int, int]:
-        _, _, y = icon
-        for successful_y in self.successful_red_icon_positions:
-            if abs(y - successful_y) < ROW_PRIORITY_DISTANCE_PIXELS:
-                return 0, y
-        return 1, y
+    def _red_icon_priority(self, icon: RedIcon) -> tuple[int, int, int, float]:
+        confidence, x, y = icon
+        known_row = any(
+            abs(y - successful_y) < ROW_PRIORITY_DISTANCE_PIXELS
+            for successful_y in self.successful_red_icon_positions
+        )
+        return (0 if known_row else 1), y, x, -confidence
 
     @staticmethod
     def _bucket(x: int, y: int) -> tuple[int, int]:
@@ -610,6 +630,13 @@ class EatventureBot:
             hsv_ranges=config.UPGRADE_STATION_HSV_RANGES,
             hsv_mask=hsv_mask,
         )
+        candidates = [
+            candidate
+            for candidate in candidates
+            if not self.mouse_controller.is_in_forbidden_zone(
+                candidate[1], candidate[2], relative=True
+            )
+        ]
         candidates = self.image_matcher.filter_candidates_with_supervision_nms(
             candidates,
             iou_threshold=config.SUPERVISION_UPGRADE_STATION_NMS_IOU_THRESHOLD,
@@ -629,6 +656,13 @@ class EatventureBot:
         hsv_mask = self.image_matcher.build_hsv_mask(screenshot, config.BOX_HSV_RANGES)
         for name in BOX_TEMPLATE_NAMES:
             candidates.extend(self._template_box_candidates(screenshot, name, hsv_mask))
+        candidates = [
+            candidate
+            for candidate in candidates
+            if not self.mouse_controller.is_in_forbidden_zone(
+                candidate[1], candidate[2], relative=True
+            )
+        ]
         return self.image_matcher.filter_candidates_with_supervision_nms(
             candidates,
             iou_threshold=config.SUPERVISION_BOX_NMS_IOU_THRESHOLD,
@@ -733,7 +767,7 @@ class EatventureBot:
         logger.debug("Recorded level completion from %s", source)
         return elapsed
 
-    def handle_find_red_icons(self) -> StateResult:
+    def handle_find_red_icons(self) -> State:
         if not self._dismiss_if_needed():
             return State.FIND_RED_ICONS
         screenshot = self.window_capture.capture(max_y=config.EXTENDED_SEARCH_Y)
@@ -769,7 +803,7 @@ class EatventureBot:
         logger.info("Selected one of %s red icons", len(stable_icons))
         return State.CLICK_RED_ICON
 
-    def handle_click_red_icon(self) -> StateResult:
+    def handle_click_red_icon(self) -> State:
         if self.red_icon is None:
             return State.OPEN_BOXES
         confidence, x, y = self.red_icon
@@ -790,7 +824,7 @@ class EatventureBot:
         )
         return State.CHECK_UNLOCK
 
-    def handle_check_unlock(self) -> StateResult:
+    def handle_check_unlock(self) -> State:
         found, confidence, x, y = self._find_unlock_button(
             self.window_capture.capture(max_y=config.MAX_SEARCH_Y)
         )
@@ -802,7 +836,7 @@ class EatventureBot:
                 return State.CHECK_UNLOCK
         return State.SEARCH_UPGRADE_STATION
 
-    def handle_search_upgrade_station(self) -> StateResult:
+    def handle_search_upgrade_station(self) -> State:
         self.active_upgrade_station_target = None
         base_threshold = float(config.UPGRADE_STATION_THRESHOLD)
         relaxed_threshold = max(
@@ -829,7 +863,7 @@ class EatventureBot:
         logger.info("Upgrade station not found")
         return State.OPEN_BOXES
 
-    def handle_hold_upgrade_station(self) -> StateResult:
+    def handle_hold_upgrade_station(self) -> State:
         locked_target = self.active_upgrade_station_target
         if locked_target is None:
             return State.OPEN_BOXES
@@ -895,7 +929,7 @@ class EatventureBot:
         logger.info("Locked upgrade station disappeared before hold")
         return None
 
-    def handle_upgrade_stats(self) -> StateResult:
+    def handle_upgrade_stats(self) -> State:
         if not self._dismiss_if_needed():
             return State.OPEN_BOXES
         screenshot = self.window_capture.capture(max_y=config.EXTENDED_SEARCH_Y)
@@ -934,7 +968,7 @@ class EatventureBot:
         logger.info("Stats upgrade completed")
         return State.OPEN_BOXES
 
-    def handle_open_boxes(self) -> StateResult:
+    def handle_open_boxes(self) -> State:
         if not self._dismiss_if_needed():
             return State.FIND_RED_ICONS
         screenshot = self.window_capture.capture(max_y=config.BOX_SEARCH_Y)
@@ -967,7 +1001,7 @@ class EatventureBot:
             return State.SCROLL
         return State.FIND_RED_ICONS
 
-    def handle_scroll(self) -> StateResult:
+    def handle_scroll(self) -> State:
         self.failed_click_tracker.clear()
         if not self._dismiss_if_needed():
             return State.SCROLL
@@ -988,7 +1022,7 @@ class EatventureBot:
         self.empty_cycle_count = 0
         return State.FIND_RED_ICONS
 
-    def handle_check_new_level(self) -> StateResult:
+    def handle_check_new_level(self) -> State:
         if not self._dismiss_if_needed():
             return State.CHECK_NEW_LEVEL
 
@@ -1040,7 +1074,7 @@ class EatventureBot:
 
         return State.TRANSITION_LEVEL
 
-    def handle_transition_level(self) -> StateResult:
+    def handle_transition_level(self) -> State:
         if not self._dismiss_if_needed():
             return State.CHECK_NEW_LEVEL
         for attempt in range(MAX_LEVEL_TRANSITION_ATTEMPTS):
@@ -1072,7 +1106,7 @@ class EatventureBot:
             logger.debug("Level transition recovery wait was interrupted")
         return State.CHECK_NEW_LEVEL
 
-    def handle_wait_for_unlock(self) -> StateResult:
+    def handle_wait_for_unlock(self) -> State:
         if not self._dismiss_if_needed() or not self._sleep(
             WAIT_FOR_UNLOCK_PRE_SCAN_DELAY
         ):
@@ -1086,6 +1120,7 @@ class EatventureBot:
             return State.WAIT_FOR_UNLOCK
         logger.info("Unlock button found at (%s, %s) [%.3f]", x, y, confidence)
         if not self.mouse_controller.click(x, y, relative=True):
+            self._sleep(WAIT_FOR_UNLOCK_RETRY_DELAY)
             return State.WAIT_FOR_UNLOCK
         if not self._sleep(WAIT_FOR_UNLOCK_POST_CLICK_DELAY):
             return State.WAIT_FOR_UNLOCK
