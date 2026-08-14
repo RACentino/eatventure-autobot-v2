@@ -102,7 +102,7 @@ UNLOCK_THRESHOLD = 0.905
 NEW_LEVEL_THRESHOLD = 0.965
 
 # Uses only the configured fast templates when true; uses all red-icon templates with consensus when false.
-RED_ICON_FAST_MODE_ENABLED = False
+RED_ICON_FAST_MODE_ENABLED = True
 
 # Red icon template filename stems matched exclusively in fast mode.
 RED_ICON_FAST_TEMPLATE_NAMES = ("RedIcon5",)
