@@ -105,7 +105,7 @@ NEW_LEVEL_THRESHOLD = 0.965
 RED_ICON_FAST_MODE_ENABLED = False
 
 # Minimum distinct templates that must agree in full mode.
-RED_ICON_MIN_MATCHES = 3
+RED_ICON_MIN_MATCHES = 4
 
 # Minimum pixel distance between red icon matches.
 RED_ICON_FAST_MIN_DISTANCE = 32
