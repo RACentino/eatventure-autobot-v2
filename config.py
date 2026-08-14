@@ -57,7 +57,7 @@ SCRCPY_BOX_MISS_RECOVERY_DELAY = 0.03333333333333333
 MATCH_THRESHOLD = 0.98
 
 # Template confidence threshold for red icon scans.
-RED_ICON_THRESHOLD = 0.950
+RED_ICON_THRESHOLD = 0.931
 
 # Template confidence threshold for new-level red icon validation.
 NEW_LEVEL_RED_ICON_THRESHOLD = 0.958
@@ -111,16 +111,16 @@ RED_ICON_FAST_TEMPLATE_NAMES = ("RedIcon5",)
 RED_ICON_MIN_MATCHES = 4
 
 # Minimum pixel distance between red icon matches.
-RED_ICON_FAST_MIN_DISTANCE = 32
+RED_ICON_FAST_MIN_DISTANCE = 35
 
 # Accepted HSV ranges for red icon candidate gating.
 RED_ICON_HSV_RANGES = (
-    ((0, 100, 180), (15, 255, 255)),
-    ((170, 100, 180), (179, 255, 255)),
+    ((0, 110, 120), (12, 255, 255)),
+    ((166, 110, 120), (179, 255, 255)),
 )
 
 # Minimum HSV mask ratio for accepting a red icon candidate.
-RED_ICON_HSV_MIN_MATCH_RATIO = 0.6
+RED_ICON_HSV_MIN_MATCH_RATIO = 0.3
 
 
 # Mouse and Action Timing
