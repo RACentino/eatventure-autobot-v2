@@ -12,6 +12,7 @@ from forbidden_zones import (
     ForbiddenZone,
     configured_forbidden_zones,
     first_forbidden_zone_containing_point,
+    point_blocked_by_forbidden_zones,
 )
 
 logger = logging.getLogger(__name__)
@@ -217,6 +218,17 @@ class MouseController:
         )
 
     def is_in_forbidden_zone(self, x: Any, y: Any, relative: bool = True) -> bool:
+        if relative:
+            try:
+                return point_blocked_by_forbidden_zones(
+                    int(x),
+                    int(y),
+                    tuple(self._forbidden_zones),
+                    int(config.WINDOW_WIDTH),
+                    int(config.WINDOW_HEIGHT),
+                )
+            except (TypeError, ValueError):
+                return True
         position = self._relative_position(x, y, relative)
         if position is None:
             return True

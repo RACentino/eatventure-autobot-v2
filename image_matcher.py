@@ -175,41 +175,6 @@ class ImageMatcher:
             return False, confidence, 0, 0
         return True, confidence, center_x, center_y
 
-    def find_all_color_gated_templates(
-        self,
-        screenshot: np.ndarray,
-        template: np.ndarray,
-        mask: np.ndarray | None = None,
-        threshold: float | None = None,
-        min_distance: int = 15,
-        template_name: str = "Unknown",
-        hsv_ranges: Any = None,
-        use_supervision_nms: bool = False,
-        supervision_iou_threshold: float = 0.5,
-        supervision_class_agnostic: bool = True,
-        hsv_mask: np.ndarray | None = None,
-    ) -> list[tuple[float, int, int]]:
-        matches = self.find_color_gated_template_candidates(
-            screenshot,
-            template,
-            mask,
-            threshold,
-            min_distance,
-            template_name,
-            hsv_ranges,
-            hsv_mask=hsv_mask,
-        )
-        matches = self._non_max_suppression(matches, min_distance)
-        if use_supervision_nms:
-            filtered = self.filter_candidates_with_supervision_nms(
-                matches,
-                iou_threshold=supervision_iou_threshold,
-                class_agnostic=supervision_class_agnostic,
-            )
-            if filtered is not None:
-                matches = filtered
-        return [(confidence, x, y) for confidence, x, y, _, _ in matches]
-
     def find_color_gated_template_candidates(
         self,
         screenshot: np.ndarray,
@@ -734,32 +699,6 @@ class ImageMatcher:
             key=lambda item: item[0],
         )
         return [(x, y) for _, x, y in scored[:MAX_TEMPLATE_CANDIDATES]]
-
-    @staticmethod
-    def _iou(first: MatchCandidate, second: MatchCandidate) -> float:
-        _, ax, ay, aw, ah = first
-        _, bx, by, bw, bh = second
-        left = max(ax - aw / 2, bx - bw / 2)
-        top = max(ay - ah / 2, by - bh / 2)
-        right = min(ax + aw / 2, bx + bw / 2)
-        bottom = min(ay + ah / 2, by + bh / 2)
-        intersection = max(0.0, right - left) * max(0.0, bottom - top)
-        union = aw * ah + bw * bh - intersection
-        return intersection / union if union > 0 else 0.0
-
-    def _non_max_suppression(
-        self, matches: list[MatchCandidate], min_distance: int
-    ) -> list[MatchCandidate]:
-        filtered: list[MatchCandidate] = []
-        for candidate in sorted(matches, key=lambda match: match[0], reverse=True):
-            if all(
-                abs(candidate[1] - kept[1]) >= min_distance
-                or abs(candidate[2] - kept[2]) >= min_distance
-                or self._iou(candidate, kept) <= 0.2
-                for kept in filtered
-            ):
-                filtered.append(candidate)
-        return filtered
 
     @staticmethod
     def _box_iou(

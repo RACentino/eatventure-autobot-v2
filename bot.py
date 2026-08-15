@@ -383,7 +383,7 @@ class EatventureBot:
             if template_pair is None:
                 continue
             template, mask = template_pair
-            matches = self.image_matcher.find_all_color_gated_templates(
+            candidates = self.image_matcher.find_color_gated_template_candidates(
                 screenshot,
                 template,
                 mask=mask,
@@ -391,19 +391,20 @@ class EatventureBot:
                 min_distance=min_distance,
                 template_name=name,
                 hsv_ranges=config.RED_ICON_HSV_RANGES,
-                use_supervision_nms=True,
-                supervision_iou_threshold=config.SUPERVISION_RED_ICON_NMS_IOU_THRESHOLD,
                 hsv_mask=hsv_mask,
             )
-            height, width = template.shape[:2]
             candidates = self.image_matcher.filter_candidates_by_hsv(
                 screenshot,
-                [(confidence, x, y, width, height) for confidence, x, y in matches],
+                candidates,
                 template,
                 mask=mask,
                 hsv_ranges=config.RED_ICON_HSV_RANGES,
                 hsv_match_threshold=config.RED_ICON_HSV_MIN_MATCH_RATIO,
                 hsv_mask=hsv_mask,
+            )
+            candidates = self.image_matcher.filter_candidates_with_supervision_nms(
+                candidates,
+                iou_threshold=config.SUPERVISION_RED_ICON_NMS_IOU_THRESHOLD,
             )
             for confidence, x, y, _, _ in candidates:
                 self._merge_icon(
@@ -508,14 +509,23 @@ class EatventureBot:
             config.NEW_LEVEL_RED_ICON_Y_MIN,
             config.NEW_LEVEL_RED_ICON_Y_MAX,
         )
-        new_level_icon = self._find_zone_red_icon(
-            screenshot, new_level_zone, config.NEW_LEVEL_RED_ICON_THRESHOLD
-        )
         threshold = min(config.RED_ICON_THRESHOLD, config.NEW_LEVEL_RED_ICON_THRESHOLD)
         records = self._red_icon_records(
-            self._collect_red_icon_map(screenshot[: config.MAX_SEARCH_Y, :], threshold)
+            self._collect_red_icon_map(screenshot, threshold)
         )
-        return [(confidence, x, y) for confidence, x, y, _ in records], new_level_icon
+        icons = [
+            (confidence, x, y)
+            for confidence, x, y, _ in records
+            if y < config.MAX_SEARCH_Y and confidence >= config.RED_ICON_THRESHOLD
+        ]
+        new_level_icons = [
+            (confidence, x, y)
+            for confidence, x, y, _ in records
+            if confidence >= config.NEW_LEVEL_RED_ICON_THRESHOLD
+            and new_level_zone[0] <= x <= new_level_zone[1]
+            and new_level_zone[2] <= y <= new_level_zone[3]
+        ]
+        return icons, max(new_level_icons, default=None, key=lambda icon: icon[0])
 
     def _scrcpy_recovery(self, delay: Any) -> bool:
         if not config.SCRCPY_MISS_RECOVERY_ENABLED:
@@ -579,9 +589,6 @@ class EatventureBot:
     ) -> UpgradeStationCandidate | None:
         screenshot = self.window_capture.capture(max_y=config.UPGRADE_STATION_SEARCH_Y)
         for candidate in self._upgrade_candidates(screenshot, threshold):
-            _, x, y, _, _ = candidate
-            if self.mouse_controller.is_in_forbidden_zone(x, y, relative=True):
-                continue
             if locked_target is None or _same_upgrade_station_target(
                 locked_target, candidate
             ):
@@ -630,18 +637,7 @@ class EatventureBot:
             hsv_ranges=config.UPGRADE_STATION_HSV_RANGES,
             hsv_mask=hsv_mask,
         )
-        candidates = [
-            candidate
-            for candidate in candidates
-            if not self.mouse_controller.is_in_forbidden_zone(
-                candidate[1], candidate[2], relative=True
-            )
-        ]
-        candidates = self.image_matcher.filter_candidates_with_supervision_nms(
-            candidates,
-            iou_threshold=config.SUPERVISION_UPGRADE_STATION_NMS_IOU_THRESHOLD,
-        )
-        return self.image_matcher.filter_candidates_by_hsv(
+        candidates = self.image_matcher.filter_candidates_by_hsv(
             screenshot,
             candidates,
             template,
@@ -650,23 +646,34 @@ class EatventureBot:
             hsv_match_threshold=config.UPGRADE_STATION_HSV_MIN_MATCH_RATIO,
             hsv_mask=hsv_mask,
         )
-
-    def _box_candidates(self, screenshot: Any) -> list[BoxCandidate]:
-        candidates: list[BoxCandidate] = []
-        hsv_mask = self.image_matcher.build_hsv_mask(screenshot, config.BOX_HSV_RANGES)
-        for name in BOX_TEMPLATE_NAMES:
-            candidates.extend(self._template_box_candidates(screenshot, name, hsv_mask))
-        candidates = [
+        candidates = self.image_matcher.filter_candidates_with_supervision_nms(
+            candidates,
+            iou_threshold=config.SUPERVISION_UPGRADE_STATION_NMS_IOU_THRESHOLD,
+        )
+        return [
             candidate
             for candidate in candidates
             if not self.mouse_controller.is_in_forbidden_zone(
                 candidate[1], candidate[2], relative=True
             )
         ]
-        return self.image_matcher.filter_candidates_with_supervision_nms(
+
+    def _box_candidates(self, screenshot: Any) -> list[BoxCandidate]:
+        candidates: list[BoxCandidate] = []
+        hsv_mask = self.image_matcher.build_hsv_mask(screenshot, config.BOX_HSV_RANGES)
+        for name in BOX_TEMPLATE_NAMES:
+            candidates.extend(self._template_box_candidates(screenshot, name, hsv_mask))
+        candidates = self.image_matcher.filter_candidates_with_supervision_nms(
             candidates,
             iou_threshold=config.SUPERVISION_BOX_NMS_IOU_THRESHOLD,
         )
+        return [
+            candidate
+            for candidate in candidates
+            if not self.mouse_controller.is_in_forbidden_zone(
+                candidate[1], candidate[2], relative=True
+            )
+        ]
 
     def _template_box_candidates(
         self, screenshot: Any, name: str, hsv_mask: Any = None
@@ -842,10 +849,11 @@ class EatventureBot:
         relaxed_threshold = max(
             0.0, base_threshold - UPGRADE_STATION_THRESHOLD_RELAXATION
         )
+        strict_attempts = max(1, MAX_UPGRADE_SEARCH_ATTEMPTS // 2)
         for attempt in range(MAX_UPGRADE_SEARCH_ATTEMPTS):
             threshold = (
                 base_threshold
-                if attempt < UPGRADE_STATS_CYCLE_INTERVAL
+                if attempt < strict_attempts
                 else relaxed_threshold
             )
             match = self._find_upgrade_station(threshold)
@@ -874,11 +882,6 @@ class EatventureBot:
                 return State.OPEN_BOXES
             self.active_upgrade_station_target = match
             _, x, y, _, _ = match
-            if self.mouse_controller.is_in_forbidden_zone(x, y, relative=True):
-                logger.warning(
-                    "Upgrade station blocked by forbidden zone at (%s, %s)", x, y
-                )
-                return State.OPEN_BOXES
             clicked = self.mouse_controller.precise_click(x, y, relative=True)
             if not clicked:
                 logger.warning(
@@ -907,7 +910,6 @@ class EatventureBot:
             self.needs_dismissal = True
             self.upgrade_station_counter += 1
             if self.upgrade_station_counter >= UPGRADE_STATS_CYCLE_INTERVAL:
-                self.upgrade_station_counter = 0
                 return State.UPGRADE_STATS
             return State.OPEN_BOXES
         finally:
@@ -948,6 +950,7 @@ class EatventureBot:
             self._find_zone_red_icon(screenshot, zone, config.STATS_RED_ICON_THRESHOLD)
             is None
         ):
+            self.upgrade_station_counter = 0
             logger.info("No stats icon detected")
             return State.SCROLL
         if not self.mouse_controller.click(
@@ -963,6 +966,7 @@ class EatventureBot:
         )
         if not clicked:
             return State.OPEN_BOXES
+        self.upgrade_station_counter = 0
         self.empty_cycle_count = 0
         self.needs_dismissal = True
         logger.info("Stats upgrade completed")
@@ -985,11 +989,9 @@ class EatventureBot:
                 self.window_capture.capture(max_y=config.BOX_SEARCH_Y)
             )
         box_opened = False
-        for _, x, y, _, _, _ in candidates:
-            if self.mouse_controller.is_in_forbidden_zone(x, y, relative=True):
-                continue
+        if candidates:
+            _, x, y, _, _, _ = candidates[0]
             box_opened = self.mouse_controller.click(x, y, relative=True)
-            break
         if box_opened:
             self.empty_cycle_count = 0
             self.needs_dismissal = True
@@ -1086,7 +1088,11 @@ class EatventureBot:
                 if not self._sleep(TRANSITION_LEVEL_BUTTON_WAIT_SECONDS):
                     return State.CHECK_NEW_LEVEL
                 screenshot = self.window_capture.capture(max_y=config.MAX_SEARCH_Y)
-            button_still_visible, _, _, _ = self._find_new_level_button(screenshot)
+                button_still_visible, _, _, _ = self._find_new_level_button(
+                    screenshot
+                )
+            else:
+                button_still_visible = False
             unlock_found, _, _, _ = self._find_unlock_button(screenshot)
             if not button_still_visible and unlock_found:
                 elapsed = self._record_level_completion("transition")
@@ -1112,7 +1118,7 @@ class EatventureBot:
         ):
             return State.WAIT_FOR_UNLOCK
         found, confidence, x, y = self._find_unlock_button(
-            self.window_capture.capture()
+            self.window_capture.capture(max_y=config.MAX_SEARCH_Y)
         )
         if not found or self.mouse_controller.is_in_forbidden_zone(x, y, relative=True):
             if not self._sleep(WAIT_FOR_UNLOCK_RETRY_DELAY):
