@@ -273,7 +273,9 @@ class EatventureBot:
                 self.stop()
                 return False
             if not self.window_capture.is_window_active():
-                return self._wait_for_window_recovery("Target window is not active")
+                logger.error("Target window is not active; stopping bot")
+                self.stop()
+                return False
             if WINDOW_RECOVERY_MESSAGE in self._active_recoveries:
                 self.window_capture.ensure_window(resize=True)
                 self.window_capture.get_input_window_rect()
@@ -284,6 +286,9 @@ class EatventureBot:
                 raise RuntimeError(f"Missing handler for {current_state.name}")
             started_at = time.perf_counter()
             next_state = handler()
+            if self._stop_requested.is_set():
+                self.stop()
+                return False
             if not isinstance(next_state, State):
                 raise TypeError(
                     f"Handler for {current_state.name} returned {next_state!r}"
@@ -298,11 +303,21 @@ class EatventureBot:
             self._complete_recovery(WINDOW_RECOVERY_MESSAGE)
             return True
         except (WindowNotAvailableError, WindowCaptureError) as exc:
+            if not self.window_capture.is_window_active():
+                logger.error("Target window lost focus; stopping bot: %s", exc)
+                self.stop()
+                return False
             return self._wait_for_window_recovery(str(exc))
         except Exception:
             logger.exception("Stopping bot due to unexpected state-handler failure")
         finally:
-            self._step_lock.release()
+            try:
+                if not self.mouse_controller.release_left_button():
+                    logger.error("Could not release mouse input after bot step")
+                    self._stop_requested.set()
+                    self.running = False
+            finally:
+                self._step_lock.release()
         self.stop()
         return False
 

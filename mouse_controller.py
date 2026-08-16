@@ -23,19 +23,21 @@ MIN_SLEEP_SLICE = 0.001
 SLEEP_POLL_INTERVAL_SECONDS = 0.05
 INTERRUPT_WAIT_POLL_INTERVAL_SECONDS = 0.01
 MAX_SLEEP_ITERATIONS = 120_000
-CURSOR_ATTEMPTS = 2
-CURSOR_RETRY_DELAY = 0.08
 MAX_DRAG_STEPS = 60
 MAX_STATS_UPGRADE_CLICKS = 500
-STATS_UPGRADE_MOUSE_DOWN_DURATION = 0.0
-STATS_UPGRADE_MOUSE_UP_DURATION = 0.0
 MINIMUM_PHYSICAL_INPUT_EVENT_INTERVAL_SECONDS = config.SIXTY_FPS_FRAME_DURATION_SECONDS
+STATS_UPGRADE_MOUSE_DOWN_DURATION = MINIMUM_PHYSICAL_INPUT_EVENT_INTERVAL_SECONDS
+STATS_UPGRADE_MOUSE_UP_DURATION = 0.0
 
 
 class StopEventLike(Protocol):
     def is_set(self) -> bool: ...
 
     def wait(self, timeout: float) -> bool: ...
+
+
+class MutableStopEventLike(StopEventLike, Protocol):
+    def set(self) -> None: ...
 
 
 def _duration(value: Any, default: float = 0.0) -> float:
@@ -105,7 +107,7 @@ class MouseController:
         hover_enabled: bool | None = None,
         hover_duration: Any = None,
         mouse_device: Any = None,
-        stop_event: StopEventLike | None = None,
+        stop_event: MutableStopEventLike | None = None,
     ) -> None:
         self._mouse = (
             mouse_device if mouse_device is not None else pynput_mouse.Controller()
@@ -241,44 +243,66 @@ class MouseController:
         logger.debug("Coordinates (%s, %s) blocked by %s", rel_x, rel_y, zone.name)
         return True
 
-    def _set_cursor(self, screen_x: int, screen_y: int, verify: bool = True) -> bool:
-        for attempt in range(1, CURSOR_ATTEMPTS + 1):
-            if self._stopped():
-                return False
-            try:
-                self._physical_input_event_governor.wait_for_next_dispatch()
-                self._mouse.position = (int(screen_x), int(screen_y))
-                if not verify:
-                    return True
-                precise_sleep(0.001)
-                current_x, current_y = self.get_cursor_position()
-                if abs(current_x - screen_x) <= 1 and abs(current_y - screen_y) <= 1:
-                    return True
-            except Exception as exc:
-                logger.warning(
-                    "Cursor positioning failed on attempt %s/%s: %s",
-                    attempt,
-                    CURSOR_ATTEMPTS,
-                    exc,
-                )
-            if attempt < CURSOR_ATTEMPTS:
-                precise_sleep(CURSOR_RETRY_DELAY)
-        logger.error("Cursor positioning failed at (%s, %s)", screen_x, screen_y)
+    def _stop_for_unsafe_input(self, detail: str) -> bool:
+        logger.warning("%s; stopping bot and releasing mouse input", detail)
+        if self._stop_event is not None:
+            self._stop_event.set()
         return False
 
-    def _cursor_matches_safe_position(self, screen_x: int, screen_y: int) -> bool:
-        current_x, current_y = self.get_cursor_position()
-        safe_position = self._screen_position(current_x, current_y, relative=False)
-        if safe_position == (screen_x, screen_y):
-            return True
-        logger.warning(
-            "Rejected left down: expected cursor=(%s, %s), actual=(%s, %s)",
-            screen_x,
-            screen_y,
-            current_x,
-            current_y,
+    def _set_cursor(
+        self,
+        screen_x: int,
+        screen_y: int,
+        verify: bool = True,
+        interrupt_check: Callable[[], bool] | None = None,
+    ) -> bool:
+        if self._stopped():
+            return False
+        try:
+            if not self._physical_input_event_governor.wait_for_next_dispatch(
+                interrupt_check
+            ):
+                return False
+            self._mouse.position = (int(screen_x), int(screen_y))
+            if not verify:
+                return True
+            precise_sleep(0.001)
+            current_x, current_y = self.get_cursor_position()
+            if abs(current_x - screen_x) <= 1 and abs(current_y - screen_y) <= 1:
+                return True
+        except Exception as exc:
+            return self._stop_for_unsafe_input(f"Cursor positioning failed: {exc}")
+        return self._stop_for_unsafe_input(
+            "Cursor moved unexpectedly after bot positioning"
         )
-        return False
+
+    def _cursor_matches_safe_position(self, screen_x: int, screen_y: int) -> bool:
+        try:
+            current_x, current_y = self.get_cursor_position()
+        except Exception as exc:
+            return self._stop_for_unsafe_input(f"Cannot read cursor position: {exc}")
+        safe_position = self._screen_position(current_x, current_y, relative=False)
+        if safe_position is not None and all(
+            abs(actual - expected) <= 1
+            for actual, expected in zip(safe_position, (screen_x, screen_y))
+        ):
+            return True
+        return self._stop_for_unsafe_input(
+            "Unsafe cursor or foreground window change "
+            f"(expected=({screen_x}, {screen_y}), actual=({current_x}, {current_y}))"
+        )
+
+    def _input_interrupted(
+        self,
+        screen_x: int,
+        screen_y: int,
+        interrupt_check: Callable[[], bool] | None = None,
+    ) -> bool:
+        if self._stopped():
+            return True
+        if not self._cursor_matches_safe_position(screen_x, screen_y):
+            return True
+        return bool(interrupt_check and interrupt_check())
 
     def _button(
         self,
@@ -340,7 +364,10 @@ class MouseController:
             config.MOUSE_DOWN_DURATION if duration is None else duration,
             config.MOUSE_DOWN_DURATION,
         )
-        if wait_time > 0 and not self._interruptible_delay(wait_time, interrupt_check):
+        if wait_time > 0 and not self._interruptible_delay(
+            wait_time,
+            lambda: self._input_interrupted(x, y, interrupt_check),
+        ):
             self._release_after_failed_sequence(x, y)
             return False
         return True
@@ -357,6 +384,8 @@ class MouseController:
         ):
             return False
         self._left_button_is_down = False
+        if not self._stopped() and not self._cursor_matches_safe_position(x, y):
+            return False
         wait_time = _duration(
             config.MOUSE_UP_DURATION if duration is None else duration,
             config.MOUSE_UP_DURATION,
@@ -364,6 +393,8 @@ class MouseController:
         return self._interruptible_delay(wait_time, interrupt_check)
 
     def _release_after_failed_sequence(self, x: int, y: int) -> None:
+        if not self._left_button_is_down:
+            return
         if not self._release_left(x, y):
             logger.error(
                 "Could not release left button after interrupted sequence at (%s, %s)",
@@ -418,8 +449,10 @@ class MouseController:
                 return False
             if not self._set_cursor(*screen_pos):
                 return False
-            precise_sleep(self.move_delay)
-            return True
+            return self._interruptible_delay(
+                self.move_delay,
+                lambda: self._input_interrupted(*screen_pos),
+            )
 
     def click(self, x: Any, y: Any, relative: bool = True, delay: Any = None) -> bool:
         return self._click(x, y, relative, delay, precise=False)
@@ -437,17 +470,25 @@ class MouseController:
             screen_x, screen_y = screen_pos
             if not self._set_cursor(screen_x, screen_y, verify=precise):
                 return False
-            precise_sleep(self.move_delay)
+            if not self._interruptible_delay(
+                self.move_delay,
+                lambda: self._input_interrupted(screen_x, screen_y),
+            ):
+                return False
             if self.hover_enabled:
-                precise_sleep(self.hover_duration)
+                if not self._interruptible_delay(
+                    self.hover_duration,
+                    lambda: self._input_interrupted(screen_x, screen_y),
+                ):
+                    return False
             if not self._click_screen(screen_x, screen_y):
                 return False
-            precise_sleep(
+            return self._interruptible_delay(
                 self.click_delay
                 if delay is None
-                else _duration(delay, self.click_delay)
+                else _duration(delay, self.click_delay),
+                lambda: self._input_interrupted(screen_x, screen_y),
             )
-            return True
 
     def hold_at(
         self,
@@ -464,7 +505,11 @@ class MouseController:
             screen_x, screen_y = screen_pos
             if not self._set_cursor(screen_x, screen_y):
                 return False
-            precise_sleep(self.move_delay)
+            if not self._interruptible_delay(
+                self.move_delay,
+                lambda: self._input_interrupted(screen_x, screen_y),
+            ):
+                return False
             if not self._press_left(
                 screen_x, screen_y, duration=0.0, interrupt_check=interrupt_check
             ):
@@ -473,7 +518,9 @@ class MouseController:
             try:
                 if not self._interruptible_delay(
                     _duration(4.0 if duration is None else duration, 4.0),
-                    interrupt_check,
+                    lambda: self._input_interrupted(
+                        screen_x, screen_y, interrupt_check
+                    ),
                 ):
                     self._release_after_failed_sequence(screen_x, screen_y)
                     return False
@@ -482,8 +529,10 @@ class MouseController:
                 )
                 if not release_completed:
                     return False
-                precise_sleep(self.click_delay)
-                return True
+                return self._interruptible_delay(
+                    self.click_delay,
+                    lambda: self._input_interrupted(screen_x, screen_y),
+                )
             finally:
                 if not release_completed and self._left_button_is_down:
                     self._release_after_failed_sequence(screen_x, screen_y)
@@ -510,7 +559,11 @@ class MouseController:
             screen_pos = self._screen_position(x, y, relative=relative)
             if screen_pos is None or not self._set_cursor(*screen_pos):
                 return False
-            precise_sleep(self.move_delay)
+            if not self._interruptible_delay(
+                self.move_delay,
+                lambda: self._input_interrupted(*screen_pos),
+            ):
+                return False
             click_count = self._stats_upgrade_click_loop(
                 screen_pos, duration, click_delay, interrupt_check
             )
@@ -594,33 +647,51 @@ class MouseController:
             path = self._drag_path(start_pos, end_pos, steps, bounds)
             if path is None or not self._set_cursor(*start_pos):
                 return False
-            precise_sleep(self.move_delay)
+            if not self._interruptible_delay(
+                self.move_delay,
+                lambda: self._input_interrupted(*start_pos),
+            ):
+                return False
             if not self._press_left(*start_pos, duration=0.0):
                 return False
             release_completed = False
             try:
                 start_time = time.perf_counter()
-                if not self._move_along_drag_path(path, duration, steps, start_time):
+                if not self._move_along_drag_path(
+                    path, start_pos, duration, steps, start_time
+                ):
                     return False
                 release_completed = self._release_left(*end_pos)
                 if not release_completed:
                     return False
-                precise_sleep(self.click_delay)
-                return True
+                return self._interruptible_delay(
+                    self.click_delay,
+                    lambda: self._input_interrupted(*end_pos),
+                )
             finally:
                 if not release_completed and self._left_button_is_down:
                     self._release_after_failed_sequence(*end_pos)
 
     def _move_along_drag_path(
-        self, path: list[Point], duration: float, steps: int, start_time: float
+        self,
+        path: list[Point],
+        start_pos: Point,
+        duration: float,
+        steps: int,
+        start_time: float,
     ) -> bool:
+        expected_pos = start_pos
         for index, (screen_x, screen_y) in enumerate(path, start=1):
-            if self._stopped():
+            if not self._set_cursor(
+                screen_x,
+                screen_y,
+                interrupt_check=lambda: self._input_interrupted(*expected_pos),
+            ):
                 return False
-            if not self._set_cursor(screen_x, screen_y, verify=index == steps):
-                return False
+            expected_pos = screen_x, screen_y
             if not sleep_until(
-                start_time + (index * duration / steps), self._stop_event
+                start_time + (index * duration / steps),
+                _InterruptAdapter(lambda: self._input_interrupted(*expected_pos)),
             ):
                 return False
         return True
@@ -679,13 +750,21 @@ class _PhysicalInputEventGovernor:
         self._next_dispatch_time = 0.0
         self._dispatch_lock = threading.Lock()
 
-    def wait_for_next_dispatch(self) -> None:
+    def wait_for_next_dispatch(
+        self, interrupt_check: Callable[[], bool] | None = None
+    ) -> bool:
         with self._dispatch_lock:
             remaining = self._next_dispatch_time - time.perf_counter()
             if remaining > 0:
-                precise_sleep(remaining)
+                if interrupt_check is None:
+                    precise_sleep(remaining)
+                elif not wait_event(_InterruptAdapter(interrupt_check), remaining):
+                    return False
+            if interrupt_check is not None and interrupt_check():
+                return False
             dispatch_time = time.perf_counter()
             self._next_dispatch_time = dispatch_time + self._minimum_interval_seconds
+            return True
 
     def get_minimum_interval_seconds(self) -> float:
         return self._minimum_interval_seconds
