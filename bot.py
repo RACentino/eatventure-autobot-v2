@@ -678,6 +678,25 @@ class EatventureBot:
         hsv_mask = self.image_matcher.build_hsv_mask(screenshot, config.BOX_HSV_RANGES)
         for name in BOX_TEMPLATE_NAMES:
             candidates.extend(self._template_box_candidates(screenshot, name, hsv_mask))
+        minimum_matches = min(
+            max(1, int(config.BOXES_MIN_MATCHES)), len(BOX_TEMPLATE_NAMES)
+        )
+        groups: list[list[BoxCandidate]] = []
+        for candidate in candidates:
+            for group in groups:
+                if (
+                    abs(candidate[1] - group[0][1]) < ICON_MERGE_DISTANCE_PIXELS
+                    and abs(candidate[2] - group[0][2]) < ICON_MERGE_DISTANCE_PIXELS
+                ):
+                    group.append(candidate)
+                    break
+            else:
+                groups.append([candidate])
+        candidates = [
+            max(group, key=lambda candidate: candidate[0])
+            for group in groups
+            if len({candidate[5] for candidate in group}) >= minimum_matches
+        ]
         candidates = self.image_matcher.filter_candidates_with_supervision_nms(
             candidates,
             iou_threshold=config.SUPERVISION_BOX_NMS_IOU_THRESHOLD,

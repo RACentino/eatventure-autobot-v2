@@ -11,6 +11,7 @@ from pynput import keyboard as pynput_keyboard
 import config
 from bot import EatventureBot
 from domain import (
+    BOX_TEMPLATE_NAMES,
     MAX_UPGRADE_SEARCH_ATTEMPTS,
     RED_ICON_TEMPLATE_NAMES,
 )
@@ -171,6 +172,12 @@ def _integer_configuration_bounds() -> tuple[
             window_height_limit,
         ),
         ("BOX_SEARCH_Y", config.BOX_SEARCH_Y, 1, window_height_limit),
+        (
+            "BOXES_MIN_MATCHES",
+            config.BOXES_MIN_MATCHES,
+            1,
+            len(BOX_TEMPLATE_NAMES),
+        ),
         (
             "RED_ICON_MIN_MATCHES",
             config.RED_ICON_MIN_MATCHES,

@@ -67,7 +67,7 @@ Runtime thresholds, timings, coordinates, and forbidden zones live in `config.py
 - `unlock.png`
 - `box1.png` through `box4.png`
 
-Set `RED_ICON_FAST_MODE_ENABLED = True` to match only the filename stems in `RED_ICON_FAST_TEMPLATE_NAMES` (by default, `("RedIcon5",)`). Set it to `False` to use all red-icon templates and require `RED_ICON_MIN_MATCHES` distinct templates to agree on a detection.
+Set `RED_ICON_FAST_MODE_ENABLED = True` to match only the filename stems in `RED_ICON_FAST_TEMPLATE_NAMES` (by default, `("RedIcon5",)`). Set it to `False` to use all red-icon templates and require `RED_ICON_MIN_MATCHES` distinct templates to agree on a detection. Set `BOXES_MIN_MATCHES` from `1` through `4` to require that many distinct box templates to agree on a detection.
 
 Telegram is optional. Set `TELEGRAM_ENABLED = True` in `config.py`, then provide `EATVENTURE_TELEGRAM_BOT_TOKEN` and `EATVENTURE_TELEGRAM_CHAT_ID` through the process environment. Notifications are queued so network requests do not block state processing.
 
