@@ -30,7 +30,7 @@ SIXTY_FPS_FRAME_DURATION_SECONDS = 0.016666666666666666
 # Detection overlap suppression
 
 # IoU thresholds used by the built-in class-agnostic NMS.
-SUPERVISION_BOX_NMS_IOU_THRESHOLD = 0.16453
+SUPERVISION_BOX_NMS_IOU_THRESHOLD = 0.16770229
 SUPERVISION_RED_ICON_NMS_IOU_THRESHOLD = 0.20
 SUPERVISION_UPGRADE_STATION_NMS_IOU_THRESHOLD = 0.20
 
@@ -74,15 +74,32 @@ UPGRADE_STATION_HSV_RANGES = (
 UPGRADE_STATION_HSV_MIN_MATCH_RATIO = 0.4
 
 # Template confidence threshold for box scans.
-BOX_THRESHOLD = 0.0
+BOX_THRESHOLD = 0.86581389
 
 # Accepted HSV ranges for box candidate gating.
 BOX_HSV_RANGES = (
-
+    ((18, 90, 120), (18, 129, 245)),
+    ((18, 130, 120), (18, 130, 229)),
+    ((18, 130, 235), (18, 130, 245)),
+    ((20, 115, 220), (20, 125, 245)),
+    ((23, 65, 154), (30, 115, 255)),
+    ((24, 48, 208), (25, 63, 223)),
+    ((26, 48, 192), (27, 63, 207)),
+    ((22, 120, 248), (22, 127, 255)),
+    ((13, 136, 136), (13, 143, 143)),
+    ((14, 136, 136), (14, 143, 151)),
+    ((14, 144, 144), (14, 151, 151)),
+    ((14, 144, 169), (14, 151, 175)),
+    ((14, 152, 144), (14, 159, 175)),
+    ((14, 160, 136), (14, 167, 143)),
+    ((15, 128, 168), (15, 135, 175)),
+    ((15, 144, 152), (15, 151, 183)),
+    ((15, 152, 144), (15, 159, 175)),
+    ((15, 160, 136), (15, 167, 143)),
 )
 
 # Minimum HSV mask ratio for accepting a box candidate.
-BOX_HSV_MIN_MATCH_RATIO = 0.0
+BOX_HSV_MIN_MATCH_RATIO = 0.26424162
 
 # Minimum distinct box templates that must agree on a detection.
 BOXES_MIN_MATCHES = 1
