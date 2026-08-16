@@ -74,7 +74,7 @@ UPGRADE_STATION_HSV_RANGES = (
 UPGRADE_STATION_HSV_MIN_MATCH_RATIO = 0.4
 
 # Template confidence threshold for box scans.
-BOX_THRESHOLD = 0.9
+BOX_THRESHOLD = 0.915
 
 # Accepted HSV ranges for box candidate gating.
 BOX_HSV_RANGES = (
