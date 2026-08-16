@@ -102,7 +102,7 @@ BOX_HSV_RANGES = (
 BOX_HSV_MIN_MATCH_RATIO = 0.26424162
 
 # Minimum distinct box templates that must agree on a detection.
-BOXES_MIN_MATCHES = 1
+BOXES_MIN_MATCHES = 3
 
 # Template confidence threshold for unlock button scans.
 UNLOCK_THRESHOLD = 0.905
