@@ -139,10 +139,10 @@ EVENT_FORBIDDEN_ZONE_OPTIONS = {
     3: (290, 350, 93, 380),
 }
 NUMBERED_FORBIDDEN_ZONE_BOUNDS = (
-    (0, 60, 50, 280),
-    (0, 60, 600, 667),
-    (145, 200, 65, 110),
-    (55, 285, 660, 725),
+    (0, 60, 50, 270),
+    (0, 60, 640, 700),
+    (150, 205, 70, 115),
+    (65, 295, 700, 760),
 )
 
 TELEGRAM_ENABLED = os.getenv("EATVENTURE_TELEGRAM_ENABLED", "").lower() in {
