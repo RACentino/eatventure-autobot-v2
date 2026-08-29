@@ -1099,29 +1099,42 @@ class EatventureBot:
         if not self._click_idle():
             return State.OPEN_BOXES
 
-        screenshot = self.window_capture.capture(max_y=config.EXTENDED_SEARCH_Y)
-        limited_screenshot = screenshot[: config.MAX_SEARCH_Y, :]
+        best_stats_match = None
+        for attempt in range(2):
+            screenshot = self.window_capture.capture(max_y=config.EXTENDED_SEARCH_Y)
+            limited_screenshot = screenshot[: config.MAX_SEARCH_Y, :]
 
-        found, _, _, _ = self._find_new_level_button(limited_screenshot)
-        if found:
-            return State.TRANSITION_LEVEL
+            found, _, _, _ = self._find_new_level_button(limited_screenshot)
+            if found:
+                return State.TRANSITION_LEVEL
 
-        best_stats_match = self._find_best_zone_red_icon(
-            screenshot,
-            config.STATS_RED_ICON_THRESHOLD,
-            config.UPGRADE_RED_ICON_X_MIN,
-            config.UPGRADE_RED_ICON_X_MAX,
-            config.UPGRADE_RED_ICON_Y_MIN,
-            config.UPGRADE_RED_ICON_Y_MAX,
-            min_distance=80,
-        )
-
-        if best_stats_match is None:
-            logger.info("No stats icon detected")
+            best_stats_match = self._find_best_zone_red_icon(
+                screenshot,
+                config.STATS_RED_ICON_THRESHOLD,
+                config.UPGRADE_RED_ICON_X_MIN,
+                config.UPGRADE_RED_ICON_X_MAX,
+                config.UPGRADE_RED_ICON_Y_MIN,
+                config.UPGRADE_RED_ICON_Y_MAX,
+                min_distance=80,
+            )
+            if best_stats_match is not None:
+                break
+            if attempt == 0 and self._scrcpy_miss_recovery_sleep(
+                config.SCRCPY_RED_ICON_MISS_RECOVERY_DELAY
+            ):
+                logger.info("No stats icon detected; retrying after capture recovery")
+                continue
+            logger.info("No stats icon detected%s", " after recovery" if attempt else "")
             return State.SCROLL
 
         self.cycle_counter = 0
-        logger.info("Stats icon found, upgrading")
+        confidence, icon_x, icon_y = best_stats_match
+        logger.info(
+            "Stats icon found at (%s, %s) with confidence %.3f; upgrading",
+            icon_x,
+            icon_y,
+            confidence,
+        )
         opened = self.mouse_controller.click(
             config.STATS_UPGRADE_BUTTON_POS[0],
             config.STATS_UPGRADE_BUTTON_POS[1],
