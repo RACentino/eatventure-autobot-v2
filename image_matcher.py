@@ -175,6 +175,69 @@ class ImageMatcher:
             return False, confidence, 0, 0
         return True, confidence, center_x, center_y
 
+    def find_template_candidates(
+        self,
+        screenshot: np.ndarray,
+        template: np.ndarray,
+        mask: np.ndarray | None = None,
+        threshold: float | None = None,
+        min_distance: int = 15,
+        template_name: str = "Unknown",
+        hsv_ranges: Any = None,
+        hsv_match_threshold: float = 0.9,
+    ) -> list[MatchCandidate]:
+        candidates = self.find_color_gated_template_candidates(
+            screenshot,
+            template,
+            mask,
+            threshold,
+            min_distance,
+            template_name,
+            hsv_ranges,
+            hsv_match_threshold,
+        )
+        if hsv_ranges:
+            candidates = self.filter_candidates_by_hsv(
+                screenshot,
+                candidates,
+                template,
+                mask,
+                hsv_ranges,
+                hsv_match_threshold,
+            )
+        return candidates
+
+    def find_all_templates(
+        self,
+        screenshot: np.ndarray,
+        template: np.ndarray,
+        mask: np.ndarray | None = None,
+        threshold: float | None = None,
+        min_distance: int = 15,
+        template_name: str = "Unknown",
+        hsv_ranges: Any = None,
+        hsv_match_threshold: float = 0.9,
+    ) -> list[tuple[float, int, int]]:
+        candidates = self.find_template_candidates(
+            screenshot,
+            template,
+            mask,
+            threshold,
+            min_distance,
+            template_name,
+            hsv_ranges,
+            hsv_match_threshold,
+        )
+        return [
+            (confidence, x, y)
+            for confidence, x, y, _, _ in self.suppress_overlaps(candidates, 0.20)
+        ]
+
+    def suppress_overlaps(
+        self, candidates: list[tuple[Any, ...]], iou_threshold: float = 0.20
+    ) -> list[tuple[Any, ...]]:
+        return self.filter_candidates_with_supervision_nms(candidates, iou_threshold)
+
     def find_color_gated_template_candidates(
         self,
         screenshot: np.ndarray,

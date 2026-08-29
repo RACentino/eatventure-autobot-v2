@@ -1,34 +1,25 @@
 import logging
+import os
+import sys
 import threading
 from typing import Any
 
 import numpy as np
 
-_MSS_IMPORT_ERROR: Exception | None
-_PYWINCTL_IMPORT_ERROR: Exception | None
-mss_module: Any = None
-pywinctl_module: Any = None
-
-try:
-    import mss as imported_mss
-except Exception as exc:
-    _MSS_IMPORT_ERROR = exc
-else:
-    mss_module = imported_mss
-    _MSS_IMPORT_ERROR = None
-
-try:
-    import pywinctl as imported_pywinctl
-except Exception as exc:
-    _PYWINCTL_IMPORT_ERROR = exc
-else:
-    pywinctl_module = imported_pywinctl
-    _PYWINCTL_IMPORT_ERROR = None
-
 logger = logging.getLogger(__name__)
 
-WindowRect = tuple[int, int, int, int]
-_MISSING = object()
+_ACTUAL_SESSION = os.getenv("XDG_SESSION_TYPE", "").lower()
+if sys.platform.startswith("linux") and _ACTUAL_SESSION == "wayland" and os.getenv("DISPLAY"):
+    # PyWinCtl can control this intentionally XWayland-only target through its X11 backend.
+    os.environ["XDG_SESSION_TYPE"] = "x11"
+
+try:
+    import pywinctl
+except Exception as exc:
+    pywinctl = None
+    _PYWINCTL_ERROR = exc
+else:
+    _PYWINCTL_ERROR = None
 
 
 class WindowCaptureError(RuntimeError):
@@ -39,70 +30,54 @@ class WindowNotAvailableError(WindowCaptureError):
     pass
 
 
-def _geometry_attribute_value(geometry: Any, names: tuple[str, ...]) -> Any:
-    for name in names:
-        if hasattr(geometry, name):
-            return getattr(geometry, name)
-    return _MISSING
-
-
-def _geometry_mapping_value(geometry: Any, names: tuple[str, ...]) -> Any:
-    if not isinstance(geometry, dict):
-        return _MISSING
-    for name in names:
-        if name in geometry:
-            return geometry[name]
-    return _MISSING
-
-
-def _geometry_value(geometry: Any, names: tuple[str, ...], index: int) -> Any:
-    value = _geometry_attribute_value(geometry, names)
-    if value is not _MISSING:
-        return value
-    value = _geometry_mapping_value(geometry, names)
-    if value is not _MISSING:
-        return value
-    return geometry[index]
-
-
-def _bounds_from_geometry(geometry: Any) -> WindowRect:
-    left = int(_geometry_value(geometry, ("left", "x"), 0))
-    top = int(_geometry_value(geometry, ("top", "y"), 1))
-    if hasattr(geometry, "right") or (
-        isinstance(geometry, dict) and "right" in geometry
-    ):
-        right = int(_geometry_value(geometry, ("right",), 2))
-        bottom = int(_geometry_value(geometry, ("bottom",), 3))
-        return left, top, right - left, bottom - top
-    width = int(_geometry_value(geometry, ("width", "w"), 2))
-    height = int(_geometry_value(geometry, ("height", "h"), 3))
-    return left, top, width, height
+def _bounds(geometry: Any) -> tuple[int, int, int, int]:
+    if hasattr(geometry, "left"):
+        left, top = int(geometry.left), int(geometry.top)
+        if hasattr(geometry, "width"):
+            return left, top, int(geometry.width), int(geometry.height)
+        return left, top, int(geometry.right) - left, int(geometry.bottom) - top
+    if isinstance(geometry, dict):
+        left, top = int(geometry.get("left", geometry.get("x"))), int(
+            geometry.get("top", geometry.get("y"))
+        )
+        width = geometry.get("width", geometry.get("w"))
+        height = geometry.get("height", geometry.get("h"))
+        if width is None:
+            width, height = int(geometry["right"]) - left, int(geometry["bottom"]) - top
+        return left, top, int(width), int(height)
+    return tuple(map(int, geometry))
 
 
 class WindowCapture:
-    def __init__(
-        self, window_title: str, target_width: int = 800, target_height: int = 600
-    ) -> None:
-        self.window_title = str(window_title)
+    def __init__(self, title: str, target_width: int, target_height: int) -> None:
+        self.window_title = str(title)
         self.target_width = int(target_width)
         self.target_height = int(target_height)
-        if self.target_width <= 0 or self.target_height <= 0:
-            raise WindowCaptureError(
-                f"Invalid target window size: {self.target_width}x{self.target_height}"
-            )
         self.hwnd = None
         self._window = None
         self._lock = threading.RLock()
-        if mss_module is None:
-            raise WindowCaptureError(
-                f"Cannot initialize screenshot backend: {_MSS_IMPORT_ERROR}"
-            )
-        try:
-            self._screenshotter = mss_module.mss()
-        except Exception as exc:
-            raise WindowCaptureError(
-                f"Cannot initialize screenshot backend: {exc}"
-            ) from exc
+        self._backend = None
+        self._xdisplay = None
+        if pywinctl is None:
+            raise WindowCaptureError(f"Cannot initialize window backend: {_PYWINCTL_ERROR}")
+        if sys.platform.startswith("linux"):
+            if _ACTUAL_SESSION == "wayland" and not os.getenv("DISPLAY"):
+                raise WindowCaptureError("Wayland requires scrcpy running through XWayland (DISPLAY is missing)")
+            try:
+                from Xlib import display
+
+                self._xdisplay = display.Display()
+            except Exception as exc:
+                raise WindowCaptureError(f"Cannot initialize X11 capture: {exc}") from exc
+        elif sys.platform == "win32":
+            try:
+                import mss
+
+                self._backend = mss.mss()
+            except Exception as exc:
+                raise WindowCaptureError(f"Cannot initialize Windows capture: {exc}") from exc
+        else:
+            raise WindowCaptureError(f"Unsupported platform: {sys.platform}")
         try:
             self.ensure_window(resize=True)
         except WindowCaptureError as exc:
@@ -110,95 +85,56 @@ class WindowCapture:
 
     @staticmethod
     def _alive(window: Any) -> bool:
-        alive = getattr(window, "isAlive", None)
         try:
-            return bool(
-                alive() if callable(alive) else True if alive is None else alive
-            )
+            value = getattr(window, "isAlive", True)
+            return bool(value() if callable(value) else value)
         except Exception:
             return False
+
+    @staticmethod
+    def _active(window: Any) -> bool:
+        try:
+            value = getattr(window, "isActive", False)
+            return bool(value() if callable(value) else value)
+        except Exception:
+            return False
+
+    @staticmethod
+    def _title(window: Any) -> str:
+        try:
+            return str(window.title)
+        except Exception:
+            return ""
 
     @staticmethod
     def _handle(window: Any) -> Any:
         getter = getattr(window, "getHandle", None)
-        if callable(getter):
-            try:
-                return getter()
-            except Exception:
-                return None
-        return getattr(window, "handle", None)
+        return getter() if callable(getter) else getattr(window, "handle", None)
 
-    @staticmethod
-    def _title(window: Any) -> str | None:
+    def _find(self) -> Any | None:
         try:
-            title = getattr(window, "title", None)
-        except Exception:
-            return None
-        return str(title) if title is not None else None
-
-    @staticmethod
-    def _active(window: Any) -> bool:
-        active = getattr(window, "isActive", False)
-        try:
-            return bool(active() if callable(active) else active)
-        except Exception:
-            return False
-
-    def _find_window(self) -> Any | None:
-        if pywinctl_module is None:
-            raise WindowCaptureError(
-                f"Could not initialize window backend: {_PYWINCTL_IMPORT_ERROR}"
-            )
-        try:
-            windows = pywinctl_module.getWindowsWithTitle(self.window_title) or []
+            matches = [
+                window
+                for window in (pywinctl.getWindowsWithTitle(self.window_title) or [])
+                if self._alive(window) and self._title(window) == self.window_title
+            ]
         except Exception as exc:
-            raise WindowCaptureError(
-                f"Could not search for window '{self.window_title}': {exc}"
-            ) from exc
-        live_windows = [window for window in windows if self._alive(window)]
-        exact_windows = [
-            window
-            for window in live_windows
-            if self._title(window) == self.window_title
-        ]
-        if len(exact_windows) > 1:
-            raise WindowCaptureError(
-                f"Multiple live windows have title '{self.window_title}'"
-            )
-        return exact_windows[0] if exact_windows else None
+            raise WindowCaptureError(f"Cannot search for '{self.window_title}': {exc}") from exc
+        if len(matches) > 1:
+            raise WindowCaptureError(f"Multiple live windows have title '{self.window_title}'")
+        return matches[0] if matches else None
 
     def ensure_window(self, resize: bool = False) -> Any:
         with self._lock:
-            window = self._ensure_window_reference()
+            if self._window is None or not self._alive(self._window):
+                self._window = self._find()
+            if self._window is None:
+                self.hwnd = None
+                raise WindowNotAvailableError(f"Window '{self.window_title}' not found")
+            self.hwnd = self._handle(self._window)
             if resize:
                 self._resize()
-            return window
-
-    def _ensure_window_reference(self) -> Any:
-        if self._window is not None and self._alive(self._window):
             return self._window
-        self._window = self._find_window()
-        if self._window is None:
-            self.hwnd = None
-            raise WindowNotAvailableError(f"Window '{self.window_title}' not found")
-        self.hwnd = self._handle(self._window)
-        logger.info("Window found: %s (handle: %s)", self.window_title, self.hwnd)
-        return self._window
-
-    def _resize(self) -> None:
-        if self._window is None or not self._alive(self._window):
-            return
-        try:
-            resized = self._window.resizeTo(
-                self.target_width, self.target_height, wait=True
-            )
-        except Exception as exc:
-            raise WindowCaptureError(
-                f"Resizing window '{self.window_title}' failed: {exc}"
-            ) from exc
-        if resized is False:
-            raise WindowCaptureError(f"Resizing window '{self.window_title}' failed")
-        logger.info("Window resized to %sx%s", self.target_width, self.target_height)
 
     def find_window(self) -> Any:
         return self.ensure_window()
@@ -207,112 +143,97 @@ class WindowCapture:
         self.ensure_window()
         return self.hwnd
 
+    def _window_bounds(self, window: Any) -> tuple[int, int, int, int]:
+        try:
+            return _bounds(window.getClientFrame())
+        except Exception:
+            try:
+                return _bounds(window.box)
+            except Exception as exc:
+                raise WindowCaptureError(f"Cannot read window bounds: {exc}") from exc
+
+    def get_window_rect(self) -> tuple[int, int, int, int]:
+        with self._lock:
+            bounds = self._window_bounds(self.ensure_window())
+            if bounds[2] <= 0 or bounds[3] <= 0:
+                raise WindowCaptureError(f"Invalid target size: {bounds[2]}x{bounds[3]}")
+            return bounds
+
+    def _resize(self) -> None:
+        current = self._window_bounds(self._window)
+        if current[2:] == (self.target_width, self.target_height):
+            return
+        try:
+            self._window.resizeTo(self.target_width, self.target_height, wait=True)
+        except Exception as exc:
+            raise WindowCaptureError(f"Window resize failed: {exc}") from exc
+        actual = self._window_bounds(self._window)[2:]
+        if actual != (self.target_width, self.target_height):
+            hint = " Apply the documented Hyprland rule." if _ACTUAL_SESSION == "wayland" else ""
+            raise WindowCaptureError(
+                f"Window must be exactly {self.target_width}x{self.target_height}; "
+                f"got {actual[0]}x{actual[1]}.{hint}"
+            )
+
     def resize_window(self) -> None:
         with self._lock:
             self.ensure_window()
             self._resize()
 
-    def get_window_rect(self) -> WindowRect:
-        with self._lock:
-            window = self.ensure_window()
-            x, y, width, height = self._window_bounds(window)
-            if width <= 0 or height <= 0:
-                raise WindowCaptureError(
-                    f"Window '{self.window_title}' has invalid size: {width}x{height}"
-                )
-            return x, y, width, height
-
     def activate_for_input(self) -> None:
         with self._lock:
             window = self.ensure_window()
-            activate = getattr(window, "activate", None)
-            if not callable(activate):
-                raise WindowCaptureError(
-                    f"Window '{self.window_title}' cannot be activated"
-                )
-            try:
-                activated = activate(wait=True)
-            except Exception as exc:
-                raise WindowCaptureError(
-                    f"Activating window '{self.window_title}' failed: {exc}"
-                ) from exc
-            if activated is False or not self._active(window):
-                raise WindowCaptureError(
-                    f"Window '{self.window_title}' is not the active window"
-                )
+            if not self._active(window):
+                try:
+                    window.activate(wait=True)
+                except Exception as exc:
+                    raise WindowCaptureError(f"Window activation failed: {exc}") from exc
+            if not self._active(window):
+                raise WindowCaptureError(f"Window '{self.window_title}' is not active")
 
-    def get_input_window_rect(self) -> WindowRect:
+    def get_input_window_rect(self) -> tuple[int, int, int, int]:
         with self._lock:
             window = self.ensure_window()
-            if self._title(window) != self.window_title or not self._active(window):
-                raise WindowNotAvailableError(
-                    f"Window '{self.window_title}' is not active; input rejected"
-                )
+            if not self._active(window):
+                raise WindowNotAvailableError(f"Window '{self.window_title}' is not active")
             return self.get_window_rect()
-
-    def _window_bounds(self, window: Any) -> WindowRect:
-        try:
-            return _bounds_from_geometry(window.getClientFrame())
-        except Exception:
-            return self._window_box_bounds(window)
-
-    def _window_box_bounds(self, window: Any) -> WindowRect:
-        try:
-            return _bounds_from_geometry(window.box)
-        except Exception as exc:
-            raise WindowCaptureError(
-                f"Cannot read window bounds for '{self.window_title}': {exc}"
-            ) from exc
-
-    def capture(self, max_y: Any = None) -> np.ndarray:
-        with self._lock:
-            x, y, width, height = self.get_window_rect()
-            if max_y is not None:
-                height = min(height, int(max_y))
-            if width <= 0 or height <= 0:
-                raise WindowCaptureError(
-                    f"Window '{self.window_title}' cannot be captured with size {width}x{height}"
-                )
-            image = self._grab_window_image(x, y, width, height)
-            return self._decoded_bgr_image(image)
-
-    def _grab_window_image(self, x: int, y: int, width: int, height: int) -> np.ndarray:
-        try:
-            screenshot = self._screenshotter.grab(
-                {"left": x, "top": y, "width": width, "height": height}
-            )
-            return np.asarray(screenshot)
-        except Exception as exc:
-            if not self.is_window_active():
-                raise WindowNotAvailableError(
-                    f"Window '{self.window_title}' is no longer available"
-                ) from exc
-            raise WindowCaptureError(
-                f"Capturing window '{self.window_title}' failed: {exc}"
-            ) from exc
-
-    @staticmethod
-    def _decoded_bgr_image(image: np.ndarray) -> np.ndarray:
-        if image.ndim != 3 or image.shape[2] < 3:
-            raise WindowCaptureError(f"Captured image has invalid shape: {image.shape}")
-        decoded = image[:, :, :3].astype(np.uint8, copy=False)
-        return decoded if decoded.flags.c_contiguous else np.ascontiguousarray(decoded)
 
     def is_window_active(self) -> bool:
         with self._lock:
-            if (
-                self._window is None
-                or not self._alive(self._window)
-                or self._title(self._window) != self.window_title
-            ):
-                self._window = self._find_window()
-            self.hwnd = self._handle(self._window) if self._window is not None else None
-            return self._window is not None and self._active(self._window)
+            try:
+                window = self.ensure_window()
+            except WindowCaptureError:
+                return False
+            return self._title(window) == self.window_title and self._active(window)
+
+    def capture(self, max_y: Any = None) -> np.ndarray:
+        with self._lock:
+            left, top, width, height = self.get_window_rect()
+            if max_y is not None:
+                height = min(height, int(max_y))
+            try:
+                if self._xdisplay is not None:
+                    from Xlib import X
+
+                    window = self._xdisplay.create_resource_object("window", int(self.hwnd))
+                    raw = window.get_image(0, 0, width, height, X.ZPixmap, 0xFFFFFFFF)
+                    image = np.frombuffer(raw.data, dtype=np.uint8).reshape(height, width, 4)
+                else:
+                    image = np.asarray(
+                        self._backend.grab(
+                            {"left": left, "top": top, "width": width, "height": height}
+                        )
+                    )
+            except Exception as exc:
+                raise WindowCaptureError(f"Window capture failed: {exc}") from exc
+            bgr = image[:, :, :3]
+            return bgr if bgr.flags.c_contiguous else np.ascontiguousarray(bgr)
 
     def close(self) -> None:
-        close_screenshotter = getattr(self._screenshotter, "close", None)
-        if callable(close_screenshotter):
-            try:
-                close_screenshotter()
-            except Exception as exc:
-                logger.debug("Screenshot backend close failed: %s", exc)
+        with self._lock:
+            if self._backend is not None:
+                self._backend.close()
+                self._backend = None
+            if self._xdisplay is not None:
+                self._xdisplay.close()
+                self._xdisplay = None
