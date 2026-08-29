@@ -13,6 +13,7 @@ from pynput import keyboard
 bot_instance: EatventureBot | None = None
 should_exit = threading.Event()
 toggle_requested = threading.Event()
+mode_toggle_requested = threading.Event()
 log_listener: QueueListener | None = None
 primed_event_selection: tuple[int, tuple[int, int, int, int]] | None = None
 
@@ -48,20 +49,37 @@ def _select_event_zone() -> tuple[int, tuple[int, int, int, int]] | None:
     for count, bounds in options:
         print(f"  {count}: protect x={bounds[0]}-{bounds[1]}, y={bounds[2]}-{bounds[3]}")
     choices = dict(options)
-    while not should_exit.is_set():
+    selection: queue.SimpleQueue[tuple[int, tuple[int, int, int, int]] | None] = (
+        queue.SimpleQueue()
+    )
+
+    def read_selection() -> None:
+        while not should_exit.is_set():
+            try:
+                count = int(input("Selection: ").strip())
+            except EOFError:
+                selection.put(None)
+                return
+            except ValueError:
+                count = 0
+            if count in choices:
+                selection.put((count, choices[count]))
+                return
+            print(f"Enter one of: {', '.join(map(str, choices))}.")
+
+    threading.Thread(target=read_selection, name="event_selection", daemon=True).start()
+    while not should_exit.wait(config.EVENT_LOOP_INTERVAL):
         try:
-            count = int(input("Selection: ").strip())
-        except EOFError:
+            selected = selection.get_nowait()
+        except queue.Empty:
+            continue
+        if selected is None:
             return None
-        except ValueError:
-            count = 0
-        if count in choices:
-            print(
-                f"Bot primed for {count} event(s). Focus '{config.WINDOW_TITLE}' "
-                "and press Z again to start."
-            )
-            return count, choices[count]
-        print(f"Enter one of: {', '.join(map(str, choices))}.")
+        print(
+            f"Bot primed for {selected[0]} event(s). Focus '{config.WINDOW_TITLE}' "
+            "and press Z again to start."
+        )
+        return selected
     return None
 
 
@@ -104,6 +122,15 @@ def _log_cursor() -> None:
     logging.info("[X] Window position: (%s, %s)", screen_x - left, screen_y - top)
 
 
+def _toggle_red_icon_mode() -> None:
+    if bot_instance is None:
+        return
+    if bot_instance.running:
+        logging.warning("Red-icon mode can only be changed while stopped")
+        return
+    logging.info("Red-icon mode: %s", bot_instance.toggle_red_icon_mode())
+
+
 def on_press(key: Any) -> None:
     character = _key_character(key)
     if character == "z":
@@ -112,6 +139,8 @@ def on_press(key: Any) -> None:
         toggle_requested.set()
     elif character == "x":
         _log_cursor()
+    elif character == "m":
+        mode_toggle_requested.set()
     elif character == "p":
         if bot_instance is not None:
             bot_instance.request_stop()
@@ -144,6 +173,9 @@ def _run() -> None:
         if toggle_requested.is_set():
             toggle_requested.clear()
             _toggle_bot()
+        elif mode_toggle_requested.is_set():
+            mode_toggle_requested.clear()
+            _toggle_red_icon_mode()
         elif bot_instance is not None and bot_instance.running:
             bot_instance.step()
         should_exit.wait(config.EVENT_LOOP_INTERVAL)
@@ -157,10 +189,11 @@ def main() -> int:
         setup_logging()
         should_exit.clear()
         toggle_requested.clear()
+        mode_toggle_requested.clear()
         bot_instance = EatventureBot()
         listener = keyboard.Listener(on_press=on_press)
         listener.start()
-        logging.info("Z: prime/start/stop | X: cursor position | P: exit")
+        logging.info("Z: prime/start/stop | M: Fast/Normal (stopped) | X: cursor position | P: exit")
         _run()
         return 0
     except KeyboardInterrupt:

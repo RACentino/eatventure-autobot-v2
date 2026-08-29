@@ -185,6 +185,7 @@ class ImageMatcher:
         template_name: str = "Unknown",
         hsv_ranges: Any = None,
         hsv_match_threshold: float = 0.9,
+        hsv_mask: np.ndarray | None = None,
     ) -> list[MatchCandidate]:
         candidates = self.find_color_gated_template_candidates(
             screenshot,
@@ -195,6 +196,7 @@ class ImageMatcher:
             template_name,
             hsv_ranges,
             hsv_match_threshold,
+            hsv_mask,
         )
         if hsv_ranges:
             candidates = self.filter_candidates_by_hsv(
@@ -204,6 +206,7 @@ class ImageMatcher:
                 mask,
                 hsv_ranges,
                 hsv_match_threshold,
+                hsv_mask,
             )
         return candidates
 
@@ -217,6 +220,7 @@ class ImageMatcher:
         template_name: str = "Unknown",
         hsv_ranges: Any = None,
         hsv_match_threshold: float = 0.9,
+        hsv_mask: np.ndarray | None = None,
     ) -> list[tuple[float, int, int]]:
         candidates = self.find_template_candidates(
             screenshot,
@@ -227,6 +231,7 @@ class ImageMatcher:
             template_name,
             hsv_ranges,
             hsv_match_threshold,
+            hsv_mask,
         )
         return [
             (confidence, x, y)

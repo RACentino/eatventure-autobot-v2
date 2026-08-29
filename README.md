@@ -14,7 +14,7 @@ The bot runs eleven directly dispatched states:
 6. Oscillate the restaurant view after an empty pass or repeated station misses.
 7. Confirm either level-transition path, wait a bounded number of times for unlock, and record the completed level.
 
-Window loss, focus loss, unexpected handler errors, and exhausted bounded retries stop or reset the flow instead of entering an indefinite recovery loop.
+Window loss, focus loss, unexpected handler errors, and exhausted bounded retries safety-pause the bot. Press `Z` to resume from a fresh scan with the current event selection.
 
 ## Install
 
@@ -59,13 +59,15 @@ python main.py
 - Second press while the target is focused: start.
 - Press while running: stop and clear the selection.
 
-`X` logs the cursor position relative to the target. `P` exits.
+`M` switches between Fast red-icon matching and Normal two-template consensus while stopped. Fast mode automatically retries a second missed frame in Normal mode.
+
+`X` logs the cursor position relative to the target. `P` exits without waiting for Enter at the event-selection prompt.
 
 ## Configuration
 
 `config.py` contains only runtime calibration: thresholds, HSV ranges, timings, positions, scrolling, and forbidden zones. `WINDOW_WIDTH` and `WINDOW_HEIGHT` are the required positive client-area dimensions. Templates live in `assets/`; logs rotate under `logs/`.
 
-Telegram notifications are optional and queued. Set these environment variables to enable start, stop, and completed-level messages:
+Telegram notifications are optional and queued. Set these environment variables to enable start, stop, safety-pause, and completed-level messages:
 
 ```bash
 export EATVENTURE_TELEGRAM_ENABLED=true

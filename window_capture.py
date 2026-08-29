@@ -141,13 +141,6 @@ class WindowCapture:
                 self._resize()
             return self._window
 
-    def find_window(self) -> Any:
-        return self.ensure_window()
-
-    def get_hwnd(self) -> Any:
-        self.ensure_window()
-        return self.hwnd
-
     def _window_bounds(self, window: Any) -> tuple[int, int, int, int]:
         try:
             return _bounds(window.getClientFrame())
@@ -212,22 +205,6 @@ class WindowCapture:
             self.target_width,
             self.target_height,
         )
-
-    def resize_window(self) -> None:
-        with self._lock:
-            self.ensure_window()
-            self._resize()
-
-    def activate_for_input(self) -> None:
-        with self._lock:
-            window = self.ensure_window()
-            if not self._active(window):
-                try:
-                    window.activate(wait=True)
-                except Exception as exc:
-                    raise WindowCaptureError(f"Window activation failed: {exc}") from exc
-            if not self._active(window):
-                raise WindowCaptureError(f"Window '{self.window_title}' is not active")
 
     def get_input_window_rect(self) -> tuple[int, int, int, int]:
         with self._lock:

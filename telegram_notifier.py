@@ -63,7 +63,13 @@ class TelegramNotifier:
         if not self.enabled:
             return
         self.enabled = False
-        self._queue.put(None)
+        while True:
+            try:
+                self._queue.get_nowait()
+                self._queue.task_done()
+            except queue.Empty:
+                break
+        self._queue.put_nowait(None)
         if self._thread is not None:
             self._thread.join(timeout=5.5)
         if self._thread is not None and self._thread.is_alive():
@@ -78,6 +84,9 @@ class TelegramNotifier:
 
     def notify_bot_stopped(self) -> None:
         self.send_message("Bot Stopped")
+
+    def notify_safety_pause(self, reason: str) -> None:
+        self.send_message(f"Bot safety-paused: {reason}")
 
     def notify_new_level(self, level_number: int, time_spent: float) -> None:
         minutes, seconds = divmod(int(time_spent), 60)
