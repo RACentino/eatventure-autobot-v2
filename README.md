@@ -31,7 +31,7 @@ scrcpy --window-title "EatventureAuto"
 python main.py
 ```
 
-Size the client area to exactly 360×780 if the window manager does not accept the bot's resize request.
+The bot automatically resizes the client area to `WINDOW_WIDTH` × `WINDOW_HEIGHT` when it attaches, starts, and before every active step. If the window manager refuses the exact size, the bot stops before capture or input.
 
 ### Hyprland
 
@@ -41,11 +41,10 @@ Add this one-time window rule to the Hyprland configuration:
 hl.window_rule({
   match = { class = "^scrcpy$", title = "^EatventureAuto$", xwayland = true },
   float = true,
-  size = { 360, 780 },
 })
 ```
 
-Reload Hyprland, then launch and keep the `scrcpy` window focused:
+Reload Hyprland, then launch and keep the floating `scrcpy` window focused:
 
 ```bash
 SDL_VIDEODRIVER=x11 scrcpy --window-title "EatventureAuto"
@@ -64,7 +63,7 @@ python main.py
 
 ## Configuration
 
-`config.py` contains only runtime calibration: thresholds, HSV ranges, timings, positions, scrolling, and forbidden zones. Templates live in `assets/`; logs rotate under `logs/`.
+`config.py` contains only runtime calibration: thresholds, HSV ranges, timings, positions, scrolling, and forbidden zones. `WINDOW_WIDTH` and `WINDOW_HEIGHT` are the required positive client-area dimensions. Templates live in `assets/`; logs rotate under `logs/`.
 
 Telegram notifications are optional and queued. Set these environment variables to enable start, stop, and completed-level messages:
 

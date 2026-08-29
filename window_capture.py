@@ -2,6 +2,7 @@ import logging
 import os
 import sys
 import threading
+import time
 from typing import Any
 
 import numpy as np
@@ -53,6 +54,10 @@ class WindowCapture:
         self.window_title = str(title)
         self.target_width = int(target_width)
         self.target_height = int(target_height)
+        if self.target_width <= 0 or self.target_height <= 0:
+            raise WindowCaptureError(
+                f"Invalid target client size: {self.target_width}x{self.target_height}"
+            )
         self.hwnd = None
         self._window = None
         self._lock = threading.RLock()
@@ -146,11 +151,8 @@ class WindowCapture:
     def _window_bounds(self, window: Any) -> tuple[int, int, int, int]:
         try:
             return _bounds(window.getClientFrame())
-        except Exception:
-            try:
-                return _bounds(window.box)
-            except Exception as exc:
-                raise WindowCaptureError(f"Cannot read window bounds: {exc}") from exc
+        except Exception as exc:
+            raise WindowCaptureError(f"Cannot read window client bounds: {exc}") from exc
 
     def get_window_rect(self) -> tuple[int, int, int, int]:
         with self._lock:
@@ -163,17 +165,53 @@ class WindowCapture:
         current = self._window_bounds(self._window)
         if current[2:] == (self.target_width, self.target_height):
             return
+        used_x11 = self._xdisplay is not None
         try:
-            self._window.resizeTo(self.target_width, self.target_height, wait=True)
+            if getattr(self._window, "isMinimized", False) or getattr(
+                self._window, "isMaximized", False
+            ):
+                self._window.restore(wait=True)
+                current = self._window_bounds(self._window)
+                if current[2:] == (self.target_width, self.target_height):
+                    return
+            if used_x11:
+                xwindow = self._xdisplay.create_resource_object("window", int(self.hwnd))
+                xwindow.configure(width=self.target_width, height=self.target_height)
+                self._xdisplay.sync()
+            else:
+                outer = _bounds(self._window.box)
+                frame_width = max(0, outer[2] - current[2])
+                frame_height = max(0, outer[3] - current[3])
+                self._window.resizeTo(
+                    self.target_width + frame_width,
+                    self.target_height + frame_height,
+                    wait=True,
+                )
         except Exception as exc:
             raise WindowCaptureError(f"Window resize failed: {exc}") from exc
         actual = self._window_bounds(self._window)[2:]
+        for _ in range(10 if used_x11 else 0):
+            if actual == (self.target_width, self.target_height):
+                break
+            time.sleep(0.05)
+            actual = self._window_bounds(self._window)[2:]
         if actual != (self.target_width, self.target_height):
-            hint = " Apply the documented Hyprland rule." if _ACTUAL_SESSION == "wayland" else ""
+            hint = (
+                " Ensure scrcpy is a floating XWayland window."
+                if _ACTUAL_SESSION == "wayland"
+                else ""
+            )
             raise WindowCaptureError(
-                f"Window must be exactly {self.target_width}x{self.target_height}; "
+                f"Window client must be exactly {self.target_width}x{self.target_height}; "
                 f"got {actual[0]}x{actual[1]}.{hint}"
             )
+        logger.info(
+            "Window client resized from %sx%s to %sx%s",
+            current[2],
+            current[3],
+            self.target_width,
+            self.target_height,
+        )
 
     def resize_window(self) -> None:
         with self._lock:
