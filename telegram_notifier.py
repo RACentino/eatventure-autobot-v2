@@ -13,6 +13,8 @@ class TelegramNotifier:
         token = str(bot_token or "").strip()
         self.chat_id = str(chat_id or "").strip()
         self.enabled = bool(enabled and token and self.chat_id)
+        if enabled and not self.enabled:
+            logger.warning("Telegram requested but credentials are incomplete; notifications disabled")
         self.url = f"https://api.telegram.org/bot{token}/sendMessage"
         self._queue: queue.Queue[str | None] = queue.Queue(maxsize=100)
         self._session = requests.Session() if self.enabled else None
@@ -28,6 +30,8 @@ class TelegramNotifier:
         while (message := self._queue.get()) is not None:
             try:
                 self._send(message)
+            except Exception:
+                logger.exception("Unexpected Telegram worker error")
             finally:
                 self._queue.task_done()
         self._queue.task_done()
@@ -85,8 +89,13 @@ class TelegramNotifier:
     def notify_bot_stopped(self) -> None:
         self.send_message("Bot Stopped")
 
-    def notify_safety_pause(self, reason: str) -> None:
-        self.send_message(f"Bot safety-paused: {reason}")
+    def notify_recovery_started(self, reason: str) -> None:
+        self.send_message(f"Bot recovery started: {reason}")
+
+    def notify_recovered(self, reason: str, attempts: int, elapsed: float) -> None:
+        self.send_message(
+            f"Bot recovered after {attempts} attempt(s) and {elapsed:.1f}s: {reason}"
+        )
 
     def notify_new_level(self, level_number: int, time_spent: float) -> None:
         minutes, seconds = divmod(int(time_spent), 60)

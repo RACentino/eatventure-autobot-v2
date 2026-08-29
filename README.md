@@ -14,12 +14,14 @@ The bot runs eleven directly dispatched states:
 6. Oscillate the restaurant view after an empty pass or repeated station misses.
 7. Confirm either level-transition path, wait a bounded number of times for unlock, and record the completed level.
 
-Window loss, focus loss, unexpected handler errors, and exhausted bounded retries safety-pause the bot. Press `Z` to resume from a fresh scan with the current event selection.
+Runtime window/capture/input faults recover in-process with capped exponential backoff; they do not clear the selected event or stop the bot. Input is released and frozen whenever the exact-title target is missing, duplicated, or unfocused. The bot never steals focus: refocus the one `EatventureAuto` window and recovery continues automatically. Transition recovery stays on its known checkpoint, and unlock waiting only retries a still-visible new-level action.
+
+Invalid startup configuration, an unsupported platform, and any missing, corrupt, or oversized required asset are fatal. Native crashes, operating-system termination, and a permanently stuck native library call remain outside what an in-process recovery loop can handle.
 
 ## Install
 
 ```bash
-python -m pip install -r requirements.txt
+python3.14 -m pip install -r requirements.txt
 ```
 
 The runtime supports Windows and Linux X11. Hyprland/Wayland is supported only by running `scrcpy` through XWayland; native Wayland capture and input are intentionally not implemented.
@@ -28,10 +30,10 @@ The runtime supports Windows and Linux X11. Hyprland/Wayland is supported only b
 
 ```bash
 scrcpy --window-title "EatventureAuto"
-python main.py
+python3.14 main.py
 ```
 
-The bot automatically resizes the client area to `WINDOW_WIDTH` × `WINDOW_HEIGHT` when it attaches, starts, and before every active step. If the window manager refuses the exact size, the bot stops before capture or input.
+The bot automatically resizes the client area to `WINDOW_WIDTH` × `WINDOW_HEIGHT` when it attaches, starts, and before every active step. Resize checks are finite and interruptible; input remains frozen until the exact client size is available.
 
 ### Hyprland
 
@@ -48,7 +50,7 @@ Reload Hyprland, then launch and keep the floating `scrcpy` window focused:
 
 ```bash
 SDL_VIDEODRIVER=x11 scrcpy --window-title "EatventureAuto"
-python main.py
+python3.14 main.py
 ```
 
 ## Controls
@@ -65,15 +67,26 @@ python main.py
 
 ## Configuration
 
-`config.py` contains only runtime calibration: thresholds, HSV ranges, timings, positions, scrolling, and forbidden zones. `WINDOW_WIDTH` and `WINDOW_HEIGHT` are the required positive client-area dimensions. Templates live in `assets/`; logs rotate under `logs/`.
+`config.py` contains runtime calibration: thresholds, HSV ranges, timings, positions, scrolling, forbidden zones, recovery backoff, heartbeat interval, and the bounded log-queue size. Startup validates these values as one aggregate report. All 23 named PNG templates in `assets/` are required; unexpected PNGs are ignored with a warning. Logs rotate under `logs/`, fall back to the console if the file cannot be opened, and emit a local health heartbeat every 300 seconds.
 
-Telegram notifications are optional and queued. Set these environment variables to enable start, stop, safety-pause, and completed-level messages:
+Telegram notifications are optional and queued. Incomplete enabled credentials warn and disable Telegram without stopping the bot. Recovery sends one incident-start message and one recovered message rather than alerting on every retry. Set these environment variables to enable notifications:
 
 ```bash
 export EATVENTURE_TELEGRAM_ENABLED=true
 export EATVENTURE_TELEGRAM_BOT_TOKEN=...
 export EATVENTURE_TELEGRAM_CHAT_ID=...
 ```
+
+## Offline reliability checks
+
+The standard suite includes a 100,000-step mocked recovery/state soak. Local image fixtures under the ignored `test/` directory can be replayed 25 times against the fixed box, red-icon, and upgrade-station oracles:
+
+```bash
+python3.14 -m unittest -v test_reliability.py
+EATVENTURE_FIXTURE_PASSES=25 python3.14 -m unittest -v test_reliability.py
+```
+
+GitHub Actions runs the offline suite on Windows and Linux with Python 3.14. Live gameplay is intentionally not part of automated verification.
 
 ## Disclaimer
 

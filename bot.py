@@ -24,6 +24,15 @@ TemplatePair = tuple[Any, Any]
 BoxCandidate = tuple[float, int, int, int, int, str]
 RedIcon = tuple[float, int, int]
 ForbiddenZoneBounds = tuple[int, int, int, int]
+REQUIRED_TEMPLATE_NAMES = (
+    "RedIcon",
+    *(f"RedIcon{index}" for index in range(2, 16)),
+    "RedIconNoBG",
+    *(f"box{index}" for index in range(1, 5)),
+    "newLevel",
+    "unlock",
+    "upgradeStation",
+)
 
 
 class State(Enum):
@@ -43,18 +52,34 @@ class State(Enum):
 class EatventureBot:
     def __init__(self) -> None:
         logger.info("Initializing Eatventure Bot")
+        config.validate_configuration()
         self._running = threading.Event()
         self._stop_requested = threading.Event()
         self._state_operation_lock = threading.RLock()
 
-        self.window_capture = WindowCapture(config.WINDOW_TITLE, config.WINDOW_WIDTH, config.WINDOW_HEIGHT)
         self.image_matcher = ImageMatcher(config.MATCH_THRESHOLD)
-        self.mouse_controller = MouseController(
-            self.window_capture,
-            click_delay=config.CLICK_DELAY,
-            move_delay=config.MOUSE_MOVE_DELAY,
+        self.templates = self.load_templates()
+        self._red_icon_template_names_cache: list[str] | None = None
+        self._red_icon_template_names_cache = self._red_icon_template_names()
+        self._red_icon_max_width, self._red_icon_max_height = self._red_icon_template_span()
+        self.ready = self._validate_required_templates()
+
+        self.window_capture = WindowCapture(
+            config.WINDOW_TITLE,
+            config.WINDOW_WIDTH,
+            config.WINDOW_HEIGHT,
             stop_event=self._stop_requested,
         )
+        try:
+            self.mouse_controller = MouseController(
+                self.window_capture,
+                click_delay=config.CLICK_DELAY,
+                move_delay=config.MOUSE_MOVE_DELAY,
+                stop_event=self._stop_requested,
+            )
+        except Exception:
+            self.window_capture.close()
+            raise
         self.state = State.FIND_RED_ICONS
         self._handlers = {
             State.FIND_RED_ICONS: self.handle_find_red_icons,
@@ -75,11 +100,6 @@ class EatventureBot:
             config.TELEGRAM_ENABLED,
         )
 
-        self.templates = self.load_templates()
-        self._red_icon_template_names_cache: list[str] | None = None
-        self._red_icon_template_names_cache = self._red_icon_template_names()
-        self._red_icon_max_width, self._red_icon_max_height = self._red_icon_template_span()
-        self.ready = self._validate_required_templates()
         self._initialize_runtime_state()
 
         logger.info("Bot initialized successfully")
@@ -117,6 +137,11 @@ class EatventureBot:
         self._oscillation_leg_progress = 0
         self._new_level_red_icon_verified = False
         self._state_entered_at = time.monotonic()
+        self._recovery_started_at: float | None = None
+        self._recovery_reason = ""
+        self._recovery_attempts = 0
+        self._recovery_serial = 0
+        self.total_recoveries = 0
 
     def set_event_forbidden_zone(self, bounds: ForbiddenZoneBounds) -> None:
         self.mouse_controller.set_event_forbidden_zone(bounds)
@@ -130,18 +155,34 @@ class EatventureBot:
     def load_templates(self) -> dict[str, TemplatePair]:
         templates: dict[str, TemplatePair] = {}
         templates_path = Path(config.ASSETS_DIR)
-        if not templates_path.exists():
-            logger.error("Assets directory not found: %s", templates_path)
-            return templates
+        if not templates_path.is_dir():
+            raise RuntimeError(f"Assets directory not found: {templates_path}")
 
-        for template_file in sorted(templates_path.glob("*.png")):
+        expected = set(REQUIRED_TEMPLATE_NAMES)
+        present = {path.stem for path in templates_path.glob("*.png")}
+        unexpected = sorted(present - expected)
+        if unexpected:
+            logger.warning("Ignoring unexpected PNG assets: %s", ", ".join(unexpected))
+        failures: list[str] = []
+        for template_name in REQUIRED_TEMPLATE_NAMES:
+            template_file = templates_path / f"{template_name}.png"
+            if not template_file.is_file():
+                failures.append(f"missing {template_file.name}")
+                continue
             try:
-                template_name = template_file.stem
                 template_img = self.image_matcher.load_template(template_file)
+                height, width = template_img[0].shape[:2]
+                if width > config.WINDOW_WIDTH or height > config.WINDOW_HEIGHT:
+                    raise ValueError(
+                        f"template is {width}x{height}, larger than the target client"
+                    )
                 templates[template_name] = template_img
                 logger.info("Loaded template: %s", template_name)
             except Exception as exc:
-                logger.error("Failed to load template %s: %s", template_file, exc)
+                failures.append(f"{template_file.name}: {exc}")
+
+        if failures:
+            raise RuntimeError("Invalid required assets:\n- " + "\n- ".join(failures))
 
         return templates
 
@@ -170,32 +211,26 @@ class EatventureBot:
         return tuple(configured_names)
 
     def _validate_required_templates(self) -> bool:
-        missing = [name for name in ("newLevel", "unlock", "upgradeStation") if name not in self.templates]
-        red_icon_count = self._available_red_icon_template_count()
-        if red_icon_count <= 0:
-            missing.append("RedIcon*")
-        if config.RED_ICON_FAST_MODE_ENABLED:
-            fast_template_names = self._configured_fast_red_icon_template_names()
-            if not fast_template_names:
-                missing.append("RED_ICON_FAST_TEMPLATE_NAMES")
-            else:
-                missing.extend(name for name in fast_template_names if name not in self.templates)
+        missing = [name for name in REQUIRED_TEMPLATE_NAMES if name not in self.templates]
         if missing:
-            logger.error("Missing required templates: %s", ", ".join(missing))
-            return False
-        if red_icon_count < int(config.RED_ICON_MIN_MATCHES):
-            logger.warning(
-                "Only %s red-icon templates are available; consensus requirement reduced from %s",
-                red_icon_count,
-                config.RED_ICON_MIN_MATCHES,
-            )
+            raise RuntimeError(f"Missing required templates: {', '.join(missing)}")
+        fast_template_names = self._configured_fast_red_icon_template_names()
+        if config.RED_ICON_FAST_MODE_ENABLED and not fast_template_names:
+            raise RuntimeError("RED_ICON_FAST_TEMPLATE_NAMES is invalid")
+        missing_fast = [name for name in fast_template_names if name not in self.templates]
+        if missing_fast:
+            raise RuntimeError(f"Missing fast-mode templates: {', '.join(missing_fast)}")
         return True
 
     def _sleep(self, duration: Any) -> bool:
         try:
-            delay = max(0.0, float(duration))
-        except (TypeError, ValueError):
+            delay = float(duration)
+        except (TypeError, ValueError, OverflowError):
             delay = 0.0
+        if not math.isfinite(delay):
+            logger.error("Rejected non-finite wait duration: %r", duration)
+            delay = 0.0
+        delay = max(0.0, delay)
         return not self._stop_requested.wait(delay)
 
     def _template(self, template_name: str) -> TemplatePair | None:
@@ -208,25 +243,78 @@ class EatventureBot:
         if not self.needs_asset_reset:
             return True
         if not self._click_idle():
+            self._recover("Idle focus click failed")
             return False
         self.needs_asset_reset = False
         return True
 
-    def _safety_pause(self, reason: str) -> None:
-        logger.error("Safety pause: %s", reason)
-        self.mouse_controller.release_left_button()
-        self.running = False
-        self._stop_requested.set()
-        self.state = State.FIND_RED_ICONS
-        self._reset_search_cycle()
+    def _recover(self, reason: str, reset_backend: bool = False) -> State:
+        checkpoint = (
+            self.state
+            if self.state in {State.CHECK_NEW_LEVEL, State.TRANSITION_LEVEL, State.WAIT_FOR_UNLOCK}
+            else State.FIND_RED_ICONS
+        )
+        if self._stop_requested.is_set():
+            return checkpoint
+        logger.error("Runtime recovery: %s", reason)
+        try:
+            self.mouse_controller.release_left_button()
+        except Exception:
+            logger.exception("Failed to release mouse during recovery")
+        if reset_backend:
+            try:
+                self.window_capture.reset_backend()
+            except Exception:
+                logger.exception("Failed to reset capture backend during recovery")
+        else:
+            self.window_capture.invalidate_window()
+        self.state = checkpoint
         self.red_icons.clear()
         self.current_red_icon_index = 0
         self.upgrade_station_pos = None
         self.upgrade_found_in_cycle = False
         self.work_done = False
-        self.consecutive_failed_cycles = 0
+        self._new_level_red_icon_verified = False
         self.needs_asset_reset = True
-        self.telegram.notify_safety_pause(reason)
+        self._recovery_serial += 1
+        if self._recovery_started_at is None:
+            self._recovery_started_at = time.monotonic()
+            self._recovery_reason = reason
+            self._recovery_attempts = 0
+            self.total_recoveries += 1
+            self.telegram.notify_recovery_started(reason)
+        self._recovery_attempts += 1
+        delay = min(
+            config.RECOVERY_MAX_DELAY,
+            config.RECOVERY_INITIAL_DELAY * (2 ** min(self._recovery_attempts - 1, 4)),
+        )
+        self._sleep(delay)
+        return checkpoint
+
+    def _mark_recovered(self) -> None:
+        if self._recovery_started_at is None:
+            return
+        elapsed = max(0.0, time.monotonic() - self._recovery_started_at)
+        logger.info(
+            "Runtime recovered after %s attempt(s) and %.2fs: %s",
+            self._recovery_attempts,
+            elapsed,
+            self._recovery_reason,
+        )
+        self.telegram.notify_recovered(
+            self._recovery_reason, self._recovery_attempts, elapsed
+        )
+        self._recovery_started_at = None
+        self._recovery_reason = ""
+        self._recovery_attempts = 0
+
+    @property
+    def recovery_attempts(self) -> int:
+        return self._recovery_attempts
+
+    @property
+    def recovery_reason(self) -> str:
+        return self._recovery_reason
 
     def _scrcpy_miss_recovery_sleep(self, duration: Any) -> bool:
         if not config.SCRCPY_MISS_RECOVERY_ENABLED:
@@ -851,17 +939,19 @@ class EatventureBot:
             if not self.ready:
                 logger.error("Cannot start bot because required templates are missing")
                 return False
+            self._stop_requested.clear()
             try:
                 self.window_capture.ensure_window(resize=True)
             except WindowCaptureError as exc:
                 logger.error("Cannot start bot: %s", exc)
                 self.running = False
+                self._stop_requested.set()
                 return False
             if not self.mouse_controller.is_target_foreground():
                 logger.error("Cannot start bot because '%s' is not the foreground window", config.WINDOW_TITLE)
                 self.running = False
+                self._stop_requested.set()
                 return False
-            self._stop_requested.clear()
             self.needs_asset_reset = True
             self.running = True
             self._state_entered_at = time.monotonic()
@@ -877,8 +967,6 @@ class EatventureBot:
     def stop(self) -> None:
         self.request_stop()
         with self._state_operation_lock:
-            if not self.running:
-                return
             self.running = False
             self.mouse_controller.release_left_button()
             self.state = State.FIND_RED_ICONS
@@ -890,6 +978,9 @@ class EatventureBot:
             self.work_done = False
             self.consecutive_failed_cycles = 0
             self.needs_asset_reset = True
+            self._recovery_started_at = None
+            self._recovery_reason = ""
+            self._recovery_attempts = 0
 
     def close(self) -> None:
         self.stop()
@@ -908,12 +999,15 @@ class EatventureBot:
                 return False
             self.window_capture.ensure_window(resize=True)
             if not self.mouse_controller.is_target_foreground():
-                self._safety_pause(
+                self._recover(
                     f"Window '{config.WINDOW_TITLE}' lost foreground ownership"
                 )
                 return False
             previous_state = self.state
+            recovery_serial = self._recovery_serial
             current_state = self._handlers[previous_state]()
+            if self._recovery_serial != recovery_serial:
+                return False
             if not self.running:
                 return False
             if not isinstance(current_state, State):
@@ -922,16 +1016,24 @@ class EatventureBot:
             now = time.monotonic()
             if current_state != previous_state:
                 self._state_entered_at = now
-            elif now - self._state_entered_at >= config.STATE_STALL_TIMEOUT_SECONDS:
-                self._safety_pause(f"State {current_state.name} stalled")
+            elif (
+                current_state is not State.WAIT_FOR_UNLOCK
+                and now - self._state_entered_at >= config.STATE_STALL_TIMEOUT_SECONDS
+            ):
+                self._recover(f"State {current_state.name} stalled")
                 return False
+            if previous_state is not State.WAIT_FOR_UNLOCK or current_state is not previous_state:
+                self._mark_recovered()
             return True
-        except (WindowNotAvailableError, WindowCaptureError) as exc:
-            self._safety_pause(str(exc))
+        except WindowNotAvailableError as exc:
+            self._recover(str(exc))
+            return False
+        except WindowCaptureError as exc:
+            self._recover(str(exc), reset_backend=True)
             return False
         except Exception:
             logger.exception("Unexpected state-handler failure")
-            self._safety_pause("Unexpected state-handler failure; see log for traceback")
+            self._recover("Unexpected state-handler failure; see log for traceback")
             return False
         finally:
             self._state_operation_lock.release()
@@ -1027,9 +1129,11 @@ class EatventureBot:
         _, x, y = self.red_icons[self.current_red_icon_index]
         verified_icon = self._find_locked_red_icon(x, y)
         if verified_icon is None:
-            self._safety_pause(
-                f"Red icon at ({x}, {y}) could not be reverified on a fresh frame"
+            logger.warning(
+                "Red icon at (%s, %s) was stale on the fresh frame; rescanning", x, y
             )
+            self.red_icons.clear()
+            self.current_red_icon_index = 0
             return State.FIND_RED_ICONS
         confidence, verified_x, verified_y = verified_icon
         click_x = verified_x + config.RED_ICON_OFFSET_X
@@ -1037,7 +1141,7 @@ class EatventureBot:
 
         clicked = self.mouse_controller.click(click_x, click_y, relative=True)
         if not clicked:
-            self._safety_pause(f"Red icon click failed at ({click_x}, {click_y})")
+            self._recover(f"Red icon click failed at ({click_x}, {click_y})")
             return State.FIND_RED_ICONS
 
         logger.info(
@@ -1186,7 +1290,9 @@ class EatventureBot:
             if verified_target is None:
                 if not self.running or self._stop_requested.is_set():
                     return State.OPEN_BOXES
-                self._safety_pause(
+                if self.upgrade_station_pos is None:
+                    return State.OPEN_BOXES
+                self._recover(
                     f"Upgrade station at ({locked_x}, {locked_y}) could not be reverified"
                 )
                 return State.FIND_RED_ICONS
@@ -1209,7 +1315,7 @@ class EatventureBot:
             if not hold_completed:
                 if not self.running or self._stop_requested.is_set():
                     return State.OPEN_BOXES
-                self._safety_pause("Upgrade station hold input failed")
+                self._recover("Upgrade station hold input failed")
                 return State.FIND_RED_ICONS
             if station_disappeared:
                 break
@@ -1220,7 +1326,7 @@ class EatventureBot:
                 )
 
         if not station_disappeared:
-            self._safety_pause(
+            self._recover(
                 f"Upgrade station remained visible after two {config.CLICK_HOLD_MAX_DURATION:.1f}s holds"
             )
             return State.FIND_RED_ICONS
@@ -1285,6 +1391,8 @@ class EatventureBot:
             return State.SCROLL
 
         self.cycle_counter = 0
+        if best_stats_match is None:
+            return State.SCROLL
         confidence, icon_x, icon_y = best_stats_match
         logger.info(
             "Stats icon found at (%s, %s) with confidence %.3f; upgrading",
@@ -1392,8 +1500,8 @@ class EatventureBot:
                 ):
                     return State.CHECK_NEW_LEVEL
             if confirmed_icon is None:
-                self._safety_pause(
-                    "New-level red icon could not be reverified on two fresh frames"
+                logger.warning(
+                    "New-level red icon was stale on two fresh frames; rescanning"
                 )
                 return State.FIND_RED_ICONS
 
@@ -1454,10 +1562,10 @@ class EatventureBot:
                 return State.TRANSITION_LEVEL
 
         logger.warning("New level button not found after %s attempts", max_attempts)
-        self._safety_pause(
+        self._recover(
             f"New level button not found after {max_attempts} fresh scans"
         )
-        return State.FIND_RED_ICONS
+        return State.TRANSITION_LEVEL
 
     def handle_wait_for_unlock(self) -> State:
         if not self._reset_assets_if_needed():
@@ -1466,16 +1574,23 @@ class EatventureBot:
         if not self._sleep(config.FOCUS_SETTLE_DELAY):
             return State.WAIT_FOR_UNLOCK
 
+        screenshot = self.window_capture.capture()
+        found_open, _, _, _ = self._find_new_level_button(
+            screenshot[: config.MAX_SEARCH_Y, :]
+        )
+        if found_open:
+            logger.info("New level button is still present; retrying the known transition action")
+            return State.TRANSITION_LEVEL
+
         self.wait_for_unlock_attempts += 1
-        if self.wait_for_unlock_attempts > self.max_wait_for_unlock_attempts:
+        if self.wait_for_unlock_attempts >= self.max_wait_for_unlock_attempts:
             reason = (
                 f"Unlock button not found after {self.max_wait_for_unlock_attempts} attempts"
             )
             self.wait_for_unlock_attempts = 0
-            self._safety_pause(reason)
-            return State.FIND_RED_ICONS
+            self._recover(reason)
+            return State.WAIT_FOR_UNLOCK
 
-        screenshot = self.window_capture.capture()
         template_pair = self._template("unlock")
         if template_pair is None:
             if not self._sleep(config.UNLOCK_SEARCH_INTERVAL):

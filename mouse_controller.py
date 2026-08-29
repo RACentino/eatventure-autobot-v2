@@ -16,6 +16,12 @@ Zone = tuple[int, int, int, int]
 
 def _duration(value: Any, default: float = 0.0) -> float:
     try:
+        default = float(default)
+    except (TypeError, ValueError):
+        default = 0.0
+    if not math.isfinite(default):
+        default = 0.0
+    try:
         value = float(value)
     except (TypeError, ValueError):
         value = default
@@ -68,7 +74,10 @@ class MouseController:
 
     def get_window_bounds(self) -> Bounds:
         try:
-            return tuple(map(int, self._window.get_input_window_rect()))
+            bounds = tuple(map(int, self._window.get_input_window_rect()))
+            if len(bounds) != 4 or bounds[2] <= 0 or bounds[3] <= 0:
+                raise ValueError(f"invalid bounds: {bounds!r}")
+            return bounds
         except Exception as exc:
             raise RuntimeError(f"Cannot read active target bounds: {exc}") from exc
 
@@ -95,7 +104,8 @@ class MouseController:
     def set_event_forbidden_zone(self, bounds: Zone) -> None:
         if len(bounds) != 4:
             raise ValueError("Event forbidden zone must contain four coordinates")
-        zone = tuple(map(int, bounds))
+        x_min, x_max, y_min, y_max = map(int, bounds)
+        zone: Zone = (x_min, x_max, y_min, y_max)
         if zone[0] > zone[1] or zone[2] > zone[3]:
             raise ValueError("Event forbidden zone has reversed bounds")
         self._event_zone = zone
@@ -143,7 +153,8 @@ class MouseController:
                 return False
             try:
                 self._mouse.position = (screen_x, screen_y)
-                time.sleep(0.001)
+                if not self._wait(0.001):
+                    return False
                 if self.get_cursor_position() == (screen_x, screen_y):
                     return True
             except Exception as exc:
