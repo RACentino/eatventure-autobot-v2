@@ -132,7 +132,9 @@ class MouseController:
             x, y = int(x), int(y)
             rel_x, rel_y = (x, y) if relative else (x - left, y - top)
             if not (0 <= rel_x < width and 0 <= rel_y < height):
-                logger.warning("Rejected input outside target window: (%s, %s)", rel_x, rel_y)
+                logger.warning(
+                    "Rejected input outside target window: (%s, %s)", rel_x, rel_y
+                )
                 return None
             if check_forbidden and self.is_in_forbidden_zone(rel_x, rel_y):
                 return None
@@ -142,12 +144,16 @@ class MouseController:
             return None
 
     def _input_allowed(self) -> bool:
-        return not (self._stop_event and self._stop_event.is_set()) and self.is_target_foreground()
+        return (
+            not (self._stop_event and self._stop_event.is_set())
+            and self.is_target_foreground()
+        )
 
     def _set_cursor_pos(self, x: Any, y: Any) -> bool:
         screen_x, screen_y = int(x), int(y)
         if self._resolve_screen_position(screen_x, screen_y, relative=False) is None:
             return False
+        last_error: Exception | None = None
         for attempt in range(max(1, int(config.INPUT_RETRY_COUNT))):
             if not self._input_allowed():
                 return False
@@ -158,22 +164,28 @@ class MouseController:
                 if self.get_cursor_position() == (screen_x, screen_y):
                     return True
             except Exception as exc:
+                last_error = exc
                 logger.warning("Cursor move failed: %s", exc)
-            if attempt + 1 < int(config.INPUT_RETRY_COUNT) and not self._wait(config.INPUT_RETRY_DELAY):
+            if attempt + 1 < int(config.INPUT_RETRY_COUNT) and not self._wait(
+                config.INPUT_RETRY_DELAY
+            ):
                 return False
-        return False
+        raise RuntimeError(
+            f"Cursor move failed after {max(1, int(config.INPUT_RETRY_COUNT))} attempts"
+        ) from last_error
 
     def _left_down_at_screen(self, x: Any, y: Any, duration: Any = None) -> bool:
         x, y = int(x), int(y)
-        if not self._input_allowed() or self.get_cursor_position() != (x, y):
+        if not self._input_allowed():
             return False
+        if self.get_cursor_position() != (x, y):
+            raise RuntimeError("Cursor moved before mouse press")
         try:
             self._mouse.press(self._left_button)
             self._left_pressed = True
         except Exception as exc:
-            logger.error("Mouse press failed: %s", exc)
             self._best_effort_left_up(x, y)
-            return False
+            raise RuntimeError("Mouse press failed") from exc
         wait = config.MOUSE_DOWN_DURATION if duration is None else duration
         if _duration(wait) and not self._wait(wait):
             self._best_effort_left_up(x, y)
@@ -185,8 +197,7 @@ class MouseController:
             self._mouse.release(self._left_button)
             self._left_pressed = False
         except Exception as exc:
-            logger.error("Mouse release failed: %s", exc)
-            return False
+            raise RuntimeError("Mouse release failed") from exc
         wait = config.MOUSE_UP_DURATION if duration is None else duration
         return not _duration(wait) or self._wait(wait)
 
@@ -210,7 +221,9 @@ class MouseController:
         released = False
         try:
             if self.get_cursor_position() != (x, y):
-                logger.warning("Mouse moved during click; releasing without crediting success")
+                logger.warning(
+                    "Mouse moved during click; releasing without crediting success"
+                )
                 return False
             released = self._left_up_at_screen(x, y, up_duration)
             return released
@@ -223,7 +236,9 @@ class MouseController:
             position = self._resolve_screen_position(x, y, relative)
             if position is None or not self._set_cursor_pos(*position):
                 return False
-            if not self._wait(self.move_delay) or not self._left_click_at_screen(*position):
+            if not self._wait(self.move_delay) or not self._left_click_at_screen(
+                *position
+            ):
                 return False
             return self._wait(self.click_delay if delay is None else delay)
 
@@ -241,7 +256,11 @@ class MouseController:
     ) -> bool:
         with self._input_lock:
             position = self._resolve_screen_position(x, y, relative)
-            if position is None or not self._set_cursor_pos(*position) or not self._wait(self.move_delay):
+            if (
+                position is None
+                or not self._set_cursor_pos(*position)
+                or not self._wait(self.move_delay)
+            ):
                 return False
             end = time.monotonic() + _duration(duration)
             clicks = 0
@@ -319,7 +338,14 @@ class MouseController:
                     )
                     if not self._set_cursor_pos(*point):
                         return False
-                    if not self._wait(max(0.0, started + _duration(duration, config.SCROLL_DURATION) * ratio - time.monotonic())):
+                    if not self._wait(
+                        max(
+                            0.0,
+                            started
+                            + _duration(duration, config.SCROLL_DURATION) * ratio
+                            - time.monotonic(),
+                        )
+                    ):
                         return False
                 released = self._left_up_at_screen(*end)
                 return released and self._wait(self.click_delay)

@@ -3,7 +3,6 @@ import queue
 import signal
 import sys
 import threading
-import time
 from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 from pathlib import Path
 from typing import Any
@@ -15,62 +14,11 @@ bot_instance: EatventureBot | None = None
 should_exit = threading.Event()
 toggle_requested = threading.Event()
 mode_toggle_requested = threading.Event()
-log_listener: "TimedQueueListener | None" = None
-log_queue_handler: "DroppingQueueHandler | None" = None
+log_listener: QueueListener | None = None
 log_output_handlers: list[logging.Handler] = []
 primed_event_selection: tuple[int, tuple[int, int, int, int]] | None = None
 pressed_keys: set[str] = set()
 pressed_keys_lock = threading.Lock()
-
-
-class DroppingQueueHandler(QueueHandler):
-    def __init__(self, records: queue.Queue[logging.LogRecord]) -> None:
-        super().__init__(records)
-        self.records = records
-        self.dropped = 0
-
-    def enqueue(self, record: logging.LogRecord) -> None:
-        try:
-            self.queue.put_nowait(record)
-        except queue.Full:
-            try:
-                self.records.get_nowait()
-            except queue.Empty:
-                pass
-            self.dropped += 1
-            try:
-                self.queue.put_nowait(record)
-            except queue.Full:
-                self.dropped += 1
-
-
-class TimedQueueListener(QueueListener):
-    def __init__(
-        self,
-        records: queue.Queue[logging.LogRecord],
-        *handlers: logging.Handler,
-        respect_handler_level: bool = False,
-    ) -> None:
-        super().__init__(records, *handlers, respect_handler_level=respect_handler_level)
-        self.records = records
-
-    def stop_with_timeout(self) -> bool:
-        thread = self._thread
-        if thread is None:
-            return True
-        try:
-            self.enqueue_sentinel()
-        except queue.Full:
-            try:
-                self.records.get_nowait()
-            except queue.Empty:
-                pass
-            self.enqueue_sentinel()
-        thread.join(timeout=1.0)
-        if thread.is_alive():
-            return False
-        self._thread = None
-        return True
 
 
 def _key_character(key: Any) -> str | None:
@@ -102,7 +50,9 @@ def _select_event_zone() -> tuple[int, tuple[int, int, int, int]] | None:
         return None
     print("\nSelect the number of active Eatventure events:")
     for count, bounds in options:
-        print(f"  {count}: protect x={bounds[0]}-{bounds[1]}, y={bounds[2]}-{bounds[3]}")
+        print(
+            f"  {count}: protect x={bounds[0]}-{bounds[1]}, y={bounds[2]}-{bounds[3]}"
+        )
     choices = dict(options)
     selection: queue.SimpleQueue[tuple[int, tuple[int, int, int, int]] | None] = (
         queue.SimpleQueue()
@@ -216,17 +166,22 @@ def on_release(key: Any) -> None:
 
 
 def setup_logging() -> None:
-    global log_listener, log_queue_handler, log_output_handlers
+    global log_listener, log_output_handlers
     logs_dir = Path(config.LOGS_DIR)
     level = logging.DEBUG if config.DEBUG else logging.INFO
-    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
     console = logging.StreamHandler(sys.stdout)
     outputs: list[logging.Handler] = [console]
     try:
         logs_dir.mkdir(parents=True, exist_ok=True)
         outputs.append(
             RotatingFileHandler(
-                logs_dir / "bot.log", maxBytes=5_000_000, backupCount=3, encoding="utf-8"
+                logs_dir / "bot.log",
+                maxBytes=5_000_000,
+                backupCount=3,
+                encoding="utf-8",
             )
         )
     except OSError as exc:
@@ -234,35 +189,28 @@ def setup_logging() -> None:
     for handler in outputs:
         handler.setLevel(level)
         handler.setFormatter(formatter)
-    records: queue.Queue[logging.LogRecord] = queue.Queue(
-        maxsize=config.LOG_QUEUE_MAX_RECORDS
-    )
-    log_queue_handler = DroppingQueueHandler(records)
+    records: queue.SimpleQueue[logging.LogRecord] = queue.SimpleQueue()
     root = logging.getLogger()
-    root.handlers[:] = [log_queue_handler]
+    root.handlers[:] = [QueueHandler(records)]
     root.setLevel(level)
     logging.raiseExceptions = False
     log_output_handlers = outputs
-    log_listener = TimedQueueListener(records, *outputs, respect_handler_level=True)
+    log_listener = QueueListener(records, *outputs, respect_handler_level=True)
     log_listener.start()
 
 
 def shutdown_logging() -> None:
-    global log_listener, log_queue_handler, log_output_handlers
+    global log_listener, log_output_handlers
     logging.getLogger().handlers.clear()
-    stopped = True if log_listener is None else log_listener.stop_with_timeout()
-    if not stopped:
-        print("Logging worker did not stop before timeout", file=sys.stderr)
-    else:
-        for handler in log_output_handlers:
-            handler.close()
+    if log_listener is not None:
+        log_listener.stop()
+    for handler in log_output_handlers:
+        handler.close()
     log_listener = None
-    log_queue_handler = None
     log_output_handlers = []
 
 
 def _run() -> None:
-    next_heartbeat = time.monotonic() + config.HEARTBEAT_INTERVAL_SECONDS
     while not should_exit.is_set():
         if toggle_requested.is_set():
             toggle_requested.clear()
@@ -272,23 +220,6 @@ def _run() -> None:
             _toggle_red_icon_mode()
         elif bot_instance is not None and bot_instance.running:
             bot_instance.step()
-        now = time.monotonic()
-        if now >= next_heartbeat:
-            state = bot_instance.state.name if bot_instance is not None else "UNINITIALIZED"
-            levels = bot_instance.total_levels_completed if bot_instance is not None else 0
-            recoveries = bot_instance.total_recoveries if bot_instance is not None else 0
-            incident = bot_instance.recovery_reason if bot_instance is not None else ""
-            dropped = log_queue_handler.dropped if log_queue_handler is not None else 0
-            logging.info(
-                "Heartbeat state=%s running=%s levels=%s recoveries=%s incident=%r dropped_logs=%s",
-                state,
-                bool(bot_instance and bot_instance.running),
-                levels,
-                recoveries,
-                incident,
-                dropped,
-            )
-            next_heartbeat = now + config.HEARTBEAT_INTERVAL_SECONDS
         should_exit.wait(config.EVENT_LOOP_INTERVAL)
 
 
@@ -302,12 +233,9 @@ def main() -> int:
     global bot_instance
     listener = None
     previous_signal_handlers: dict[int, Any] = {}
-    try:
-        config.validate_configuration()
-    except ValueError as exc:
-        print(exc, file=sys.stderr)
-        return 1
-    print(f"Eatventure Bot — target: {config.WINDOW_TITLE} ({config.WINDOW_WIDTH}x{config.WINDOW_HEIGHT})")
+    print(
+        f"Eatventure Bot — target: {config.WINDOW_TITLE} ({config.WINDOW_WIDTH}x{config.WINDOW_HEIGHT})"
+    )
     try:
         setup_logging()
         should_exit.clear()
@@ -325,7 +253,9 @@ def main() -> int:
         bot_instance = EatventureBot()
         listener = keyboard.Listener(on_press=on_press, on_release=on_release)
         listener.start()
-        logging.info("Z: prime/start/stop | M: Fast/Normal (stopped) | X: cursor position | P: exit")
+        logging.info(
+            "Z: prime/start/stop | M: Fast/Normal (stopped) | X: cursor position | P: exit"
+        )
         _run()
         return 0
     except KeyboardInterrupt:

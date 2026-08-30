@@ -1,22 +1,35 @@
 # Eatventure Autobot V2
 
-A compact OpenCV desktop bot for Eatventure in a dedicated 360×780 `scrcpy` window. Its behavior and state order mirror `eatventure-autobot-v1`, while capture, matching, input, and dispatch stay in a smaller direct runtime.
+A compact OpenCV desktop bot for Eatventure in a dedicated 360×780 `scrcpy`
+window. Its eleven-state behavior and action order mirror v1, while capture and
+input remain compatible with Windows, Linux X11, and XWayland.
 
 ## Main flow
 
-The bot runs eleven directly dispatched states:
+The bot directly dispatches these states:
 
-1. Scan for a level transition or red icons.
-2. Click one prioritized red icon and check for an unlock.
-3. Search for, verify, and hold the selected upgrade station until that same station disappears.
-4. Detect boxes in confidence order, then recapture and reverify each target immediately before clicking it.
-5. Upgrade stats after every two station upgrades.
-6. Oscillate the restaurant view after an empty pass or repeated station misses.
-7. Confirm either level-transition path, wait a bounded number of times for unlock, and record the completed level.
+1. `FIND_RED_ICONS`
+2. `CLICK_RED_ICON`
+3. `CHECK_UNLOCK`
+4. `SEARCH_UPGRADE_STATION`
+5. `HOLD_UPGRADE_STATION`
+6. `OPEN_BOXES`
+7. `UPGRADE_STATS`
+8. `SCROLL`
+9. `CHECK_NEW_LEVEL`
+10. `TRANSITION_LEVEL`
+11. `WAIT_FOR_UNLOCK`
 
-Runtime window/capture/input faults recover in-process with capped exponential backoff; they do not clear the selected event or stop the bot. Input is released and frozen whenever the exact-title target is missing, duplicated, or unfocused. The bot never steals focus: refocus the one `EatventureAuto` window and recovery continues automatically. Transition recovery stays on its known checkpoint, and unlock waiting only retries a still-visible new-level action.
+Normal progress is red-icon scan and click, unlock check, one verified station
+click and hold, then one-pass box collection. Stats are upgraded after every
+two stations. Empty passes and repeated station misses use the same oscillating
+scroll flow as v1. Level-complete detections preempt normal work and unlock
+waiting is bounded before the bot resets to `FIND_RED_ICONS`.
 
-Invalid startup configuration, an unsupported platform, and any missing, corrupt, or oversized required asset are fatal. Native crashes, operating-system termination, and a permanently stuck native library call remain outside what an in-process recovery loop can handle.
+The bot does not recover indefinitely. A missing, duplicated, unfocused, or
+unreadable target stops the current run, releases mouse input, and resets the
+state flow. The selected event count remains primed, so fix the target and
+press `Z` to restart. An intentional `Z` stop clears the selection.
 
 ## Install
 
@@ -24,52 +37,56 @@ Invalid startup configuration, an unsupported platform, and any missing, corrupt
 python3.14 -m pip install -r requirements.txt
 ```
 
-The runtime supports Windows and Linux X11. Hyprland/Wayland is supported only by running `scrcpy` through XWayland; native Wayland capture and input are intentionally not implemented.
+### Windows
 
-### Windows or native X11
+```powershell
+scrcpy --window-title "EatventureAuto"
+python main.py
+```
+
+### Linux X11
 
 ```bash
 scrcpy --window-title "EatventureAuto"
-python3.14 main.py
+python3 main.py
 ```
 
-The bot automatically resizes the client area to `WINDOW_WIDTH` × `WINDOW_HEIGHT` when it attaches, starts, and before every active step. Resize checks are finite and interruptible; input remains frozen until the exact client size is available.
+### Linux Wayland through XWayland
 
-### Hyprland
-
-Add this one-time window rule to the Hyprland configuration:
-
-```lua
-hl.window_rule({
-  match = { class = "^scrcpy$", title = "^EatventureAuto$", xwayland = true },
-  float = true,
-})
-```
-
-Reload Hyprland, then launch and keep the floating `scrcpy` window focused:
+Native Wayland capture and input are not supported. Launch the target through
+XWayland and keep it focused:
 
 ```bash
 SDL_VIDEODRIVER=x11 scrcpy --window-title "EatventureAuto"
-python3.14 main.py
+python3 main.py
 ```
+
+The bot requires exactly one live `EatventureAuto` window and resizes its
+client area to 360×780. On a tiling compositor, configure the scrcpy window as
+floating so the requested client size can be applied.
 
 ## Controls
 
-`Z` uses the same two-stage start flow as v1:
+- `Z`: select active events, prime, start, retry, or stop.
+- `M`: switch Fast/Normal red-icon matching while stopped.
+- `X`: log the cursor position relative to the target.
+- `P`: exit cleanly.
 
-- First press: choose the number of active events and prime its forbidden zone.
-- Second press while the target is focused: start.
-- Press while running: stop and clear the selection.
+Fast mode scans `RedIcon5`. Normal mode scans `RedIcon4`, `RedIcon5`,
+`RedIcon6`, `RedIcon8`, and `RedIcon14` with two-template consensus. A Fast
+miss automatically retries the second frame in Normal mode. The other eleven
+red-icon PNGs remain in `assets/` for manual recalibration but are not loaded.
 
-`M` switches between Fast red-icon matching and Normal two-template consensus while stopped. Fast mode automatically retries a second missed frame in Normal mode.
+Assets are best-effort. Missing, corrupt, or oversized runtime templates are
+reported once and only the affected detection becomes unavailable. Normal-mode
+consensus falls to one if only one selected red template loads; with none, red
+detection returns no matches.
 
-`X` logs the cursor position relative to the target. `P` exits without waiting for Enter at the event-selection prompt.
+## Configuration and notifications
 
-## Configuration
-
-`config.py` contains runtime calibration: thresholds, HSV ranges, timings, positions, scrolling, forbidden zones, recovery backoff, heartbeat interval, and the bounded log-queue size. Startup validates these values as one aggregate report. All 23 named PNG templates in `assets/` are required; unexpected PNGs are ignored with a warning. Logs rotate under `logs/`, fall back to the console if the file cannot be opened, and emit a local health heartbeat every 300 seconds.
-
-Telegram notifications are optional and queued. Incomplete enabled credentials warn and disable Telegram without stopping the bot. Recovery sends one incident-start message and one recovered message rather than alerting on every retry. Set these environment variables to enable notifications:
+`config.py` contains only live calibration values: thresholds, HSV ranges,
+timings, coordinates, scrolling, and forbidden zones. Telegram notifications
+for bot start, stop, and completed levels are optional:
 
 ```bash
 export EATVENTURE_TELEGRAM_ENABLED=true
@@ -77,20 +94,13 @@ export EATVENTURE_TELEGRAM_BOT_TOKEN=...
 export EATVENTURE_TELEGRAM_CHAT_ID=...
 ```
 
-## Offline reliability checks
-
-The standard suite includes a 100,000-step mocked recovery/state soak. Local image fixtures under the ignored `test/` directory can be replayed 25 times against the fixed box, red-icon, and upgrade-station oracles:
-
-```bash
-python3.14 -m unittest -v test_reliability.py
-EATVENTURE_FIXTURE_PASSES=25 python3.14 -m unittest -v test_reliability.py
-```
-
-GitHub Actions runs the offline suite on Windows and Linux with Python 3.14. Live gameplay is intentionally not part of automated verification.
+Incomplete credentials disable Telegram with a warning. Logs rotate under
+`logs/` and fall back to the console when the log file cannot be opened.
 
 ## Disclaimer
 
-Game automation may violate the game's terms and can lead to account restrictions. Use it at your own risk.
+Game automation may violate the game's terms and can lead to account
+restrictions. Use it at your own risk.
 
 ## License
 

@@ -10,7 +10,11 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 _ACTUAL_SESSION = os.getenv("XDG_SESSION_TYPE", "").lower()
-if sys.platform.startswith("linux") and _ACTUAL_SESSION == "wayland" and os.getenv("DISPLAY"):
+if (
+    sys.platform.startswith("linux")
+    and _ACTUAL_SESSION == "wayland"
+    and os.getenv("DISPLAY")
+):
     # PyWinCtl can control this intentionally XWayland-only target through its X11 backend.
     os.environ["XDG_SESSION_TYPE"] = "x11"
 
@@ -76,7 +80,9 @@ class WindowCapture:
         self._xdisplay = None
         self._stop_event = stop_event
         if pywinctl is None:
-            raise WindowCaptureError(f"Cannot initialize window backend: {_PYWINCTL_ERROR}")
+            raise WindowCaptureError(
+                f"Cannot initialize window backend: {_PYWINCTL_ERROR}"
+            )
         self._open_capture_backend()
         try:
             self.ensure_window(resize=True)
@@ -86,25 +92,35 @@ class WindowCapture:
     def _open_capture_backend(self) -> None:
         if sys.platform.startswith("linux"):
             if _ACTUAL_SESSION == "wayland" and not os.getenv("DISPLAY"):
-                raise WindowCaptureError("Wayland requires scrcpy running through XWayland (DISPLAY is missing)")
+                raise WindowCaptureError(
+                    "Wayland requires scrcpy running through XWayland (DISPLAY is missing)"
+                )
             try:
                 from Xlib import display
 
                 self._xdisplay = display.Display()
             except Exception as exc:
-                raise WindowCaptureError(f"Cannot initialize X11 capture: {exc}") from exc
+                raise WindowCaptureError(
+                    f"Cannot initialize X11 capture: {exc}"
+                ) from exc
         elif sys.platform == "win32":
             try:
                 import mss
 
                 self._backend = mss.mss()
             except Exception as exc:
-                raise WindowCaptureError(f"Cannot initialize Windows capture: {exc}") from exc
+                raise WindowCaptureError(
+                    f"Cannot initialize Windows capture: {exc}"
+                ) from exc
         else:
             raise WindowCaptureError(f"Unsupported platform: {sys.platform}")
 
     def _wait(self, duration: float) -> bool:
-        return not self._stop_event.wait(duration) if self._stop_event else not time.sleep(duration)
+        return (
+            not self._stop_event.wait(duration)
+            if self._stop_event
+            else not time.sleep(duration)
+        )
 
     @staticmethod
     def _alive(window: Any) -> bool:
@@ -137,7 +153,9 @@ class WindowCapture:
     def _find(self) -> Any | None:
         backend = pywinctl
         if backend is None:
-            raise WindowCaptureError(f"Window backend is unavailable: {_PYWINCTL_ERROR}")
+            raise WindowCaptureError(
+                f"Window backend is unavailable: {_PYWINCTL_ERROR}"
+            )
         try:
             matches = [
                 window
@@ -145,9 +163,13 @@ class WindowCapture:
                 if self._alive(window) and self._title(window) == self.window_title
             ]
         except Exception as exc:
-            raise WindowCaptureError(f"Cannot search for '{self.window_title}': {exc}") from exc
+            raise WindowCaptureError(
+                f"Cannot search for '{self.window_title}': {exc}"
+            ) from exc
         if len(matches) > 1:
-            raise WindowCaptureError(f"Multiple live windows have title '{self.window_title}'")
+            raise WindowCaptureError(
+                f"Multiple live windows have title '{self.window_title}'"
+            )
         return matches[0] if matches else None
 
     def ensure_window(self, resize: bool = False) -> Any:
@@ -160,15 +182,12 @@ class WindowCapture:
             self._window = window
             self.hwnd = self._handle(window)
             if self.hwnd is None:
-                raise WindowCaptureError(f"Window '{self.window_title}' has no native handle")
+                raise WindowCaptureError(
+                    f"Window '{self.window_title}' has no native handle"
+                )
             if resize:
                 self._resize()
             return self._window
-
-    def invalidate_window(self) -> None:
-        with self._lock:
-            self._window = None
-            self.hwnd = None
 
     def _window_bounds(self, window: Any) -> tuple[int, int, int, int]:
         try:
@@ -177,13 +196,17 @@ class WindowCapture:
                 raise ValueError(f"invalid target size: {bounds[2]}x{bounds[3]}")
             return bounds
         except Exception as exc:
-            raise WindowCaptureError(f"Cannot read window client bounds: {exc}") from exc
+            raise WindowCaptureError(
+                f"Cannot read window client bounds: {exc}"
+            ) from exc
 
     def get_window_rect(self) -> tuple[int, int, int, int]:
         with self._lock:
             bounds = self._window_bounds(self.ensure_window())
             if bounds[2] <= 0 or bounds[3] <= 0:
-                raise WindowCaptureError(f"Invalid target size: {bounds[2]}x{bounds[3]}")
+                raise WindowCaptureError(
+                    f"Invalid target size: {bounds[2]}x{bounds[3]}"
+                )
             return bounds
 
     def _resize(self) -> None:
@@ -205,7 +228,9 @@ class WindowCapture:
             if used_x11:
                 if self._xdisplay is None or self.hwnd is None:
                     raise ValueError("X11 window handle is unavailable")
-                xwindow = self._xdisplay.create_resource_object("window", int(self.hwnd))
+                xwindow = self._xdisplay.create_resource_object(
+                    "window", int(self.hwnd)
+                )
                 xwindow.configure(width=self.target_width, height=self.target_height)
                 self._xdisplay.sync()
             else:
@@ -248,7 +273,9 @@ class WindowCapture:
         with self._lock:
             window = self.ensure_window()
             if not self._active(window):
-                raise WindowNotAvailableError(f"Window '{self.window_title}' is not active")
+                raise WindowNotAvailableError(
+                    f"Window '{self.window_title}' is not active"
+                )
             return self.get_window_rect()
 
     def is_window_active(self) -> bool:
@@ -266,7 +293,9 @@ class WindowCapture:
                 try:
                     height = min(height, int(max_y))
                 except (TypeError, ValueError, OverflowError) as exc:
-                    raise WindowCaptureError(f"Invalid capture height: {max_y!r}") from exc
+                    raise WindowCaptureError(
+                        f"Invalid capture height: {max_y!r}"
+                    ) from exc
             if height <= 0:
                 raise WindowCaptureError(f"Invalid capture size: {width}x{height}")
             try:
@@ -275,11 +304,15 @@ class WindowCapture:
 
                     if self.hwnd is None:
                         raise ValueError("X11 window handle is unavailable")
-                    window = self._xdisplay.create_resource_object("window", int(self.hwnd))
+                    window = self._xdisplay.create_resource_object(
+                        "window", int(self.hwnd)
+                    )
                     raw = window.get_image(0, 0, width, height, X.ZPixmap, 0xFFFFFFFF)
                     if raw is None or len(raw.data) != height * width * 4:
                         raise ValueError("X11 returned an incomplete capture buffer")
-                    image = np.frombuffer(raw.data, dtype=np.uint8).reshape(height, width, 4)
+                    image = np.frombuffer(raw.data, dtype=np.uint8).reshape(
+                        height, width, 4
+                    )
                 else:
                     if self._backend is None:
                         raise ValueError("capture backend is closed")
@@ -290,16 +323,14 @@ class WindowCapture:
                     )
             except Exception as exc:
                 raise WindowCaptureError(f"Window capture failed: {exc}") from exc
-            if image.ndim != 3 or image.shape[:2] != (height, width) or image.shape[2] < 3:
+            if (
+                image.ndim != 3
+                or image.shape[:2] != (height, width)
+                or image.shape[2] < 3
+            ):
                 raise WindowCaptureError(f"Unexpected capture shape: {image.shape!r}")
             bgr = image[:, :, :3]
             return bgr if bgr.flags.c_contiguous else np.ascontiguousarray(bgr)
-
-    def reset_backend(self) -> None:
-        with self._lock:
-            self._close_capture_backend()
-            self._open_capture_backend()
-            self.invalidate_window()
 
     def _close_capture_backend(self) -> None:
         if self._backend is not None:
@@ -318,4 +349,5 @@ class WindowCapture:
     def close(self) -> None:
         with self._lock:
             self._close_capture_backend()
-            self.invalidate_window()
+            self._window = None
+            self.hwnd = None
