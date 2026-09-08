@@ -315,7 +315,7 @@ class FlowTimingConfig:
 @dataclass(frozen=True, slots=True)
 class CaptureRegionConfig:
     max_search_y: int = 660
-    extended_search_y: int = 710
+    extended_search_y: int = 780
     upgrade_station_search_y: int = 760
     box_search_y: int = 780
 
