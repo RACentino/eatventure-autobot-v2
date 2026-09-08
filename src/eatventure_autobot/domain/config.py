@@ -56,10 +56,10 @@ class WindowConfig:
 @dataclass(frozen=True, slots=True)
 class ScrcpyRecoveryConfig:
     enabled: bool = True
-    red_icon_delay: float = 0.144
-    box_delay: float = 0.144
-    upgrade_delay: float = 0.144
-    action_settle_delay: float = 0.016
+    red_icon_delay: float = 0.0
+    box_delay: float = 0.0
+    upgrade_delay: float = 0.0
+    action_settle_delay: float = 0.0
 
     def __post_init__(self) -> None:
         for name in ("red_icon_delay", "box_delay", "upgrade_delay", "action_settle_delay"):
@@ -196,7 +196,7 @@ def _upgrade_station_hsv() -> HsvGate:
 @dataclass(frozen=True, slots=True)
 class UpgradeStationConfig:
     hsv: HsvGate = field(default_factory=_upgrade_station_hsv)
-    search_interval: float = 0.080
+    search_interval: float = 0.0
     search_attempts: int = 5
     failed_searches_before_scroll: int = 3
     # Relaxation applied to the match threshold on later search/verify attempts (both repos'
@@ -204,19 +204,19 @@ class UpgradeStationConfig:
     # counts on purpose — see the comments at each site — only the value is shared here.
     threshold_relaxation: float = 0.05
     verify_search_attempts: int = 4
-    verify_search_interval: float = 0.080
+    verify_search_interval: float = 0.0
     # Settle delay before each verification round begins: before the first attempt, and again
     # after the pre-hold wake click before the second round (see
     # EatventureBot._verify_upgrade_station). Ports v1's UPGRADE_STATION_VERIFY_SETTLE_DELAY.
     # This field previously existed and was removed as unread/dead config before this gap was
     # found — it is genuinely read now, so keep it wired up.
-    verify_settle_delay: float = 0.144
+    verify_settle_delay: float = 0.0
     # Consecutive misses required before a hold treats the station as gone; debounces a single
     # flaky/transient miss so a real hold isn't cut short by one bad frame.
     disappear_confirmation_count: int = 1
-    hold_check_interval_min: float = 0.080
-    hold_check_interval_max: float = 0.144
-    click_hold_max_duration: float = 9.0
+    hold_check_interval_min: float = 0.0
+    hold_check_interval_max: float = 0.0
+    click_hold_max_duration: float = 0.0
 
     def __post_init__(self) -> None:
         if self.hold_check_interval_min > self.hold_check_interval_max:
@@ -238,12 +238,12 @@ class UpgradeStationConfig:
 
 @dataclass(frozen=True, slots=True)
 class InputTimingConfig:
-    click_delay: float = 0.175
-    move_delay: float = 0.016
-    mouse_down_duration: float = 0.125
-    mouse_up_duration: float = 0.125
+    click_delay: float = 0.0
+    move_delay: float = 0.0
+    mouse_down_duration: float = 0.0
+    mouse_up_duration: float = 0.0
     retry_count: int = 3
-    retry_delay: float = 0.016
+    retry_delay: float = 0.0
     hover_enabled: bool = False
     hover_duration: float = 0.0
     # Default 0 preserves today's exact-equality cursor-drift check. A nonzero value absorbs
@@ -272,7 +272,7 @@ class InputTimingConfig:
 @dataclass(frozen=True, slots=True)
 class FlowTimingConfig:
     upgrades_before_stats: int = 2
-    state_stall_timeout_seconds: float = 9.0
+    state_stall_timeout_seconds: float = 0.0
     # v1 and v2 both reset to FIND_RED_ICONS on every watchdog stall, forever, with no escalation —
     # a genuinely stuck bot would self-heal-loop indefinitely. This cap is a greenfield addition
     # (decision 3): after this many CONSECUTIVE watchdog-forced resets with no real progress
@@ -283,27 +283,27 @@ class FlowTimingConfig:
     # cycling between several different states. Long idle-farming stretches with nothing to
     # click/open are normal for this bot, so this is deliberately generous; tune it against real
     # logs/bot.log timestamps for your own play session rather than trusting this default blindly.
-    max_no_progress_seconds: float = 1200.0
-    event_loop_interval: float = 0.016
-    focus_settle_delay: float = 0.016
+    max_no_progress_seconds: float = 0.0
+    event_loop_interval: float = 0.0
+    focus_settle_delay: float = 0.0
 
     def __post_init__(self) -> None:
         if self.upgrades_before_stats < 1:
             raise ConfigError(
                 f"upgrades_before_stats must be >= 1, got {self.upgrades_before_stats}"
             )
-        if self.state_stall_timeout_seconds <= 0:
+        if self.state_stall_timeout_seconds < 0:
             raise ConfigError(
-                f"state_stall_timeout_seconds must be > 0, got {self.state_stall_timeout_seconds}"
+                f"state_stall_timeout_seconds must be >= 0, got {self.state_stall_timeout_seconds}"
             )
         if self.max_consecutive_watchdog_resets < 1:
             raise ConfigError(
                 "max_consecutive_watchdog_resets must be >= 1, got "
                 f"{self.max_consecutive_watchdog_resets}"
             )
-        if self.max_no_progress_seconds <= 0:
+        if self.max_no_progress_seconds < 0:
             raise ConfigError(
-                f"max_no_progress_seconds must be > 0, got {self.max_no_progress_seconds}"
+                f"max_no_progress_seconds must be >= 0, got {self.max_no_progress_seconds}"
             )
         if self.max_no_progress_seconds < self.state_stall_timeout_seconds:
             raise ConfigError(
@@ -338,8 +338,8 @@ class ClickTargetConfig:
 
 @dataclass(frozen=True, slots=True)
 class StatsUpgradeConfig:
-    click_duration: float = 1.5
-    click_delay: float = 0.016
+    click_duration: float = 0.0
+    click_delay: float = 0.0
     search_max_attempts: int = 2
 
     def __post_init__(self) -> None:
@@ -358,13 +358,13 @@ class RedIconZoneConfig:
 @dataclass(frozen=True, slots=True)
 class LevelTransitionConfig:
     search_attempts: int = 5
-    search_interval: float = 0.080
-    settle_delay: float = 0.300
-    confirmation_delay: float = 0.300
-    secondary_settle_delay: float = 0.300
+    search_interval: float = 0.0
+    settle_delay: float = 0.0
+    confirmation_delay: float = 0.0
+    secondary_settle_delay: float = 0.0
     unlock_search_attempts: int = 4
-    unlock_search_interval: float = 0.300
-    unlock_settle_delay: float = 0.016
+    unlock_search_interval: float = 0.0
+    unlock_settle_delay: float = 0.0
     new_level_verify_max_attempts: int = 2
 
     def __post_init__(self) -> None:
@@ -380,9 +380,9 @@ class ScrollConfig:
     max_cycles: int = 6
     increment_step: int = 1
     max_idle_pass_attempts: int = 1
-    interval_pause: float = 0.300
-    post_scroll_settle: float = 0.300
-    duration: float = 0.300
+    interval_pause: float = 0.0
+    post_scroll_settle: float = 0.0
+    duration: float = 0.0
 
     def __post_init__(self) -> None:
         if self.pixel_step <= 0:
@@ -397,7 +397,7 @@ class TelegramConfig:
     bot_token: str = ""
     chat_id: str = ""
     queue_maxsize: int = 100
-    close_timeout: float = 5.5
+    close_timeout: float = 0.0
 
     def __post_init__(self) -> None:
         if self.enabled and not (self.bot_token and self.chat_id):
@@ -483,7 +483,11 @@ class BotConfig:
             ),
         )
         for name, worst_case in bounded_retry_budgets:
-            if worst_case >= stall_timeout:
+            # The budget guard is meaningful only when there is a real stall budget to
+            # protect. In an all-zero timing regime (mandated zeroing), stall_timeout is 0
+            # and every worst_case is 0, so the comparison `0 >= 0` would falsely trip —
+            # the guard would forbid the very config it is supposed to sanity-check.
+            if stall_timeout > 0 and worst_case >= stall_timeout:
                 raise ConfigError(
                     f"{name}'s worst-case retry duration ({worst_case:.3f}s) must be less than "
                     f"flow_timing.state_stall_timeout_seconds ({stall_timeout}s), or the watchdog "
