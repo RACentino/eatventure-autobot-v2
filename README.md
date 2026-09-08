@@ -1,92 +1,81 @@
-# Eatventure Autobot V2
+# Eatventure Autobot
 
-A compact OpenCV desktop bot for Eatventure in a dedicated 360×780 `scrcpy`
-window. Its eleven-state behavior and action order mirror v1, while capture and
-input remain compatible with Windows, Linux X11, and XWayland.
+A deterministic OpenCV screen-automation bot for the mobile game *Eatventure*, driving an Android
+device mirrored through [scrcpy](https://github.com/Genymobile/scrcpy). It runs an eleven-state
+finite state machine over masked template matching with an HSV colour gate, and sends only guarded
+mouse input into a focused, exactly-sized target window.
 
-## Main flow
+This is a greenfield rewrite that merges the behaviour of two earlier versions. See
+`GREENFIELD_PLAN.md` for the decisions, the verification trail, and what is and isn't proven.
 
-The bot directly dispatches these states:
+## Requirements
 
-1. `FIND_RED_ICONS`
-2. `CLICK_RED_ICON`
-3. `CHECK_UNLOCK`
-4. `SEARCH_UPGRADE_STATION`
-5. `HOLD_UPGRADE_STATION`
-6. `OPEN_BOXES`
-7. `UPGRADE_STATS`
-8. `SCROLL`
-9. `CHECK_NEW_LEVEL`
-10. `TRANSITION_LEVEL`
-11. `WAIT_FOR_UNLOCK`
+- **Python 3.11+** (developed and tested on 3.14)
+- **scrcpy** and **adb** on `PATH`
+- An Android device with USB debugging enabled
+- **Windows**, **Linux/X11**, or **Linux/Wayland via XWayland**
 
-Normal progress is red-icon scan and click, unlock check, one verified station
-click and hold, then one-pass box collection. Stats are upgraded after every
-two stations. Empty passes and repeated station misses use the same oscillating
-scroll flow as v1. Level-complete detections preempt normal work and unlock
-waiting is bounded before the bot resets to `FIND_RED_ICONS`.
-
-The bot does not recover indefinitely. A missing, duplicated, unfocused, or
-unreadable target stops the current run, releases mouse input, and resets the
-state flow. The selected event count remains primed, so fix the target and
-press `Z` to restart. An intentional `Z` stop clears the selection.
+Native Wayland is deliberately out of scope: capture and global input there need portal/PipeWire
+and libei paths that have not been shown to work reliably for pixel-exact template matching. On a
+Wayland session, run the target under XWayland (below).
 
 ## Install
 
 ```bash
-python3.14 -m pip install -r requirements.txt
+pip install -e .            # add [linux] or [windows] for the platform capture backend
+pip install -e ".[linux]"   # PyWinCtl + python-xlib
+pip install -e ".[windows]" # mss
 ```
 
-### Windows
+## Running
 
+The bot attaches to exactly one window titled `EatventureAuto` and resizes its client area to
+360×780. Launch scrcpy with that title, then start the bot.
+
+**Windows**
 ```powershell
 scrcpy --window-title "EatventureAuto"
-python main.py
+eatventure-autobot
 ```
 
-### Linux X11
-
+**Linux (X11)**
 ```bash
 scrcpy --window-title "EatventureAuto"
-python3 main.py
+eatventure-autobot
 ```
 
-### Linux Wayland through XWayland
-
-Native Wayland capture and input are not supported. Launch the target through
-XWayland and keep it focused:
-
+**Linux (Wayland, through XWayland)**
 ```bash
 SDL_VIDEODRIVER=x11 scrcpy --window-title "EatventureAuto"
-python3 main.py
+eatventure-autobot
 ```
 
-The bot requires exactly one live `EatventureAuto` window and resizes its
-client area to 360×780. On a tiling compositor, configure the scrcpy window as
-floating so the requested client size can be applied.
+On a tiling compositor, make the scrcpy window floating so the 360×780 client size can be applied.
 
-## Controls
+### Controls
 
-- `Z`: select active events, prime, start, retry, or stop.
-- `M`: switch Fast/Normal red-icon matching while stopped.
-- `X`: log the cursor position relative to the target.
-- `P`: exit cleanly.
+| Key | Action |
+| --- | --- |
+| `Z` | Prime → start → stop. First press asks how many in-game events are active (this selects a forbidden zone protecting the event banner); focus the scrcpy window and press `Z` again to start. |
+| `M` | Toggle Fast/Normal red-icon matching (only while stopped) |
+| `X` | Log the cursor position relative to the target window |
+| `P` | Exit cleanly |
 
-Fast mode scans `RedIcon5`. Normal mode scans `RedIcon4`, `RedIcon5`,
-`RedIcon6`, `RedIcon8`, and `RedIcon14` with two-template consensus. A Fast
-miss automatically retries the second frame in Normal mode. The other eleven
-red-icon PNGs remain in `assets/` for manual recalibration but are not loaded.
+Hotkeys are global — they work regardless of which window has focus. The bot refuses to start, and
+stops itself, whenever the target window is not in the foreground.
 
-Assets are best-effort. Missing, corrupt, or oversized runtime templates are
-reported once and only the affected detection becomes unavailable. Normal-mode
-consensus falls to one if only one selected red template loads; with none, red
-detection returns no matches.
+Fast mode matches a single red-icon template; Normal mode matches several and requires multiple
+templates to agree on a spot. A Fast-mode miss automatically retries the next frame in Normal mode.
 
-## Configuration and notifications
+## Configuration
 
-`config.py` contains only live calibration values: thresholds, HSV ranges,
-timings, coordinates, scrolling, and forbidden zones. Telegram notifications
-for bot start, stop, and completed levels are optional:
+`BotConfig` (`src/eatventure_autobot/domain/config.py`) holds all calibration as validated, frozen
+dataclasses: thresholds, HSV gates, timings, click targets, capture regions, scroll behaviour and
+forbidden zones. Values are validated on construction, so a bad threshold fails loudly at startup
+rather than silently degrading detection.
+
+Telegram notifications (start/stop/level-complete) are optional and credentials come only from the
+environment — never commit a token:
 
 ```bash
 export EATVENTURE_TELEGRAM_ENABLED=true
@@ -94,14 +83,50 @@ export EATVENTURE_TELEGRAM_BOT_TOKEN=...
 export EATVENTURE_TELEGRAM_CHAT_ID=...
 ```
 
-Incomplete credentials disable Telegram with a warning. Logs rotate under
-`logs/` and fall back to the console when the log file cannot be opened.
+Incomplete credentials disable Telegram with a warning. Logs rotate under `logs/` and fall back to
+console-only if the log file cannot be opened.
+
+## Architecture
+
+Built bottom-up, each layer depending only on the one beneath it:
+
+| Layer | Package | Responsibility |
+| --- | --- | --- |
+| Foundation | `domain/` | `State`, types, validated `BotConfig`, error taxonomy, and the `Protocol` contracts every backend implements |
+| Modules | `capture/`, `input/`, `detection/`, `notifier/`, `resilience/`, `state/` | Isolated engines: per-platform capture, `pynput` input, the OpenCV matcher, Telegram, the stall watchdog, and the pure per-state decision functions |
+| Orchestration | `runtime/`, `main.py` | `GameVision` (semantic screen reads), `EatventureBot` (the eleven handlers and step loop), and the composition root |
+
+The state machine's decision logic is deliberately pure: handlers in `runtime/bot.py` perform all
+I/O, then hand an observation to a function in `state/transitions.py` that decides the next state
+and updates flow counters. That split is what makes the FSM testable without a screen or a mouse.
+
+Failure handling is bounded self-healing, then fail-closed: a state that stalls past
+`state_stall_timeout_seconds` resets the search flow, but repeated resets with no real progress stop
+the bot rather than looping forever.
+
+## Development
+
+```bash
+pytest          # unit, integration and fixture-replay tests
+ruff check .    # lint
+ruff format .   # format
+mypy            # strict type checking
+```
+
+`tests/fixtures/red_icons/` holds real 360×780 scrcpy-resolution frames replayed through the actual
+detection pipeline against a verified baseline, so any change that moves a detection fails loudly.
+`tests/test_capture_linux.py` exercises the real X11 backend against a live window and skips itself
+where no display is available.
+
+> **Note for external drives:** exFAT and similar filesystems do not support symlinks, so
+> `python -m venv` fails inside a checkout on one. Create the virtualenv elsewhere (for example
+> under `~/.venvs/`) and point it at the repo with an editable install.
 
 ## Disclaimer
 
-Game automation may violate the game's terms and can lead to account
-restrictions. Use it at your own risk.
+For educational purposes. Automating a game may violate its terms of service and could result in
+account restrictions. Use at your own risk.
 
 ## License
 
-See `LICENSE`.
+Apache License 2.0 — see [LICENSE](LICENSE).
