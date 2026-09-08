@@ -110,8 +110,9 @@ class PynputInputController:
         return False
 
     def get_cursor_position(self) -> Point:
-        x, y = self._device.position
-        return int(x), int(y)
+        with self._lock:
+            x, y = self._device.position
+            return int(x), int(y)
 
     def _set_cursor_pos(self, x: int, y: int) -> bool:
         if self._resolve_screen_position(x, y, relative=False) is None:
@@ -270,10 +271,15 @@ class PynputInputController:
             try:
                 deadline = time.monotonic() + max(0.0, duration)
                 interval = max(0.001, check_interval)
+                tolerance = self._timing.cursor_drift_tolerance_px
                 while time.monotonic() < deadline:
                     if not self._wait(min(interval, max(0.0, deadline - time.monotonic()))):
                         return False
-                    if self.get_cursor_position() != position:
+                    current = self.get_cursor_position()
+                    if (
+                        abs(current[0] - position[0]) > tolerance
+                        or abs(current[1] - position[1]) > tolerance
+                    ):
                         logger.warning("Cursor moved during hold at %s; releasing", position)
                         return False
                     if not self.is_target_foreground():

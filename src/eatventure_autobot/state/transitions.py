@@ -85,6 +85,7 @@ def current_red_icon_target(context: FlowContext) -> MatchCandidate | None:
 def decide_click_red_icon(context: FlowContext, click_succeeded: bool) -> State:
     if click_succeeded:
         context.work_done = True
+        context.record_progress()
         return State.CHECK_UNLOCK
     context.current_red_icon_index += 1
     if not has_more_red_icons(context):
@@ -156,6 +157,7 @@ def decide_hold_upgrade_station(
     if not obs.post_hold_actions_succeeded:
         return State.OPEN_BOXES
     context.upgrade_station_counter += 1
+    context.record_progress()
     if context.upgrade_station_counter >= config.upgrades_before_stats:
         context.upgrade_station_counter = 0
         return State.UPGRADE_STATS
@@ -167,11 +169,14 @@ def decide_hold_upgrade_station(
 
 @dataclass(frozen=True)
 class StatsIconObservation:
+    new_level_button_found: bool
     stats_icon_found: bool
     attempt_number: int
 
 
 def decide_upgrade_stats(obs: StatsIconObservation, max_attempts: int = 2) -> State:
+    if obs.new_level_button_found:
+        return State.TRANSITION_LEVEL
     if obs.stats_icon_found:
         return State.OPEN_BOXES
     if obs.attempt_number >= max_attempts:
@@ -199,6 +204,7 @@ def decide_open_boxes(
     if obs.boxes_opened > 0:
         context.work_done = True
         context.cycle_counter = 0
+        context.record_progress()
 
     # Verified transcription of _next_state_after_box_cycle. Each branch's counter reset is
     # load-bearing: without them the triggering condition stays true and the bot re-enters the
@@ -300,6 +306,7 @@ def decide_wait_for_unlock(
     if obs.click_succeeded is False:
         return State.WAIT_FOR_UNLOCK
     context.total_levels_completed += 1
+    context.record_progress()
     context.wait_for_unlock_attempts = 0
     context.reset_search_cycle()
     return State.FIND_RED_ICONS

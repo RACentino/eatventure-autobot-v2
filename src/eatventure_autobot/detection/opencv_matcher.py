@@ -64,7 +64,7 @@ def _local_minima_candidates(
     candidate_mask = (result <= max_score) & (result <= local_min + 1e-6)
     if not np.any(candidate_mask):
         return []
-    count, _, stats, _ = cv2.connectedComponentsWithStats(
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(
         candidate_mask.astype(np.uint8), connectivity=8
     )
     candidates: list[Point] = []
@@ -73,7 +73,12 @@ def _local_minima_candidates(
         if area <= 0:
             continue
         region = result[y : y + h, x : x + w]
-        min_value, _, min_location, _ = cv2.minMaxLoc(region)
+        # Two distinct components can have overlapping bounding rectangles even when their pixels
+        # are disjoint (non-convex shapes); mask minMaxLoc to this component's own labeled pixels
+        # so a nearby component's lower score can't get attributed to the wrong candidate.
+        label_region = labels[y : y + h, x : x + w]
+        masked_region = np.where(label_region == index, region, 1.0)
+        min_value, _, min_location, _ = cv2.minMaxLoc(masked_region)
         if min_value <= max_score:
             candidates.append((int(x + min_location[0]), int(y + min_location[1])))
     return candidates
@@ -100,20 +105,28 @@ def _check_hsv_gate(
     location: Point,
     mask: np.ndarray | None,
     hsv_gate: HsvGate,
+    hsv_frame: np.ndarray | None = None,
 ) -> bool:
     x, y = location
     height, width = template.shape[:2]
-    roi = screenshot[y : y + height, x : x + width]
-    if roi.shape[:2] != (height, width):
-        return False
+    if hsv_frame is not None:
+        # Caller already converted the whole frame to HSV once (see
+        # _find_candidates_across_templates) — slice instead of re-converting per candidate.
+        hsv_region = hsv_frame[y : y + height, x : x + width]
+        if hsv_region.shape[:2] != (height, width):
+            return False
+    else:
+        roi = screenshot[y : y + height, x : x + width]
+        if roi.shape[:2] != (height, width):
+            return False
+        try:
+            hsv_region = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+        except cv2.error as exc:
+            logger.debug("HSV gate conversion failed: %s", exc)
+            return False
     active_mask = np.ones((height, width), dtype=bool) if mask is None else mask > 0
     active_count = int(np.count_nonzero(active_mask))
     if active_count <= 0:
-        return False
-    try:
-        hsv_region = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-    except cv2.error as exc:
-        logger.debug("HSV gate conversion failed: %s", exc)
         return False
     combined: np.ndarray = np.zeros((height, width), dtype=np.uint8)
     for hsv_range in hsv_gate.ranges:
@@ -208,6 +221,7 @@ class OpenCvTemplateMatcher:
         threshold: float,
         min_distance: int = 15,
         hsv_gate: HsvGate | None = None,
+        hsv_frame: np.ndarray | None = None,
     ) -> list[MatchCandidate]:
         template, mask = self._lookup(template_name)
         frame = _as_bgr(frame, "frame")
@@ -223,7 +237,7 @@ class OpenCvTemplateMatcher:
             if not np.isfinite(confidence):
                 continue
             if hsv_gate is not None and not _check_hsv_gate(
-                frame, template, (x, y), mask, hsv_gate
+                frame, template, (x, y), mask, hsv_gate, hsv_frame=hsv_frame
             ):
                 continue
             center = (x + width // 2, y + height // 2)
@@ -231,6 +245,29 @@ class OpenCvTemplateMatcher:
             candidates.append(MatchCandidate(template_name, confidence, center, box))
         candidates.sort(key=lambda candidate: candidate.confidence, reverse=True)
         return candidates
+
+    def _find_candidates_across_templates(
+        self,
+        frame: np.ndarray,
+        template_names: tuple[str, ...],
+        threshold: float,
+        min_distance: int,
+        hsv_gate: HsvGate | None,
+    ) -> list[MatchCandidate]:
+        """Converts the frame to HSV at most once (only if hsv_gate is set) and reuses it across
+        every template — the per-frame-shared-mask optimization GREENFIELD_PLAN.md documents
+        keeping from v2, previously only claimed in this module's docstring, never actually built:
+        each template independently re-converted its own per-candidate ROI to HSV."""
+        frame_bgr = _as_bgr(frame, "frame")
+        hsv_frame = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV) if hsv_gate is not None else None
+        all_candidates: list[MatchCandidate] = []
+        for name in template_names:
+            all_candidates.extend(
+                self.find_template_candidates(
+                    frame_bgr, name, threshold, min_distance, hsv_gate, hsv_frame=hsv_frame
+                )
+            )
+        return all_candidates
 
     def find_all_templates(
         self,
@@ -240,12 +277,22 @@ class OpenCvTemplateMatcher:
         min_distance: int = 15,
         hsv_gate: HsvGate | None = None,
     ) -> list[MatchCandidate]:
-        all_candidates: list[MatchCandidate] = []
-        for name in template_names:
-            all_candidates.extend(
-                self.find_template_candidates(frame, name, threshold, min_distance, hsv_gate)
-            )
-        return self.suppress_overlaps(all_candidates, _DEFAULT_NMS_IOU_THRESHOLD)
+        candidates = self._find_candidates_across_templates(
+            frame, template_names, threshold, min_distance, hsv_gate
+        )
+        return self.suppress_overlaps(candidates, _DEFAULT_NMS_IOU_THRESHOLD)
+
+    def find_candidates_across_templates(
+        self,
+        frame: np.ndarray,
+        template_names: tuple[str, ...],
+        threshold: float,
+        min_distance: int,
+        hsv_gate: HsvGate | None,
+    ) -> list[MatchCandidate]:
+        return self._find_candidates_across_templates(
+            frame, template_names, threshold, min_distance, hsv_gate
+        )
 
     def suppress_overlaps(
         self, candidates: list[MatchCandidate], iou_threshold: float = _DEFAULT_NMS_IOU_THRESHOLD

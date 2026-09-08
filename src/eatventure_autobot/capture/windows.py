@@ -1,4 +1,5 @@
 import logging
+import threading
 from typing import Any
 
 import numpy as np
@@ -10,14 +11,20 @@ logger = logging.getLogger(__name__)
 
 
 class WindowsWindowCapture(PyWinCtlWindowCapture):
-    def __init__(self, title: str, target_width: int, target_height: int) -> None:
+    def __init__(
+        self,
+        title: str,
+        target_width: int,
+        target_height: int,
+        stop_event: threading.Event | None = None,
+    ) -> None:
         import mss
 
         try:
             self._backend: Any = mss.mss()
         except Exception as exc:
             raise CaptureError(f"Cannot initialize Windows capture backend: {exc}") from exc
-        super().__init__(title, target_width, target_height)
+        super().__init__(title, target_width, target_height, stop_event)
 
     def capture(self, max_y: int | None = None) -> np.ndarray:
         with self._lock:

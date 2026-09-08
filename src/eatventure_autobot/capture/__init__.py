@@ -18,6 +18,6 @@ def create_screen_capture(
     if sys.platform == "win32":
         from eatventure_autobot.capture.windows import WindowsWindowCapture
 
-        return WindowsWindowCapture(title, target_width, target_height)
+        return WindowsWindowCapture(title, target_width, target_height, stop_event=stop_event)
 
     raise CaptureError(f"Unsupported platform: {sys.platform}")

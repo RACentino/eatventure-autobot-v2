@@ -44,6 +44,18 @@ class FlowContext:
     # orchestration loop (reset on any real state change), read by the attempt-loop states.
     state_attempt: int = 1
 
+    # Monotonically increasing marker bumped by record_progress() whenever something concretely
+    # productive happens (a red-icon click lands, a box opens, a hold completes, a level
+    # completes). Never reset by reset_search_cycle()/reset_run() — the watchdog re-baselines its
+    # own "last seen at" timestamp on StallWatchdog.reset() instead, so the absolute value
+    # doesn't matter across restarts. Lets the watchdog detect a non-productive loop that keeps
+    # changing states (so the same-state stall timer never fires) without needing every handler
+    # to plumb a new signal through by hand.
+    progress_marker: int = 0
+
+    def record_progress(self) -> None:
+        self.progress_marker += 1
+
     def remember_successful_red_icon_row(self, y: int) -> None:
         """Records a row that produced a real upgrade so later scans revisit it first. Rows within
         ROW_DEDUPE_DISTANCE of an already-remembered one are treated as the same row."""
@@ -56,7 +68,10 @@ class FlowContext:
 
     def reset_search_cycle(self) -> None:
         """Verified transcription of _reset_search_cycle(): the search-flow reset only. It
-        deliberately leaves work_done, red_icons and the upgrade flags alone."""
+        deliberately leaves work_done, red_icons and the upgrade flags alone — upgrade_station_pos
+        included: HOLD_UPGRADE_STATION is only ever entered right after a fresh
+        decide_search_upgrade_station success, which unconditionally overwrites this field first,
+        so there is no verified source behavior that needs it cleared here."""
         self.cycle_counter = 0
         self.wait_for_unlock_attempts = 0
         self.oscillation_cycle_index = 1
@@ -71,9 +86,11 @@ class FlowContext:
         self.current_red_icon_index = 0
         self.upgrade_station_pos = None
         self.upgrade_found_in_cycle = False
+        self.upgrade_station_counter = 0
         self.work_done = False
         self.consecutive_failed_upgrade_searches = 0
         self.state_attempt = 1
+        self.current_level_start_time = None
 
     def advance_oscillation(self, increment_step: int, max_cycles: int) -> None:
         """Verified transcription of _advance_oscillation_progress(): each cycle walks a growing

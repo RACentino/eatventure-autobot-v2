@@ -102,6 +102,15 @@ class TemplateMatcher(Protocol):
         hsv_gate: HsvGate | None = None,
     ) -> list[MatchCandidate]: ...
 
+    def find_candidates_across_templates(
+        self,
+        frame: np.ndarray,
+        template_names: tuple[str, ...],
+        threshold: float,
+        min_distance: int,
+        hsv_gate: HsvGate | None,
+    ) -> list[MatchCandidate]: ...
+
     def suppress_overlaps(
         self, candidates: list[MatchCandidate], iou_threshold: float
     ) -> list[MatchCandidate]: ...

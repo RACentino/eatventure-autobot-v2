@@ -115,6 +115,7 @@ class RedIconDetectionConfig:
         "RedIcon14",
     )
     fast_min_distance: int = 30
+    nms_iou_threshold: float = 0.20
     offset: Point = (10, 10)
 
     def __post_init__(self) -> None:
@@ -122,6 +123,7 @@ class RedIconDetectionConfig:
             raise ConfigError(f"min_matches must be >= 1, got {self.min_matches}")
         if not self.fast_template_names:
             raise ConfigError("fast_template_names must not be empty")
+        _fraction("nms_iou_threshold", self.nms_iou_threshold)
 
 
 def _box_hsv() -> HsvGate:
@@ -171,11 +173,14 @@ class BoxDetectionConfig:
     template_names: tuple[str, ...] = ("box1", "box2", "box3", "box4")
     nms_iou_threshold: float = 0.190
     min_matches: int = 1
+    min_distance: int = 15
 
     def __post_init__(self) -> None:
         _fraction("nms_iou_threshold", self.nms_iou_threshold)
         if self.min_matches < 1:
             raise ConfigError(f"min_matches must be >= 1, got {self.min_matches}")
+        if self.min_distance < 1:
+            raise ConfigError(f"min_distance must be >= 1, got {self.min_distance}")
 
 
 def _upgrade_station_hsv() -> HsvGate:
@@ -194,13 +199,17 @@ class UpgradeStationConfig:
     search_interval: float = 0.080
     search_attempts: int = 5
     failed_searches_before_scroll: int = 3
-    verify_settle_delay: float = 0.144
+    # Relaxation applied to the match threshold on later search/verify attempts (both repos'
+    # verified behavior). The two call sites that use this trigger it at different attempt
+    # counts on purpose — see the comments at each site — only the value is shared here.
+    threshold_relaxation: float = 0.05
     verify_search_attempts: int = 4
     verify_search_interval: float = 0.080
+    # Consecutive misses required before a hold treats the station as gone; debounces a single
+    # flaky/transient miss so a real hold isn't cut short by one bad frame.
     disappear_confirmation_count: int = 1
     hold_check_interval_min: float = 0.080
     hold_check_interval_max: float = 0.144
-    hold_max_checks: int = 400
     click_hold_max_duration: float = 9.0
 
     def __post_init__(self) -> None:
@@ -209,11 +218,11 @@ class UpgradeStationConfig:
                 "hold_check_interval_min must be <= hold_check_interval_max: "
                 f"{self.hold_check_interval_min} > {self.hold_check_interval_max}"
             )
+        _fraction("threshold_relaxation", self.threshold_relaxation)
         for name in (
             "search_attempts",
             "verify_search_attempts",
             "disappear_confirmation_count",
-            "hold_max_checks",
             "failed_searches_before_scroll",
         ):
             if getattr(self, name) < 1:
@@ -230,10 +239,18 @@ class InputTimingConfig:
     retry_delay: float = 0.016
     hover_enabled: bool = False
     hover_duration: float = 0.0
+    # Default 0 preserves today's exact-equality cursor-drift check. A nonzero value absorbs
+    # DPI-scaling/driver rounding noise (most relevant on the not-yet-verified Windows backend)
+    # without silently changing verified behavior for anyone who doesn't opt in.
+    cursor_drift_tolerance_px: int = 0
 
     def __post_init__(self) -> None:
         if self.retry_count < 1:
             raise ConfigError(f"retry_count must be >= 1, got {self.retry_count}")
+        if self.cursor_drift_tolerance_px < 0:
+            raise ConfigError(
+                f"cursor_drift_tolerance_px must be >= 0, got {self.cursor_drift_tolerance_px}"
+            )
         for name in (
             "click_delay",
             "move_delay",
@@ -254,11 +271,14 @@ class FlowTimingConfig:
     # (decision 3): after this many CONSECUTIVE watchdog-forced resets with no real progress
     # between them, resilience/ escalates to a fail-closed stop instead of resetting again.
     max_consecutive_watchdog_resets: int = 3
+    # Greenfield addition: escalate if FlowContext.progress_marker hasn't moved in this long,
+    # independent of the same-state check above — catches a non-productive loop that keeps
+    # cycling between several different states. Long idle-farming stretches with nothing to
+    # click/open are normal for this bot, so this is deliberately generous; tune it against real
+    # logs/bot.log timestamps for your own play session rather than trusting this default blindly.
+    max_no_progress_seconds: float = 1200.0
     event_loop_interval: float = 0.016
-    state_delay: float = 0.0
     focus_settle_delay: float = 0.016
-    spam_click_duration: float = 1.5
-    spam_click_delay: float = 0.016
 
     def __post_init__(self) -> None:
         if self.upgrades_before_stats < 1:
@@ -273,6 +293,15 @@ class FlowTimingConfig:
             raise ConfigError(
                 "max_consecutive_watchdog_resets must be >= 1, got "
                 f"{self.max_consecutive_watchdog_resets}"
+            )
+        if self.max_no_progress_seconds <= 0:
+            raise ConfigError(
+                f"max_no_progress_seconds must be > 0, got {self.max_no_progress_seconds}"
+            )
+        if self.max_no_progress_seconds < self.state_stall_timeout_seconds:
+            raise ConfigError(
+                "max_no_progress_seconds must be >= state_stall_timeout_seconds: "
+                f"{self.max_no_progress_seconds} < {self.state_stall_timeout_seconds}"
             )
 
 
@@ -304,10 +333,13 @@ class ClickTargetConfig:
 class StatsUpgradeConfig:
     click_duration: float = 1.5
     click_delay: float = 0.016
+    search_max_attempts: int = 2
 
     def __post_init__(self) -> None:
         _positive("click_duration", self.click_duration)
         _positive("click_delay", self.click_delay)
+        if self.search_max_attempts < 1:
+            raise ConfigError(f"search_max_attempts must be >= 1, got {self.search_max_attempts}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -326,9 +358,10 @@ class LevelTransitionConfig:
     unlock_search_attempts: int = 4
     unlock_search_interval: float = 0.300
     unlock_settle_delay: float = 0.016
+    new_level_verify_max_attempts: int = 2
 
     def __post_init__(self) -> None:
-        for name in ("search_attempts", "unlock_search_attempts"):
+        for name in ("search_attempts", "unlock_search_attempts", "new_level_verify_max_attempts"):
             if getattr(self, name) < 1:
                 raise ConfigError(f"{name} must be >= 1, got {getattr(self, name)}")
 
@@ -417,6 +450,45 @@ class BotConfig:
     scroll: ScrollConfig = field(default_factory=ScrollConfig)
     telegram: TelegramConfig = field(default_factory=TelegramConfig.from_env)
     forbidden_zones: ForbiddenZoneConfig = field(default_factory=ForbiddenZoneConfig)
+
+    def __post_init__(self) -> None:
+        """Cross-section checks a single dataclass's own __post_init__ can't make: a config typo
+        here wouldn't fail loudly at startup, it would just look like erratic bot behavior later."""
+        stall_timeout = self.flow_timing.state_stall_timeout_seconds
+        bounded_retry_budgets = (
+            (
+                "upgrade_station.search_attempts/search_interval",
+                self.upgrade_station.search_attempts * self.upgrade_station.search_interval,
+            ),
+            (
+                "upgrade_station.verify_search_attempts/verify_search_interval",
+                self.upgrade_station.verify_search_attempts
+                * self.upgrade_station.verify_search_interval,
+            ),
+            (
+                "level_transition.search_attempts/search_interval",
+                self.level_transition.search_attempts * self.level_transition.search_interval,
+            ),
+            (
+                "level_transition.unlock_search_attempts/unlock_search_interval",
+                self.level_transition.unlock_search_attempts
+                * self.level_transition.unlock_search_interval,
+            ),
+        )
+        for name, worst_case in bounded_retry_budgets:
+            if worst_case >= stall_timeout:
+                raise ConfigError(
+                    f"{name}'s worst-case retry duration ({worst_case:.3f}s) must be less than "
+                    f"flow_timing.state_stall_timeout_seconds ({stall_timeout}s), or the watchdog "
+                    "can force-reset a state that is still legitimately retrying"
+                )
+        if self.capture_regions.max_search_y > self.capture_regions.extended_search_y:
+            raise ConfigError(
+                "capture_regions.max_search_y "
+                f"({self.capture_regions.max_search_y}) must be <= extended_search_y "
+                f"({self.capture_regions.extended_search_y}), or the red-icon scan area silently "
+                "shrinks"
+            )
 
     @classmethod
     def default(cls, project_root: Path) -> "BotConfig":

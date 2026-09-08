@@ -161,6 +161,7 @@ class GameVision:
             self._config.red_icon.fast_min_distance,
             self._config.red_icon.hsv,
             min_matches,
+            iou_threshold=self._config.red_icon.nms_iou_threshold,
         )
 
     def find_boxes(self, frame: np.ndarray) -> list[MatchCandidate]:
@@ -171,7 +172,7 @@ class GameVision:
             frame,
             loaded,
             self._config.thresholds.box,
-            15,
+            self._config.box.min_distance,
             self._config.box.hsv,
             min(self._config.box.min_matches, len(loaded)),
             iou_threshold=self._config.box.nms_iou_threshold,
@@ -185,19 +186,15 @@ class GameVision:
         min_distance: int,
         hsv_gate: object,
         min_matches: int,
-        iou_threshold: float = 0.20,
+        iou_threshold: float,
     ) -> list[MatchCandidate]:
-        raw: list[MatchCandidate] = []
-        for name in template_names:
-            raw.extend(
-                self._matcher.find_template_candidates(
-                    frame,
-                    name,
-                    threshold,
-                    min_distance,
-                    hsv_gate,  # type: ignore[arg-type]
-                )
-            )
+        raw = self._matcher.find_candidates_across_templates(
+            frame,
+            template_names,
+            threshold,
+            min_distance,
+            hsv_gate,  # type: ignore[arg-type]
+        )
         if min_matches > 1:
             return filter_by_template_consensus(raw, min_matches, iou_threshold)
         return self._matcher.suppress_overlaps(raw, iou_threshold)
