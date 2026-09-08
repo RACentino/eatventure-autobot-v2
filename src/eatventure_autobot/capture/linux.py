@@ -1,7 +1,6 @@
 import logging
 import os
 import threading
-from typing import Any
 
 import numpy as np
 
@@ -42,13 +41,6 @@ class LinuxWindowCapture(PyWinCtlWindowCapture):
             return " Ensure the target is a floating XWayland window."
         return ""
 
-    def _handle(self) -> int:
-        try:
-            getter = self._window.getHandle
-            return int(getter() if callable(getter) else self._window.handle)
-        except Exception as exc:
-            raise CaptureError(f"Window has no native X11 handle: {exc}") from exc
-
     def capture(self, max_y: int | None = None) -> np.ndarray:
         with self._lock:
             bounds = self.get_window_rect()
@@ -58,8 +50,17 @@ class LinuxWindowCapture(PyWinCtlWindowCapture):
             try:
                 from Xlib import X
 
-                xwindow: Any = self._xdisplay.create_resource_object("window", self._handle())
-                raw = xwindow.get_image(0, 0, bounds.width, height, X.ZPixmap, 0xFFFFFFFF)
+                # Grab from the root window at the client rect's screen-absolute position,
+                # not from the target window's own local (0, 0) — that origin belongs to
+                # whatever X11 gives us for getHandle() (often the outer/decorated window),
+                # which sits (border, title-bar) pixels above-and-left of the actual client
+                # area that get_window_rect()/getClientFrame() and every click computation
+                # use. Matches windows.py's mss.grab(), which already grabs by screen-
+                # absolute bounds.left/top rather than a window-local origin.
+                root = self._xdisplay.screen().root
+                raw = root.get_image(
+                    bounds.left, bounds.top, bounds.width, height, X.ZPixmap, 0xFFFFFFFF
+                )
                 if raw is None or len(raw.data) != height * bounds.width * 4:
                     raise ValueError("X11 returned an incomplete capture buffer")
                 image = np.frombuffer(raw.data, dtype=np.uint8).reshape(height, bounds.width, 4)

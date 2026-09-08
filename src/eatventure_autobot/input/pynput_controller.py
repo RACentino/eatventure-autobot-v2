@@ -109,7 +109,7 @@ class PynputInputController:
         logger.warning("Rejected input because the target window is not foreground")
         return False
 
-    def _get_cursor_position(self) -> Point:
+    def get_cursor_position(self) -> Point:
         x, y = self._device.position
         return int(x), int(y)
 
@@ -124,7 +124,7 @@ class PynputInputController:
                 self._device.position = (x, y)
                 if not self._wait(0.001):
                     return False
-                if self._get_cursor_position() == (x, y):
+                if self.get_cursor_position() == (x, y):
                     return True
             except Exception as exc:
                 logger.warning(
@@ -152,7 +152,7 @@ class PynputInputController:
     def _left_down_at(self, x: int, y: int, duration: float | None) -> bool:
         if not self._input_allowed():
             return False
-        if self._get_cursor_position() != (x, y):
+        if self.get_cursor_position() != (x, y):
             logger.warning("Cursor moved before mouse press at (%s, %s)", x, y)
             return False
         try:
@@ -183,7 +183,7 @@ class PynputInputController:
             return False
         released = False
         try:
-            if self._get_cursor_position() != (x, y):
+            if self.get_cursor_position() != (x, y):
                 logger.warning("Cursor moved during click at (%s, %s)", x, y)
                 return False
             released = self._left_up_at(x, y, up_duration)
@@ -273,7 +273,7 @@ class PynputInputController:
                 while time.monotonic() < deadline:
                     if not self._wait(min(interval, max(0.0, deadline - time.monotonic()))):
                         return False
-                    if self._get_cursor_position() != position:
+                    if self.get_cursor_position() != position:
                         logger.warning("Cursor moved during hold at %s; releasing", position)
                         return False
                     if not self.is_target_foreground():
