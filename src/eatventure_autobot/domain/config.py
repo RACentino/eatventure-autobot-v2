@@ -205,6 +205,12 @@ class UpgradeStationConfig:
     threshold_relaxation: float = 0.05
     verify_search_attempts: int = 4
     verify_search_interval: float = 0.080
+    # Settle delay before each verification round begins: before the first attempt, and again
+    # after the pre-hold wake click before the second round (see
+    # EatventureBot._verify_upgrade_station). Ports v1's UPGRADE_STATION_VERIFY_SETTLE_DELAY.
+    # This field previously existed and was removed as unread/dead config before this gap was
+    # found — it is genuinely read now, so keep it wired up.
+    verify_settle_delay: float = 0.144
     # Consecutive misses required before a hold treats the station as gone; debounces a single
     # flaky/transient miss so a real hold isn't cut short by one bad frame.
     disappear_confirmation_count: int = 1
@@ -219,6 +225,7 @@ class UpgradeStationConfig:
                 f"{self.hold_check_interval_min} > {self.hold_check_interval_max}"
             )
         _fraction("threshold_relaxation", self.threshold_relaxation)
+        _positive("verify_settle_delay", self.verify_settle_delay)
         for name in (
             "search_attempts",
             "verify_search_attempts",

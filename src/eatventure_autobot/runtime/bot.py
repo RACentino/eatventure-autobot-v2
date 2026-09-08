@@ -311,7 +311,11 @@ class EatventureBot:
             target[1],
             station.click_hold_max_duration,
             check_interval,
-            self._make_disappearance_check(relaxed_threshold, station.disappear_confirmation_count),
+            self._make_disappearance_check(
+                self._config.thresholds.upgrade_station,
+                relaxed_threshold,
+                station.disappear_confirmation_count,
+            ),
         )
         if held:
             current = flow.current_red_icon_target(self.context)
@@ -328,9 +332,9 @@ class EatventureBot:
             flow.UpgradeHoldObservation(True, True, held, post_ok),
         )
 
-    def _verify_upgrade_station(self, position: Point) -> tuple[Point, float] | None:
-        """Re-checks on fresh frames that the station is still there before committing to a hold,
-        relaxing the threshold after the first attempt (verified behavior in both repos)."""
+    def _verify_upgrade_station_round(self) -> tuple[Point, float] | None:
+        """One full verify_search_attempts retry loop: base threshold on the first attempt,
+        relaxed threshold afterward. Used for both rounds around the pre-hold wake click."""
         station = self._config.upgrade_station
         base = self._config.thresholds.upgrade_station
         relaxed = base - station.threshold_relaxation
@@ -341,19 +345,66 @@ class EatventureBot:
             )
             result = self._vision.find_upgrade_station(frame, threshold)
             if result.best is not None and self._is_clickable(result.best.center):
-                self.context.upgrade_station_pos = result.best.center
                 return result.best.center, relaxed
             if not self._sleep(station.verify_search_interval):
                 return None
-        logger.info("Upgrade station was not visible during verification")
         return None
 
-    def _station_disappeared(self, threshold: float) -> bool:
-        frame = self._vision.capture(max_y=self._config.capture_regions.upgrade_station_search_y)
-        return not self._vision.find_upgrade_station(frame, threshold).found
+    def _verify_upgrade_station(self, position: Point) -> tuple[Point, float] | None:
+        """Re-checks on fresh frames that the station is still there before committing to a hold
+        (verified behavior in both repos). A successful first round is followed by a deliberate
+        "wake click" on the freshly-found position (the upgrade UI sometimes needs one priming
+        tap before the button truly registers/renders) and a second, identical verification
+        round — only a station that survives both rounds is held. Both rounds, and the very
+        first attempt, are preceded by the same settle delay v1 uses."""
+        station = self._config.upgrade_station
+        if not self._sleep(station.verify_settle_delay):
+            return None
+
+        first = self._verify_upgrade_station_round()
+        if first is None:
+            logger.info("Upgrade station was not visible during verification")
+            return None
+
+        wake_target, _ = first
+        if not self._input.precise_click(*wake_target):
+            logger.info(
+                "Upgrade station verification wake click failed at (%s, %s)", *wake_target
+            )
+            return None
+        if not self._sleep(station.verify_settle_delay):
+            return None
+
+        second = self._verify_upgrade_station_round()
+        if second is None:
+            logger.info("Upgrade station was not visible during second verification round")
+            return None
+
+        target, relaxed = second
+        self.context.upgrade_station_pos = target
+        return target, relaxed
+
+    def _station_disappeared(self, base_threshold: float, relaxed_threshold: float) -> bool:
+        """Base-threshold check, then relaxed-threshold check, then (if scrcpy recovery is
+        enabled) one recovery sleep and a final relaxed-threshold recheck before concluding the
+        station is genuinely gone for this poll tick — mirrors v1's
+        _find_current_upgrade_hold_match so a single dropped/stale scrcpy frame isn't mistaken
+        for the station having actually disappeared."""
+        regions = self._config.capture_regions
+        frame = self._vision.capture(max_y=regions.upgrade_station_search_y)
+        if self._vision.find_upgrade_station(frame, base_threshold).found:
+            return False
+        frame = self._vision.capture(max_y=regions.upgrade_station_search_y)
+        if self._vision.find_upgrade_station(frame, relaxed_threshold).found:
+            return False
+        if self._scrcpy_recovery(self._config.scrcpy_recovery.upgrade_delay):
+            frame = self._vision.capture(max_y=regions.upgrade_station_search_y)
+            if self._vision.find_upgrade_station(frame, relaxed_threshold).found:
+                return False
+        return True
 
     def _make_disappearance_check(
-        self, threshold: float, required_misses: int
+        self, base_threshold: float, relaxed_threshold: float, required_misses: int
     ) -> Callable[[], bool]:
         """Requires `required_misses` CONSECUTIVE misses before treating the station as gone —
         debounces a single flaky/transient miss so a real hold isn't cut short by one bad frame."""
@@ -361,7 +412,8 @@ class EatventureBot:
 
         def check() -> bool:
             nonlocal misses
-            misses = misses + 1 if self._station_disappeared(threshold) else 0
+            gone = self._station_disappeared(base_threshold, relaxed_threshold)
+            misses = misses + 1 if gone else 0
             return misses >= max(1, required_misses)
 
         return check
