@@ -201,7 +201,9 @@ class EatventureBot:
             return State.FIND_RED_ICONS
         regions = self._config.capture_regions
         frame = self._vision.capture(max_y=regions.extended_search_y)
-        if self._vision.find_new_level_button(frame).found:
+        # v1 checks the newLevel button against a frame limited to max_search_y, distinct from the
+        # full extended_search_y frame used for the red-icon scan below.
+        if self._vision.find_new_level_button(frame[: regions.max_search_y]).found:
             logger.info("New level button visible during red-icon scan")
             return flow.decide_find_red_icons(
                 self.context, flow.RedIconScanObservation(True, False, ())
@@ -211,20 +213,16 @@ class EatventureBot:
         actionable, new_level_seen, _ = self._vision.split_red_icons(candidates)
         # Gated on "no actionable icons," not "no raw candidates": a lone footer badge (new-level
         # or stats icon, classified out by split_red_icons above) would otherwise make candidates
-        # non-empty and silently skip both the recovery retry and the fast->normal fallback even
-        # with zero actionable icons and real ones potentially elsewhere on screen.
+        # non-empty and silently skip the recovery retry even with zero actionable icons and real
+        # ones potentially elsewhere on screen.
         if not actionable and self._scrcpy_recovery(self._config.scrcpy_recovery.red_icon_delay):
             frame = self._vision.capture(max_y=regions.extended_search_y)
-            if self._vision.find_new_level_button(frame).found:
+            if self._vision.find_new_level_button(frame[: regions.max_search_y]).found:
                 return flow.decide_find_red_icons(
                     self.context, flow.RedIconScanObservation(True, False, ())
                 )
             candidates = self._vision.find_red_icons(frame)
             actionable, new_level_seen, _ = self._vision.split_red_icons(candidates)
-            if not actionable and self._vision.fast_red_icon_mode:
-                # v2's fast->normal fallback on a second empty frame; v1 has no runtime toggle.
-                candidates = self._vision.find_red_icons(frame, force_normal_mode=True)
-                actionable, new_level_seen, _ = self._vision.split_red_icons(candidates)
 
         offset_x, offset_y = self._config.red_icon.offset
         clickable = tuple(
@@ -248,18 +246,16 @@ class EatventureBot:
         return flow.decide_click_red_icon(self.context, clicked)
 
     def _handle_check_unlock(self) -> State:
-        max_attempts = self._config.level_transition.check_unlock_click_max_attempts
-        attempt = self.context.state_attempt
         if not self._sleep(self._config.scrcpy_recovery.action_settle_delay):
             return State.CHECK_UNLOCK
         frame = self._vision.capture(max_y=self._config.capture_regions.max_search_y)
         result = self._vision.find_unlock_button(frame)
         if result.best is None or not self._is_clickable(result.best.center):
-            return flow.decide_check_unlock(False, None, attempt, max_attempts)
+            return flow.decide_check_unlock(False, None)
         clicked = self._input.click(*result.best.center)
         if clicked:
             self._sleep(self._config.level_transition.unlock_settle_delay)
-        return flow.decide_check_unlock(True, clicked, attempt, max_attempts)
+        return flow.decide_check_unlock(True, clicked)
 
     def _handle_search_upgrade_station(self) -> State:
         station = self._config.upgrade_station
@@ -272,6 +268,8 @@ class EatventureBot:
         position = result.best.center if result.best is not None else None
         found = position is not None and self._is_clickable(position)
         if not found:
+            if result.best is None:
+                self._scrcpy_recovery(self._config.scrcpy_recovery.upgrade_delay)
             self._sleep(station.search_interval)
         return flow.decide_search_upgrade_station(
             self.context,
@@ -404,26 +402,21 @@ class EatventureBot:
         return check
 
     def _handle_upgrade_stats(self) -> State:
-        max_attempts = self._config.stats_upgrade.search_max_attempts
+        # Verified v1 behavior: single-shot, no retry loop and no scrcpy-recovery here.
         if not self._click_idle():
             return State.UPGRADE_STATS
-        attempt = self.context.state_attempt
         frame = self._vision.capture(max_y=self._config.capture_regions.extended_search_y)
-        if self._vision.find_new_level_button(frame).found:
-            return flow.decide_upgrade_stats(
-                flow.StatsIconObservation(True, False, attempt), max_attempts
-            )
+        if self._vision.find_new_level_button(
+            frame[: self._config.capture_regions.max_search_y]
+        ).found:
+            return flow.decide_upgrade_stats(flow.StatsIconObservation(True, False))
 
         # Reuses the red-icon scan rather than a second pass at the stats-specific threshold; the
         # two thresholds differ by at most 0.003 in either source config.
-        candidates = self._vision.find_red_icons(frame, force_normal_mode=attempt >= max_attempts)
+        candidates = self._vision.find_red_icons(frame)
         _, _, stats_seen = self._vision.split_red_icons(candidates)
         if not stats_seen:
-            if attempt < max_attempts:
-                self._scrcpy_recovery(self._config.scrcpy_recovery.red_icon_delay)
-            return flow.decide_upgrade_stats(
-                flow.StatsIconObservation(False, False, attempt), max_attempts
-            )
+            return flow.decide_upgrade_stats(flow.StatsIconObservation(False, False))
 
         targets = self._config.click_targets
         if self._input.click(*targets.stats_upgrade_button_pos):
@@ -436,9 +429,7 @@ class EatventureBot:
                 up_duration=self._config.stats_upgrade.mouse_up_duration,
             )
             self._click_idle()
-        return flow.decide_upgrade_stats(
-            flow.StatsIconObservation(False, True, attempt), max_attempts
-        )
+        return flow.decide_upgrade_stats(flow.StatsIconObservation(False, True))
 
     def _handle_open_boxes(self) -> State:
         if not self._click_idle():
@@ -498,32 +489,23 @@ class EatventureBot:
         if moved:
             self.context.advance_oscillation(scroll.increment_step, scroll.max_cycles)
             moved = self._sleep(scroll.post_scroll_settle) and self._sleep(scroll.interval_pause)
-        return flow.decide_scroll(
-            self.context, moved, self.context.state_attempt, scroll.drag_max_attempts
-        )
+        return flow.decide_scroll(self.context, moved)
 
     def _handle_check_new_level(self) -> State:
-        max_attempts = self._config.level_transition.new_level_verify_max_attempts
+        # Verified v1 behavior: no attempt caps and no scrcpy-recovery here — a verify miss resets
+        # immediately (single-shot), and the click-retry tail is an unbounded, watchdog-only loop.
         if not self._click_idle():
             return State.CHECK_NEW_LEVEL
         if not self._sleep(self._config.flow_timing.focus_settle_delay):
             return State.CHECK_NEW_LEVEL
-        attempt = self.context.state_attempt
 
         if not self.context.new_level_red_icon_verified:
             frame = self._vision.capture(max_y=self._config.capture_regions.extended_search_y)
-            candidates = self._vision.find_red_icons(
-                frame, force_normal_mode=attempt >= max_attempts
-            )
+            candidates = self._vision.find_red_icons(frame)
             _, verified, _ = self._vision.split_red_icons(candidates)
             if not verified:
-                if attempt < max_attempts:
-                    self._scrcpy_recovery(self._config.scrcpy_recovery.red_icon_delay)
                 return flow.decide_check_new_level(
-                    self.context,
-                    max_attempts,
-                    self._config.level_transition.new_level_click_max_attempts,
-                    flow.NewLevelVerificationObservation(False, attempt, None, None),
+                    self.context, flow.NewLevelVerificationObservation(False, None, None)
                 )
 
         targets = self._config.click_targets
@@ -537,9 +519,7 @@ class EatventureBot:
                 self._sleep(level.secondary_settle_delay)
         return flow.decide_check_new_level(
             self.context,
-            max_attempts,
-            level.new_level_click_max_attempts,
-            flow.NewLevelVerificationObservation(True, attempt, button_ok, transition_ok),
+            flow.NewLevelVerificationObservation(True, button_ok, transition_ok),
         )
 
     def _handle_transition_level(self) -> State:
@@ -547,7 +527,8 @@ class EatventureBot:
             return State.TRANSITION_LEVEL
         level = self._config.level_transition
         attempt = self.context.state_attempt
-        frame = self._vision.capture(max_y=self._config.capture_regions.extended_search_y)
+        # v1 captures at max_search_y for this state's search loop, not extended_search_y.
+        frame = self._vision.capture(max_y=self._config.capture_regions.max_search_y)
         result = self._vision.find_new_level_button(frame)
         if result.best is None or not self._is_clickable(result.best.center):
             self._sleep(level.search_interval)
@@ -567,7 +548,9 @@ class EatventureBot:
         if not self._sleep(self._config.flow_timing.focus_settle_delay):
             return State.WAIT_FOR_UNLOCK
         level = self._config.level_transition
-        frame = self._vision.capture(max_y=self._config.capture_regions.max_search_y)
+        # v1 captures the full window height here (no max_y limit) — distinct from CHECK_UNLOCK,
+        # which uses the same "unlock" template against a max_search_y-limited frame.
+        frame = self._vision.capture()
         result = self._vision.find_unlock_button(frame)
         if result.best is None or not self._is_clickable(result.best.center):
             self._sleep(level.unlock_search_interval)

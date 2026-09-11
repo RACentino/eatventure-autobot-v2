@@ -3,16 +3,13 @@ observation (capture + template matching + a single click/hold/scroll attempt �
 performed by the orchestration layer, never here), decide the next State and update the
 counters that belong to the flow, not to any single handler.
 
-Sourced from a verified read of both source repos' bot.py (see GREENFIELD_PLAN.md's "state-logic
-research" section). Every function below is now a direct transcription of verified source behavior:
-decide_open_boxes and decide_hold_upgrade_station were re-checked line-by-line against v2's
-handle_open_boxes / _next_state_after_box_cycle / handle_hold_upgrade_station (confirmed identical
-to v1's) at the start of Stage 3, and both were corrected — the counter resets in
-_next_state_after_box_cycle are load-bearing, not incidental.
-
-One deliberate behavioral choice, not a transcription: decide_check_new_level follows v1's fuller
-_reset_search_cycle() on verification failure rather than v2's partial reset, matching the
-fail-closed-leaning posture locked in decision 3.
+Every function below is a direct, branch-for-branch transcription of v1's bot.py (see
+../eatventure-autobot-v1/bot.py), by deliberate decision: this codebase's state-handler flow and
+sequence follows v1's exactly, including branches where an earlier revision of this file
+deliberately synthesized a different (sometimes improved) behavior. Attempt caps v1 never had
+(on CHECK_UNLOCK, UPGRADE_STATS, SCROLL, and both CHECK_NEW_LEVEL branches) have been removed to
+match — those states are unbounded self-loops or single-shot misses in v1, relying solely on the
+same-state watchdog (resilience/watchdog.py) as the backstop.
 """
 
 from collections.abc import Iterable
@@ -56,6 +53,10 @@ def sort_red_icons_by_priority(
 
 
 def decide_find_red_icons(context: FlowContext, obs: RedIconScanObservation) -> State:
+    # Verified v1 behavior: work_done resets unconditionally on every FIND_RED_ICONS entry, before
+    # any branch below — it tracks "did this find->...->open_boxes cycle do anything productive,"
+    # not a run-lifetime flag.
+    context.work_done = False
     if obs.new_level_button_found:
         context.cycle_counter = 0
         return State.TRANSITION_LEVEL
@@ -66,6 +67,9 @@ def decide_find_red_icons(context: FlowContext, obs: RedIconScanObservation) -> 
     context.red_icons = sort_red_icons_by_priority(context, obs.red_icons)
     context.current_red_icon_index = 0
     context.cycle_counter = 0
+    # Verified v1 behavior: work_done is set True the moment icons are queued, before any click is
+    # attempted — not only after a click succeeds.
+    context.work_done = True
     return State.CLICK_RED_ICON
 
 
@@ -84,7 +88,6 @@ def current_red_icon_target(context: FlowContext) -> MatchCandidate | None:
 
 def decide_click_red_icon(context: FlowContext, click_succeeded: bool) -> State:
     if click_succeeded:
-        context.work_done = True
         return State.CHECK_UNLOCK
     context.current_red_icon_index += 1
     if not has_more_red_icons(context):
@@ -95,17 +98,12 @@ def decide_click_red_icon(context: FlowContext, click_succeeded: bool) -> State:
 # --- CHECK_UNLOCK ----------------------------------------------------------------------------
 
 
-def decide_check_unlock(
-    unlock_button_found: bool,
-    click_succeeded: bool | None,
-    attempt_number: int,
-    max_attempts: int,
-) -> State:
+def decide_check_unlock(unlock_button_found: bool, click_succeeded: bool | None) -> State:
+    # Verified v1 behavior: no attempt cap here — a stuck click-retry loop is bounded only by the
+    # same-state watchdog, matching every other unbounded branch v1 relies on it for.
     if not unlock_button_found:
         return State.SEARCH_UPGRADE_STATION
     if click_succeeded:
-        return State.SEARCH_UPGRADE_STATION
-    if attempt_number >= max_attempts:
         return State.SEARCH_UPGRADE_STATION
     return State.CHECK_UNLOCK
 
@@ -183,17 +181,15 @@ def decide_hold_upgrade_station(
 class StatsIconObservation:
     new_level_button_found: bool
     stats_icon_found: bool
-    attempt_number: int
 
 
-def decide_upgrade_stats(obs: StatsIconObservation, max_attempts: int = 2) -> State:
+def decide_upgrade_stats(obs: StatsIconObservation) -> State:
+    # Verified v1 behavior: single-shot, no retry — a miss goes straight to SCROLL.
     if obs.new_level_button_found:
         return State.TRANSITION_LEVEL
     if obs.stats_icon_found:
         return State.OPEN_BOXES
-    if obs.attempt_number >= max_attempts:
-        return State.SCROLL
-    return State.UPGRADE_STATS
+    return State.SCROLL
 
 
 # --- OPEN_BOXES ------------------------------------------------------------------------------
@@ -241,13 +237,10 @@ def decide_open_boxes(
 # --- SCROLL ------------------------------------------------------------------------------------
 
 
-def decide_scroll(
-    context: FlowContext, scroll_succeeded: bool, attempt_number: int, max_attempts: int
-) -> State:
+def decide_scroll(context: FlowContext, scroll_succeeded: bool) -> State:
+    # Verified v1 behavior: no attempt cap on a drag failure — the same-state watchdog is the only
+    # backstop, matching v1's unbounded self-loop here.
     if not scroll_succeeded:
-        if attempt_number >= max_attempts:
-            context.cycle_counter = 0
-            return State.FIND_RED_ICONS
         return State.SCROLL
     context.cycle_counter = 0
     return State.FIND_RED_ICONS
@@ -259,28 +252,19 @@ def decide_scroll(
 @dataclass(frozen=True)
 class NewLevelVerificationObservation:
     verified: bool
-    attempt_number: int
     button_click_succeeded: bool | None
     transition_click_succeeded: bool | None
 
 
-def decide_check_new_level(
-    context: FlowContext,
-    max_attempts: int,
-    click_max_attempts: int,
-    obs: NewLevelVerificationObservation,
-) -> State:
+def decide_check_new_level(context: FlowContext, obs: NewLevelVerificationObservation) -> State:
+    # Verified v1 behavior: the verify phase gives up on the very first miss (no retry loop), and
+    # the click-retry tail loops unboundedly (watchdog-only) — neither branch counts attempts.
     if obs.verified:
         context.new_level_red_icon_verified = True
     if not obs.verified:
-        if obs.attempt_number >= max_attempts:
-            context.reset_search_cycle()
-            return State.FIND_RED_ICONS
-        return State.CHECK_NEW_LEVEL
+        context.reset_search_cycle()
+        return State.FIND_RED_ICONS
     if obs.button_click_succeeded is False or obs.transition_click_succeeded is False:
-        if obs.attempt_number >= click_max_attempts:
-            context.reset_search_cycle()
-            return State.FIND_RED_ICONS
         return State.CHECK_NEW_LEVEL
     return State.WAIT_FOR_UNLOCK
 

@@ -1,9 +1,9 @@
-"""BotConfig schema. Defaults are ported from the verified v1/v2 config.py calibration values
-(v1 is the fuller, more field-tested set; v2-only keys are layered in where v1 lacked them).
-Detection thresholds/HSV ranges/NMS values are provisional pending the Stage 2 empirical
-detection spike (see GREENFIELD_PLAN.md decision 6) and click-target pixel positions are
-provisional pending a live recalibration pass, since v1 and v2 disagree on footer layout
-coordinates (different game UI snapshots)."""
+"""BotConfig schema. State-gating values (attempt caps, click/zone positions, capture Y-bounds,
+timing that paces state transitions) are ported verbatim from v1's config.py by deliberate
+decision: this codebase's state-handler flow and sequence now follows v1's exactly, including the
+values that pace it. Detection-internal tuning (HSV ranges, NMS thresholds, template offsets)
+stays independently calibrated per the Stage 2 empirical detection spike (see
+GREENFIELD_PLAN.md decision 6) and is not part of that port."""
 
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -30,9 +30,10 @@ class WindowConfig:
 @dataclass(frozen=True, slots=True)
 class ScrcpyRecoveryConfig:
     enabled: bool = True
-    red_icon_delay: float = 0.1
-    box_delay: float = 0.1
-    action_settle_delay: float = 0.15
+    red_icon_delay: float = 0.144
+    box_delay: float = 0.144
+    upgrade_delay: float = 0.144
+    action_settle_delay: float = 0.016
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,7 +100,7 @@ class UpgradeStationConfig:
         ),
         min_match_ratio=0.50,
     )
-    search_interval: float = 0.1
+    search_interval: float = 0.080
     search_attempts: int = 5
     failed_searches_before_scroll: int = 3
     # Relaxation applied to the match threshold on later search/verify attempts (both repos'
@@ -107,38 +108,42 @@ class UpgradeStationConfig:
     # counts on purpose — see the comments at each site — only the value is shared here.
     threshold_relaxation: float = 0.05
     verify_search_attempts: int = 4
-    verify_search_interval: float = 0.1
+    verify_search_interval: float = 0.080
     # Settle delay used before each of the two steps in the pre-hold verification pass: once
     # before the priming click on the stored position, and again before the single
     # verify_upgrade_station_round() check that follows it (see
     # EatventureBot._verify_upgrade_station). Ports v1's UPGRADE_STATION_VERIFY_SETTLE_DELAY.
     # This field previously existed and was removed as unread/dead config before this gap was
     # found — it is genuinely read now, so keep it wired up.
-    verify_settle_delay: float = 0.15
+    verify_settle_delay: float = 0.144
     # Consecutive misses required before a hold treats the station as gone; debounces a single
     # flaky/transient miss so a real hold isn't cut short by one bad frame. Each tick now does a
     # single capture+check (see EatventureBot._station_disappeared), so this cross-tick count is
-    # the only debounce mechanism left — must be >= 2 to actually debounce anything.
-    disappear_confirmation_count: int = 2
+    # the only debounce mechanism left.
+    # NOTE: v1's value (1) provides zero actual debounce — a single miss already ends the hold.
+    # Reverted to 1 anyway as a deliberate, confirmed tradeoff: this codebase's state-handler flow
+    # now follows v1's verbatim, including this known flakiness. Raise to >= 2 to restore real
+    # debouncing if it causes trouble in practice.
+    disappear_confirmation_count: int = 1
     # Live-verified (a real hold on the real device): once the held station's popup reaches its
     # "MAX" state, the relaxed-threshold match can false-positive onto an unrelated button
     # elsewhere on screen at a confidence at/above the base threshold — too high for threshold
     # tuning alone to exclude. A match farther than this from the position actually being held is
     # rejected as not the same station, regardless of where on screen it lands.
     disappear_position_tolerance_px: int = 60
-    hold_check_interval_min: float = 0.05
-    hold_check_interval_max: float = 0.15
+    hold_check_interval_min: float = 0.080
+    hold_check_interval_max: float = 0.144
     click_hold_max_duration: float = 9.0
 
 
 @dataclass(frozen=True, slots=True)
 class InputTimingConfig:
-    click_delay: float = 0.05
-    move_delay: float = 0.033
-    mouse_down_duration: float = 0.14
-    mouse_up_duration: float = 0.11
+    click_delay: float = 0.175
+    move_delay: float = 0.016
+    mouse_down_duration: float = 0.125
+    mouse_up_duration: float = 0.125
     retry_count: int = 3
-    retry_delay: float = 0.033
+    retry_delay: float = 0.016
     hover_enabled: bool = False
     hover_duration: float = 0.0
     # Default 0 preserves the exact-equality cursor-drift check every click/press/hold path uses
@@ -162,8 +167,8 @@ class FlowTimingConfig:
     # removed after live evidence showed it resetting the oscillating scroll search before it could
     # complete a widening sweep, actively preventing the progress it was meant to detect.
     state_stall_timeout_seconds: float = 9.0
-    event_loop_interval: float = 0.033
-    focus_settle_delay: float = 0.05
+    event_loop_interval: float = 0.016
+    focus_settle_delay: float = 0.016
     # How often GameVision.ensure_target_ready() is allowed to run the expensive window
     # relocate/resize query (a full window enumeration). A cheap liveness check still runs every
     # step; only the full relocate is throttled to this cadence instead of running unconditionally
@@ -181,25 +186,24 @@ class CaptureRegionConfig:
 
 @dataclass(frozen=True, slots=True)
 class ClickTargetConfig:
-    idle_click_pos: Point = (3, 390)
-    stats_upgrade_button_pos: Point = (330, 750)
-    stats_upgrade_pos: Point = (290, 310)
+    idle_click_pos: Point = (8, 390)
+    stats_upgrade_button_pos: Point = (310, 698)
+    stats_upgrade_pos: Point = (270, 304)
     scroll_start_pos: Point = (170, 380)
-    new_level_button_pos: Point = (30, 740)
-    level_transition_pos: Point = (180, 550)
+    new_level_button_pos: Point = (30, 692)
+    level_transition_pos: Point = (174, 520)
 
 
 @dataclass(frozen=True, slots=True)
 class StatsUpgradeConfig:
     click_duration: float = 1.5
     click_delay: float = 0.016
-    search_max_attempts: int = 2
     # Independent of input_timing.mouse_down_duration/mouse_up_duration by design: this is the
     # only click path that needs to be fast enough to register many clicks inside click_duration,
     # and it must not affect every other click the bot makes. Starting point, not a measured
     # minimum — live-verify clicks still register in-game before trusting this blindly.
-    mouse_down_duration: float = 0.03
-    mouse_up_duration: float = 0.03
+    mouse_down_duration: float = 0.016
+    mouse_up_duration: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,23 +215,16 @@ class RedIconZoneConfig:
 @dataclass(frozen=True, slots=True)
 class LevelTransitionConfig:
     search_attempts: int = 5
-    search_interval: float = 0.1
+    search_interval: float = 0.080
     settle_delay: float = 0.3
-    confirmation_delay: float = 0.15
+    confirmation_delay: float = 0.300
     secondary_settle_delay: float = 0.3
-    # Deliberately not a tight cap: WAIT_FOR_UNLOCK should not be the thing that gives up early.
-    # The same-state watchdog (flow_timing.state_stall_timeout_seconds) is the real backstop for
-    # this state and will already force a reset long before this many attempts is ever reached —
-    # this value exists as a distant ceiling, not the practical "give up" mechanism. Excluded from
-    # validate_bot_config's bounded-retry-budget check for exactly this reason.
-    unlock_search_attempts: int = 1000
-    unlock_search_interval: float = 0.1
-    unlock_settle_delay: float = 0.15
-    new_level_verify_max_attempts: int = 2
-    # Caps for the two retry branches that previously had no attempt limit of their own and relied
-    # entirely on the watchdog's same-state timeout to end a failure loop.
-    check_unlock_click_max_attempts: int = 3
-    new_level_click_max_attempts: int = 5
+    # v1's real, practical give-up point for WAIT_FOR_UNLOCK: reverted from the greenfield
+    # redesign's 1000 (which relied on the 9s same-state watchdog as the sole backstop instead) per
+    # the decision to follow v1's state-handler flow verbatim, including its pacing.
+    unlock_search_attempts: int = 4
+    unlock_search_interval: float = 0.300
+    unlock_settle_delay: float = 0.016
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,9 +237,6 @@ class ScrollConfig:
     interval_pause: float = 0.300
     post_scroll_settle: float = 0.300
     duration: float = 0.300
-    # Cap for the drag-fail retry branch, which previously had no attempt limit of its own and
-    # relied entirely on the watchdog's same-state timeout to end a failure loop.
-    drag_max_attempts: int = 3
 
 
 @dataclass(frozen=True, slots=True)

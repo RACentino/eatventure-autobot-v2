@@ -37,7 +37,7 @@ def validate_window(config: WindowConfig) -> None:
 
 
 def validate_scrcpy_recovery(config: ScrcpyRecoveryConfig) -> None:
-    for name in ("red_icon_delay", "box_delay", "action_settle_delay"):
+    for name in ("red_icon_delay", "box_delay", "upgrade_delay", "action_settle_delay"):
         _positive(name, getattr(config, name))
 
 
@@ -136,18 +136,10 @@ def validate_stats_upgrade(config: StatsUpgradeConfig) -> None:
     _positive("click_delay", config.click_delay)
     _positive("mouse_down_duration", config.mouse_down_duration)
     _positive("mouse_up_duration", config.mouse_up_duration)
-    if config.search_max_attempts < 1:
-        raise ConfigError(f"search_max_attempts must be >= 1, got {config.search_max_attempts}")
 
 
 def validate_level_transition(config: LevelTransitionConfig) -> None:
-    for name in (
-        "search_attempts",
-        "unlock_search_attempts",
-        "new_level_verify_max_attempts",
-        "check_unlock_click_max_attempts",
-        "new_level_click_max_attempts",
-    ):
+    for name in ("search_attempts", "unlock_search_attempts"):
         if getattr(config, name) < 1:
             raise ConfigError(f"{name} must be >= 1, got {getattr(config, name)}")
 
@@ -157,8 +149,6 @@ def validate_scroll(config: ScrollConfig) -> None:
         raise ConfigError(f"pixel_step must be > 0, got {config.pixel_step}")
     if config.max_cycles < 1:
         raise ConfigError(f"max_cycles must be >= 1, got {config.max_cycles}")
-    if config.drag_max_attempts < 1:
-        raise ConfigError(f"drag_max_attempts must be >= 1, got {config.drag_max_attempts}")
 
 
 def validate_telegram(config: TelegramConfig) -> None:
