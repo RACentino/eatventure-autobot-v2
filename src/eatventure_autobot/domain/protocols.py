@@ -48,6 +48,8 @@ class InputController(Protocol):
         duration: float,
         click_delay: float,
         relative: bool = True,
+        down_duration: float | None = None,
+        up_duration: float | None = None,
     ) -> bool: ...
 
     def drag(

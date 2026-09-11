@@ -19,6 +19,7 @@ from eatventure_autobot.domain.types import Zone
 from eatventure_autobot.input import create_input_controller
 from eatventure_autobot.notifier import create_notifier
 from eatventure_autobot.runtime.bot import EatventureBot
+from eatventure_autobot.runtime.config_factory import build_default_config
 from eatventure_autobot.runtime.vision import GameVision
 
 logger = logging.getLogger(__name__)
@@ -276,7 +277,7 @@ def _request_exit(_signum: int, _frame: Any) -> None:
 
 def main() -> int:
     global bot_instance
-    config = BotConfig.default(Path(__file__).resolve().parent.parent.parent)
+    config = build_default_config(Path(__file__).resolve().parent.parent.parent)
     listener = None
     previous_handlers: dict[int, Any] = {}
     print(

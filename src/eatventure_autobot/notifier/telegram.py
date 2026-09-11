@@ -1,4 +1,5 @@
 import logging
+import os
 import queue
 import threading
 from typing import Protocol, cast
@@ -8,6 +9,22 @@ from eatventure_autobot.domain.config import TelegramConfig
 logger = logging.getLogger(__name__)
 
 _MAX_MESSAGE_LENGTH = 4096
+
+
+def load_telegram_config_from_env() -> TelegramConfig:
+    """Builds TelegramConfig from EATVENTURE_TELEGRAM_* env vars. Credentials are env-var gated
+    and never live in domain/config.py (see GREENFIELD_PLAN.md)."""
+    enabled = os.environ.get("EATVENTURE_TELEGRAM_ENABLED", "").strip().casefold() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    bot_token = os.environ.get("EATVENTURE_TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.environ.get("EATVENTURE_TELEGRAM_CHAT_ID", "").strip()
+    if enabled and not (bot_token and chat_id):
+        return TelegramConfig(enabled=False, bot_token=bot_token, chat_id=chat_id)
+    return TelegramConfig(enabled=enabled, bot_token=bot_token, chat_id=chat_id)
 
 
 class _HttpSession(Protocol):

@@ -168,19 +168,13 @@ class EatventureBot:
             self._step_lock.release()
 
     def _apply_watchdog(self, current_state: State) -> None:
-        verdict = self._watchdog.tick(current_state, self.context.progress_marker)
+        verdict = self._watchdog.tick(current_state)
         if verdict is WatchdogVerdict.OK:
             return
-        if verdict is WatchdogVerdict.RESET:
-            logger.warning("State %s stalled; resetting search flow", current_state.name)
-            self.context.reset_search_cycle()
-            self.state = State.FIND_RED_ICONS
-            self.context.state_attempt = 1
-            return
-        logger.error(
-            "Watchdog escalating to fail-closed stop: %s", self._watchdog.last_escalation_reason
-        )
-        self.stop()
+        logger.warning("Resetting search flow (%s)", self._watchdog.last_reset_reason)
+        self.context.reset_search_cycle()
+        self.state = State.FIND_RED_ICONS
+        self.context.state_attempt = 1
 
     # --- shared helpers -------------------------------------------------------------------
 
@@ -254,16 +248,18 @@ class EatventureBot:
         return flow.decide_click_red_icon(self.context, clicked)
 
     def _handle_check_unlock(self) -> State:
+        max_attempts = self._config.level_transition.check_unlock_click_max_attempts
+        attempt = self.context.state_attempt
         if not self._sleep(self._config.scrcpy_recovery.action_settle_delay):
             return State.CHECK_UNLOCK
         frame = self._vision.capture(max_y=self._config.capture_regions.max_search_y)
         result = self._vision.find_unlock_button(frame)
         if result.best is None or not self._is_clickable(result.best.center):
-            return flow.decide_check_unlock(False, None)
+            return flow.decide_check_unlock(False, None, attempt, max_attempts)
         clicked = self._input.click(*result.best.center)
         if clicked:
             self._sleep(self._config.level_transition.unlock_settle_delay)
-        return flow.decide_check_unlock(True, clicked)
+        return flow.decide_check_unlock(True, clicked, attempt, max_attempts)
 
     def _handle_search_upgrade_station(self) -> State:
         station = self._config.upgrade_station
@@ -312,15 +308,11 @@ class EatventureBot:
             station.click_hold_max_duration,
             check_interval,
             self._make_disappearance_check(
-                self._config.thresholds.upgrade_station,
                 relaxed_threshold,
+                target,
                 station.disappear_confirmation_count,
             ),
         )
-        if held:
-            current = flow.current_red_icon_target(self.context)
-            if current is not None:
-                self.context.remember_successful_red_icon_row(current.center[1])
         post_ok = (
             held
             and self._click_idle()
@@ -329,12 +321,13 @@ class EatventureBot:
         return flow.decide_hold_upgrade_station(
             self.context,
             self._config.flow_timing,
-            flow.UpgradeHoldObservation(True, True, held, post_ok),
+            flow.UpgradeHoldObservation(True, True, held, post_ok, verified_position=target),
         )
 
     def _verify_upgrade_station_round(self) -> tuple[Point, float] | None:
         """One full verify_search_attempts retry loop: base threshold on the first attempt,
-        relaxed threshold afterward. Used for both rounds around the pre-hold wake click."""
+        relaxed threshold afterward. Used for the single verification round in
+        _verify_upgrade_station."""
         station = self._config.upgrade_station
         base = self._config.thresholds.upgrade_station
         relaxed = base - station.threshold_relaxation
@@ -351,60 +344,52 @@ class EatventureBot:
         return None
 
     def _verify_upgrade_station(self, position: Point) -> tuple[Point, float] | None:
-        """Re-checks on fresh frames that the station is still there before committing to a hold
-        (verified behavior in both repos). A successful first round is followed by a deliberate
-        "wake click" on the freshly-found position (the upgrade UI sometimes needs one priming
-        tap before the button truly registers/renders) and a second, identical verification
-        round — only a station that survives both rounds is held. Both rounds, and the very
-        first attempt, are preceded by the same settle delay v1 uses."""
+        """Single click-then-verify pass before committing to a hold: a settle delay, one click
+        on the stored position, another settle delay, then a single verify_upgrade_station_round()
+        retry loop. Both settle delays reuse the same verify_settle_delay config value v1 used
+        around its verification steps."""
         station = self._config.upgrade_station
         if not self._sleep(station.verify_settle_delay):
             return None
 
-        first = self._verify_upgrade_station_round()
-        if first is None:
-            logger.info("Upgrade station was not visible during verification")
-            return None
-
-        wake_target, _ = first
-        if not self._input.precise_click(*wake_target):
-            logger.info(
-                "Upgrade station verification wake click failed at (%s, %s)", *wake_target
-            )
+        if not self._input.precise_click(*position):
+            logger.info("Upgrade station verification click failed at (%s, %s)", *position)
             return None
         if not self._sleep(station.verify_settle_delay):
             return None
 
-        second = self._verify_upgrade_station_round()
-        if second is None:
-            logger.info("Upgrade station was not visible during second verification round")
+        result = self._verify_upgrade_station_round()
+        if result is None:
+            logger.info("Upgrade station was not visible during verification")
             return None
+        return result
 
-        target, relaxed = second
-        self.context.upgrade_station_pos = target
-        return target, relaxed
+    def _station_disappeared(self, threshold: float, position: Point) -> bool:
+        """Single capture+check for one poll tick, at the relaxed threshold (the same leniency
+        used for later verification attempts). Debouncing against a flaky/transient miss is the
+        caller's job (_make_disappearance_check, across consecutive ticks) rather than this
+        method re-checking multiple thresholds within a single tick.
 
-    def _station_disappeared(self, base_threshold: float, relaxed_threshold: float) -> bool:
-        """Base-threshold check, then relaxed-threshold check, then (if scrcpy recovery is
-        enabled) one recovery sleep and a final relaxed-threshold recheck before concluding the
-        station is genuinely gone for this poll tick — mirrors v1's
-        _find_current_upgrade_hold_match so a single dropped/stale scrcpy frame isn't mistaken
-        for the station having actually disappeared."""
-        regions = self._config.capture_regions
-        frame = self._vision.capture(max_y=regions.upgrade_station_search_y)
-        if self._vision.find_upgrade_station(frame, base_threshold).found:
-            return False
-        frame = self._vision.capture(max_y=regions.upgrade_station_search_y)
-        if self._vision.find_upgrade_station(frame, relaxed_threshold).found:
-            return False
-        if self._scrcpy_recovery(self._config.scrcpy_recovery.upgrade_delay):
-            frame = self._vision.capture(max_y=regions.upgrade_station_search_y)
-            if self._vision.find_upgrade_station(frame, relaxed_threshold).found:
-                return False
-        return True
+        A match is only accepted if it's near `position` (the position we're actually holding).
+        Live-verified this matters: at the relaxed threshold, once the real station's popup
+        changes to its "MAX" state late in a hold, the template can false-positive match an
+        unrelated button elsewhere on screen (observed: the footer's "Boost x12" banner, ~389px
+        away, at a confidence around/above the base threshold) — high enough that tightening the
+        threshold alone would not reliably exclude it. Rejecting matches far from the held
+        position catches this regardless of where the false positive happens to appear, without
+        assuming the real popup is confined to any particular screen region."""
+        station = self._config.upgrade_station
+        frame = self._vision.capture(max_y=self._config.capture_regions.upgrade_station_search_y)
+        result = self._vision.find_upgrade_station(frame, threshold)
+        if not result.found or result.best is None:
+            return True
+        tolerance = station.disappear_position_tolerance_px
+        dx = abs(result.best.center[0] - position[0])
+        dy = abs(result.best.center[1] - position[1])
+        return dx > tolerance or dy > tolerance
 
     def _make_disappearance_check(
-        self, base_threshold: float, relaxed_threshold: float, required_misses: int
+        self, threshold: float, position: Point, required_misses: int
     ) -> Callable[[], bool]:
         """Requires `required_misses` CONSECUTIVE misses before treating the station as gone —
         debounces a single flaky/transient miss so a real hold isn't cut short by one bad frame."""
@@ -412,7 +397,7 @@ class EatventureBot:
 
         def check() -> bool:
             nonlocal misses
-            gone = self._station_disappeared(base_threshold, relaxed_threshold)
+            gone = self._station_disappeared(threshold, position)
             misses = misses + 1 if gone else 0
             return misses >= max(1, required_misses)
 
@@ -447,6 +432,8 @@ class EatventureBot:
                 *targets.stats_upgrade_pos,
                 self._config.stats_upgrade.click_duration,
                 self._config.stats_upgrade.click_delay,
+                down_duration=self._config.stats_upgrade.mouse_down_duration,
+                up_duration=self._config.stats_upgrade.mouse_up_duration,
             )
             self._click_idle()
         return flow.decide_upgrade_stats(
@@ -511,7 +498,9 @@ class EatventureBot:
         if moved:
             self.context.advance_oscillation(scroll.increment_step, scroll.max_cycles)
             moved = self._sleep(scroll.post_scroll_settle) and self._sleep(scroll.interval_pause)
-        return flow.decide_scroll(self.context, moved)
+        return flow.decide_scroll(
+            self.context, moved, self.context.state_attempt, scroll.drag_max_attempts
+        )
 
     def _handle_check_new_level(self) -> State:
         max_attempts = self._config.level_transition.new_level_verify_max_attempts
@@ -533,9 +522,9 @@ class EatventureBot:
                 return flow.decide_check_new_level(
                     self.context,
                     max_attempts,
+                    self._config.level_transition.new_level_click_max_attempts,
                     flow.NewLevelVerificationObservation(False, attempt, None, None),
                 )
-            self.context.new_level_red_icon_verified = True
 
         targets = self._config.click_targets
         level = self._config.level_transition
@@ -549,6 +538,7 @@ class EatventureBot:
         return flow.decide_check_new_level(
             self.context,
             max_attempts,
+            level.new_level_click_max_attempts,
             flow.NewLevelVerificationObservation(True, attempt, button_ok, transition_ok),
         )
 

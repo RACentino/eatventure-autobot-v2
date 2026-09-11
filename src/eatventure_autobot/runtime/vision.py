@@ -4,6 +4,7 @@ threshold/HSV/region lookups out of the handlers, so a handler reads as flow, no
 """
 
 import logging
+import time
 from pathlib import Path
 
 import numpy as np
@@ -36,6 +37,7 @@ class GameVision:
             config.red_icon.fast_mode_enabled if fast_red_icon_mode is None else fast_red_icon_mode
         )
         self._loaded: set[str] = set()
+        self._last_relocate_at = 0.0
 
     # --- template lifecycle -------------------------------------------------------------
 
@@ -94,7 +96,16 @@ class GameVision:
         return self._capture.capture(max_y=max_y)
 
     def ensure_target_ready(self) -> None:
-        self._capture.ensure_window(resize=True)
+        """Confirms the target window is ready to capture from. The expensive relocate/resize
+        query (a full window enumeration) only actually needs to run when the window might have
+        moved or changed size, not on every single call — ensure_window(resize=False) still runs
+        a cheap liveness check every time and only skips the expensive path."""
+        now = time.monotonic()
+        interval = self._config.flow_timing.window_relocate_interval
+        should_relocate = now - self._last_relocate_at >= interval
+        if should_relocate:
+            self._last_relocate_at = now
+        self._capture.ensure_window(resize=should_relocate)
 
     def cursor_position_in_window(self, input_controller: object) -> Point | None:
         """Window-relative cursor readout for the 'X' debug hotkey."""

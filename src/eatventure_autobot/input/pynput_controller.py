@@ -150,10 +150,15 @@ class PynputInputController:
             self._best_effort_left_up()
             return not self._left_pressed
 
+    def _cursor_on_target(self, x: int, y: int) -> bool:
+        tolerance = self._timing.cursor_drift_tolerance_px
+        current = self.get_cursor_position()
+        return abs(current[0] - x) <= tolerance and abs(current[1] - y) <= tolerance
+
     def _left_down_at(self, x: int, y: int, duration: float | None) -> bool:
         if not self._input_allowed():
             return False
-        if self.get_cursor_position() != (x, y):
+        if not self._cursor_on_target(x, y):
             logger.warning("Cursor moved before mouse press at (%s, %s)", x, y)
             return False
         try:
@@ -184,7 +189,7 @@ class PynputInputController:
             return False
         released = False
         try:
-            if self.get_cursor_position() != (x, y):
+            if not self._cursor_on_target(x, y):
                 logger.warning("Cursor moved during click at (%s, %s)", x, y)
                 return False
             released = self._left_up_at(x, y, up_duration)
@@ -230,7 +235,14 @@ class PynputInputController:
                     self._best_effort_left_up()
 
     def spam_click_at(
-        self, x: int, y: int, duration: float, click_delay: float, relative: bool = True
+        self,
+        x: int,
+        y: int,
+        duration: float,
+        click_delay: float,
+        relative: bool = True,
+        down_duration: float | None = None,
+        up_duration: float | None = None,
     ) -> bool:
         with self._lock:
             position = self._resolve_screen_position(x, y, relative)
@@ -241,7 +253,7 @@ class PynputInputController:
             end_time = time.monotonic() + max(0.0, duration)
             click_count = 0
             while time.monotonic() < end_time:
-                if not self._left_click_at(*position):
+                if not self._left_click_at(*position, down_duration, up_duration):
                     return False
                 click_count += 1
                 if not self._wait(max(0.001, click_delay)):
@@ -271,15 +283,10 @@ class PynputInputController:
             try:
                 deadline = time.monotonic() + max(0.0, duration)
                 interval = max(0.001, check_interval)
-                tolerance = self._timing.cursor_drift_tolerance_px
                 while time.monotonic() < deadline:
                     if not self._wait(min(interval, max(0.0, deadline - time.monotonic()))):
                         return False
-                    current = self.get_cursor_position()
-                    if (
-                        abs(current[0] - position[0]) > tolerance
-                        or abs(current[1] - position[1]) > tolerance
-                    ):
+                    if not self._cursor_on_target(*position):
                         logger.warning("Cursor moved during hold at %s; releasing", position)
                         return False
                     if not self.is_target_foreground():

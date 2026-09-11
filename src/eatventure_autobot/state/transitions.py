@@ -85,7 +85,6 @@ def current_red_icon_target(context: FlowContext) -> MatchCandidate | None:
 def decide_click_red_icon(context: FlowContext, click_succeeded: bool) -> State:
     if click_succeeded:
         context.work_done = True
-        context.record_progress()
         return State.CHECK_UNLOCK
     context.current_red_icon_index += 1
     if not has_more_red_icons(context):
@@ -96,10 +95,17 @@ def decide_click_red_icon(context: FlowContext, click_succeeded: bool) -> State:
 # --- CHECK_UNLOCK ----------------------------------------------------------------------------
 
 
-def decide_check_unlock(unlock_button_found: bool, click_succeeded: bool | None) -> State:
+def decide_check_unlock(
+    unlock_button_found: bool,
+    click_succeeded: bool | None,
+    attempt_number: int,
+    max_attempts: int,
+) -> State:
     if not unlock_button_found:
         return State.SEARCH_UPGRADE_STATION
     if click_succeeded:
+        return State.SEARCH_UPGRADE_STATION
+    if attempt_number >= max_attempts:
         return State.SEARCH_UPGRADE_STATION
     return State.CHECK_UNLOCK
 
@@ -138,6 +144,7 @@ class UpgradeHoldObservation:
     verification_passed: bool  # the station was still visible on a fresh verification frame
     hold_completed: bool  # hold_at() returned True (covers both timeout and early interrupt)
     post_hold_actions_succeeded: bool = True  # the post-hold idle click and settle delay
+    verified_position: Point | None = None  # the freshly re-detected position, when verified
 
 
 def decide_hold_upgrade_station(
@@ -150,14 +157,19 @@ def decide_hold_upgrade_station(
         context.upgrade_station_pos = None
         context.upgrade_found_in_cycle = False
         return State.OPEN_BOXES
+    # Replace the stored position with the freshly-verified one: if the hold below fails without
+    # clearing it (next branch), the next attempt should retry against the accurate position.
+    context.upgrade_station_pos = obs.verified_position
     if not obs.hold_completed:
         # Verified: a failed hold returns without clearing the stored position.
         return State.OPEN_BOXES
+    current = current_red_icon_target(context)
+    if current is not None:
+        context.remember_successful_red_icon_row(current.center[1])
     context.upgrade_station_pos = None
     if not obs.post_hold_actions_succeeded:
         return State.OPEN_BOXES
     context.upgrade_station_counter += 1
-    context.record_progress()
     if context.upgrade_station_counter >= config.upgrades_before_stats:
         context.upgrade_station_counter = 0
         return State.UPGRADE_STATS
@@ -204,7 +216,6 @@ def decide_open_boxes(
     if obs.boxes_opened > 0:
         context.work_done = True
         context.cycle_counter = 0
-        context.record_progress()
 
     # Verified transcription of _next_state_after_box_cycle. Each branch's counter reset is
     # load-bearing: without them the triggering condition stays true and the bot re-enters the
@@ -230,8 +241,13 @@ def decide_open_boxes(
 # --- SCROLL ------------------------------------------------------------------------------------
 
 
-def decide_scroll(context: FlowContext, scroll_succeeded: bool) -> State:
+def decide_scroll(
+    context: FlowContext, scroll_succeeded: bool, attempt_number: int, max_attempts: int
+) -> State:
     if not scroll_succeeded:
+        if attempt_number >= max_attempts:
+            context.cycle_counter = 0
+            return State.FIND_RED_ICONS
         return State.SCROLL
     context.cycle_counter = 0
     return State.FIND_RED_ICONS
@@ -249,14 +265,22 @@ class NewLevelVerificationObservation:
 
 
 def decide_check_new_level(
-    context: FlowContext, max_attempts: int, obs: NewLevelVerificationObservation
+    context: FlowContext,
+    max_attempts: int,
+    click_max_attempts: int,
+    obs: NewLevelVerificationObservation,
 ) -> State:
+    if obs.verified:
+        context.new_level_red_icon_verified = True
     if not obs.verified:
         if obs.attempt_number >= max_attempts:
             context.reset_search_cycle()
             return State.FIND_RED_ICONS
         return State.CHECK_NEW_LEVEL
     if obs.button_click_succeeded is False or obs.transition_click_succeeded is False:
+        if obs.attempt_number >= click_max_attempts:
+            context.reset_search_cycle()
+            return State.FIND_RED_ICONS
         return State.CHECK_NEW_LEVEL
     return State.WAIT_FOR_UNLOCK
 
@@ -296,17 +320,17 @@ class WaitForUnlockObservation:
 def decide_wait_for_unlock(
     context: FlowContext, config: LevelTransitionConfig, obs: WaitForUnlockObservation
 ) -> State:
-    context.wait_for_unlock_attempts += 1
-    if context.wait_for_unlock_attempts > config.unlock_search_attempts:
+    # Success is checked before the attempt cap below: the cap exists to bound consecutive
+    # failures, not to discard a real success that happens to land on the last allowed attempt.
+    if obs.unlock_found and obs.click_succeeded:
+        context.total_levels_completed += 1
         context.wait_for_unlock_attempts = 0
         context.reset_search_cycle()
         return State.FIND_RED_ICONS
-    if not obs.unlock_found:
-        return State.WAIT_FOR_UNLOCK
-    if obs.click_succeeded is False:
-        return State.WAIT_FOR_UNLOCK
-    context.total_levels_completed += 1
-    context.record_progress()
-    context.wait_for_unlock_attempts = 0
-    context.reset_search_cycle()
-    return State.FIND_RED_ICONS
+
+    context.wait_for_unlock_attempts += 1
+    if context.wait_for_unlock_attempts >= config.unlock_search_attempts:
+        context.wait_for_unlock_attempts = 0
+        context.reset_search_cycle()
+        return State.FIND_RED_ICONS
+    return State.WAIT_FOR_UNLOCK

@@ -100,9 +100,10 @@ The state machine's decision logic is deliberately pure: handlers in `runtime/bo
 I/O, then hand an observation to a function in `state/transitions.py` that decides the next state
 and updates flow counters. That split is what makes the FSM testable without a screen or a mouse.
 
-Failure handling is bounded self-healing, then fail-closed: a state that stalls past
-`state_stall_timeout_seconds` resets the search flow, but repeated resets with no real progress stop
-the bot rather than looping forever.
+Failure handling matches v1 exactly: a state that stalls past `state_stall_timeout_seconds` resets
+the search flow, forever, with no cap and no escalation — the watchdog never stops the bot on its
+own. Window/capture loss, lost window focus, and an unexpected handler exception are the only
+things that stop the bot and require a manual restart (Z).
 
 ## Development
 
