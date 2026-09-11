@@ -42,7 +42,7 @@ class ThresholdConfig:
     new_level_red_icon: float = 0.942
     stats_red_icon: float = 0.943
     upgrade_station: float = 0.910
-    box: float = 0.930
+    box: float = 0.930  # reverted attempted 0.880 — live-frame evidence showed loosening this let shape-only matches through on unrelated flat UI surfaces (counter/icons); the HSV gate below now carries accuracy instead
     unlock: float = 0.905
     new_level: float = 0.965
 
@@ -73,42 +73,16 @@ class RedIconDetectionConfig:
 
 @dataclass(frozen=True, slots=True)
 class BoxDetectionConfig:
+    # Reset from box1-4.png's actual alpha-masked pixel colors (hue ~10-24, orange/gold, S~100-190,
+    # V~135-255), cross-checked against live-captured crate pixels (see tools/box_heatmap_test.py).
+    # An earlier, wider attempt (hue 8-28 + a low-saturation highlight range) collided with other
+    # warm-toned UI (order icons, counter surfaces) and produced false positives on a live frame —
+    # this single consolidated range was verified against a live capture to land true-positive
+    # crates at a 0.99-1.00 HSV match ratio (well clear of the 0.65 floor) while matching 0
+    # candidates on the false-positive locations from the earlier attempt.
     hsv: HsvGate = HsvGate(
-        ranges=(
-            HsvRange((22, 69, 170), (23, 69, 172)),
-            HsvRange((21, 112, 255), (24, 114, 255)),
-            HsvRange((0, 0, 254), (28, 107, 255)),
-            HsvRange((16, 140, 165), (19, 149, 187)),
-            HsvRange((16, 124, 187), (19, 129, 205)),
-            HsvRange((23, 108, 137), (26, 120, 234)),
-            HsvRange((29, 0, 254), (91, 107, 255)),
-            HsvRange((16, 121, 232), (19, 127, 247)),
-            HsvRange((23, 55, 210), (27, 55, 212)),
-            HsvRange((14, 149, 165), (16, 158, 179)),
-            HsvRange((20, 115, 235), (21, 120, 242)),
-            HsvRange((23, 69, 174), (24, 70, 174)),
-            HsvRange((0, 108, 0), (12, 162, 255)),
-            HsvRange((23, 53, 218), (25, 54, 225)),
-            HsvRange((31, 0, 240), (179, 107, 255)),
-            HsvRange((23, 47, 0), (30, 51, 232)),
-            HsvRange((22, 121, 137), (24, 128, 203)),
-            HsvRange((10, 64, 208), (13, 79, 223)),
-            HsvRange((10, 80, 192), (13, 95, 207)),
-            HsvRange((10, 128, 160), (13, 143, 175)),
-            HsvRange((14, 96, 192), (17, 111, 207)),
-            HsvRange((14, 144, 128), (17, 159, 143)),
-            HsvRange((14, 144, 144), (17, 159, 159)),
-            HsvRange((14, 160, 128), (17, 175, 143)),
-            HsvRange((18, 112, 208), (21, 127, 223)),
-            HsvRange((18, 112, 240), (21, 127, 255)),
-            HsvRange((18, 128, 240), (21, 143, 255)),
-            HsvRange((22, 96, 240), (25, 111, 255)),
-            HsvRange((26, 48, 176), (29, 63, 191)),
-            HsvRange((26, 96, 128), (29, 111, 143)),
-            HsvRange((30, 64, 240), (33, 79, 255)),
-            HsvRange((46, 176, 240), (49, 191, 255)),
-        ),
-        min_match_ratio=0.5115,
+        ranges=(HsvRange((10, 90, 130), (26, 255, 255)),),
+        min_match_ratio=0.65,
     )
     template_names: tuple[str, ...] = ("box1", "box2", "box3", "box4")
     nms_iou_threshold: float = 0.190
