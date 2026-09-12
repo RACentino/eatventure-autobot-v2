@@ -404,9 +404,10 @@ class EatventureBot:
         return check
 
     def _handle_upgrade_stats(self) -> State:
-        # Verified v1 behavior: single-shot, no retry loop and no scrcpy-recovery here.
+        # Verified v1 behavior: single-shot, no retry loop and no scrcpy-recovery here. This is
+        # also the one state where an idle-click failure does NOT retry itself.
         if not self._click_idle():
-            return State.UPGRADE_STATS
+            return State.OPEN_BOXES
         frame = self._vision.capture(max_y=self._config.capture_regions.extended_search_y)
         if self._vision.find_new_level_button(
             frame[: self._config.capture_regions.max_search_y]
