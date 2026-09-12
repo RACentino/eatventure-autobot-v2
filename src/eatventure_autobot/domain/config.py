@@ -195,7 +195,7 @@ class CaptureRegionConfig:
 
 @dataclass(frozen=True, slots=True)
 class ClickTargetConfig:
-    idle_click_pos: Point = (3, 390)
+    idle_click_pos: Point = (2, 390)
     stats_upgrade_button_pos: Point = (330, 750)
     stats_upgrade_pos: Point = (290, 310)
     scroll_start_pos: Point = (170, 380)
