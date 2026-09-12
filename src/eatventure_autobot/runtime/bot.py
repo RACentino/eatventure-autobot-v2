@@ -144,11 +144,6 @@ class EatventureBot:
             next_state = self._handlers[previous_state]()
             if not self.running:
                 return False
-            # v2's post-handler recheck (v1 only checks before): catches focus lost mid-click.
-            if not self._input.is_target_foreground():
-                logger.error("Target lost foreground during %s; stopping", previous_state.name)
-                self.stop()
-                return False
 
             self.context.state_attempt = (
                 self.context.state_attempt + 1 if next_state == previous_state else 1
