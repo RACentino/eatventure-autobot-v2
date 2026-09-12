@@ -571,6 +571,8 @@ class EatventureBot:
         )
         if self.context.total_levels_completed > previous_total:
             self._report_level_completion()
+            # v1 sleeps here regardless of outcome before returning to FIND_RED_ICONS.
+            self._sleep(level.unlock_settle_delay)
         return next_state
 
     def _report_level_completion(self) -> None:
