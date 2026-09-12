@@ -165,10 +165,14 @@ def _toggle_bot(config: BotConfig) -> None:
         return
     if bot_instance.running:
         bot_instance.stop()
-        # primed_event_count is cleared uniformly in _run(), keyed on the bot's actual running
-        # transition rather than on this call path specifically — see the comment there. That
-        # also covers every auto-stop (watchdog escalation, foreground loss, an unhandled
-        # exception) which never goes through this function at all.
+        # v1's exact (asymmetric) behavior: priming is cleared only on this manual-stop path.
+        # An internal auto-stop (watchdog escalation, foreground loss, an unhandled exception)
+        # leaves the prior event-zone selection primed, so the next Z press restarts instantly
+        # without re-prompting — including v1's own unclosed race where on_press("z")'s
+        # request_stop() and toggle_requested.set() are two separate statements, so step() can
+        # self-stop in the gap before this function ever runs for that press.
+        primed_event_count = None
+        logger.info("Bot stopped; press Z to prime the next run")
         return
 
     if primed_event_count is None:
@@ -242,8 +246,6 @@ def shutdown_logging() -> None:
 
 
 def _run(config: BotConfig) -> None:
-    global primed_event_count
-    was_running = False
     while not should_exit.is_set():
         if toggle_requested.is_set():
             toggle_requested.clear()
@@ -253,19 +255,6 @@ def _run(config: BotConfig) -> None:
             _toggle_red_icon_mode()
         elif bot_instance is not None and bot_instance.running:
             bot_instance.step()
-        # Clear priming on the bot's actual running transition, not on which code path caused
-        # it — a watchdog escalation, a lost-foreground stop, or an unhandled exception inside
-        # step() all stop the bot without ever calling _toggle_bot(), and previously left
-        # primed_event_count stale, so the next Z press skipped re-priming and restarted
-        # instantly (possibly with a now-wrong forbidden-zone selection). This also closes the
-        # narrow race where on_press("z")'s request_stop() and toggle_requested.set() are two
-        # separate statements: even if step() self-stops in the gap between them, this check
-        # still catches the transition on this same loop pass.
-        now_running = bot_instance is not None and bot_instance.running
-        if was_running and not now_running:
-            primed_event_count = None
-            logger.info("Bot stopped; press Z to prime the next run")
-        was_running = now_running
         should_exit.wait(config.flow_timing.event_loop_interval)
 
 
