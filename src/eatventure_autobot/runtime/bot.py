@@ -268,7 +268,9 @@ class EatventureBot:
         if not found:
             if result.best is None:
                 self._scrcpy_recovery(self._config.scrcpy_recovery.upgrade_delay)
-            self._sleep(station.search_interval)
+            # v1 doesn't sleep before giving up on the last attempt.
+            if attempt < station.search_attempts:
+                self._sleep(station.search_interval)
         return flow.decide_search_upgrade_station(
             self.context,
             station,
@@ -327,7 +329,8 @@ class EatventureBot:
         station = self._config.upgrade_station
         base = self._config.thresholds.upgrade_station
         relaxed = base - station.threshold_relaxation
-        for attempt in range(max(1, station.verify_search_attempts)):
+        attempts = max(1, station.verify_search_attempts)
+        for attempt in range(attempts):
             threshold = base if attempt == 0 else relaxed
             frame = self._vision.capture(
                 max_y=self._config.capture_regions.upgrade_station_search_y
@@ -335,7 +338,8 @@ class EatventureBot:
             result = self._vision.find_upgrade_station(frame, threshold)
             if result.best is not None and self._is_clickable(result.best.center):
                 return result.best.center, relaxed
-            if not self._sleep(station.verify_search_interval):
+            # v1 doesn't sleep before giving up on the last attempt.
+            if attempt < attempts - 1 and not self._sleep(station.verify_search_interval):
                 return None
         return None
 
@@ -418,15 +422,15 @@ class EatventureBot:
 
         targets = self._config.click_targets
         if self._input.click(*targets.stats_upgrade_button_pos):
-            self._sleep(self._config.scrcpy_recovery.action_settle_delay)
-            self._input.spam_click_at(
-                *targets.stats_upgrade_pos,
-                self._config.stats_upgrade.click_duration,
-                self._config.stats_upgrade.click_delay,
-                down_duration=self._config.stats_upgrade.mouse_down_duration,
-                up_duration=self._config.stats_upgrade.mouse_up_duration,
-            )
-            self._click_idle()
+            if self._sleep(self._config.scrcpy_recovery.action_settle_delay):
+                self._input.spam_click_at(
+                    *targets.stats_upgrade_pos,
+                    self._config.stats_upgrade.click_duration,
+                    self._config.stats_upgrade.click_delay,
+                    down_duration=self._config.stats_upgrade.mouse_down_duration,
+                    up_duration=self._config.stats_upgrade.mouse_up_duration,
+                )
+                self._click_idle()
         return flow.decide_upgrade_stats(flow.StatsIconObservation(False, True))
 
     def _handle_open_boxes(self) -> State:
@@ -509,9 +513,10 @@ class EatventureBot:
         targets = self._config.click_targets
         level = self._config.level_transition
         button_ok = self._input.click(*targets.new_level_button_pos)
+        if button_ok and not self._sleep(level.confirmation_delay):
+            return State.CHECK_NEW_LEVEL
         transition_ok: bool | None = None
         if button_ok:
-            self._sleep(level.confirmation_delay)
             transition_ok = self._input.click(*targets.level_transition_pos)
             if transition_ok:
                 self._sleep(level.secondary_settle_delay)
@@ -529,7 +534,9 @@ class EatventureBot:
         frame = self._vision.capture(max_y=self._config.capture_regions.max_search_y)
         result = self._vision.find_new_level_button(frame)
         if result.best is None or not self._is_clickable(result.best.center):
-            self._sleep(level.search_interval)
+            # v1 doesn't sleep before giving up on the last attempt.
+            if attempt < level.search_attempts:
+                self._sleep(level.search_interval)
             return flow.decide_transition_level(
                 self.context, level, flow.TransitionLevelObservation(False, attempt, None)
             )
