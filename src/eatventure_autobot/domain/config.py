@@ -2,8 +2,7 @@
 timing that paces state transitions) are ported verbatim from v1's config.py by deliberate
 decision: this codebase's state-handler flow and sequence now follows v1's exactly, including the
 values that pace it. Detection-internal tuning (HSV ranges, NMS thresholds, template offsets)
-stays independently calibrated per the Stage 2 empirical detection spike (see
-GREENFIELD_PLAN.md decision 6) and is not part of that port."""
+stays independently calibrated from live-frame empirical testing and is not part of that port."""
 
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,6 +23,11 @@ class WindowConfig:
     width: int = 360
     height: int = 780
     debug: bool = False
+    # v1 gated a Windows-GDI debug overlay (ForbiddenAreaOverlay) on this flag: semi-transparent
+    # red rectangles drawn over the configured forbidden click zones, for visually verifying them
+    # against the live window. Deliberately not ported — it's cosmetic, off by default in v1, and
+    # would require new per-platform compositing code in the capture layer for a debug-only tool.
+    # The field itself is kept as a config value; no behavior is currently wired to it.
     show_forbidden_area: bool = False
 
 

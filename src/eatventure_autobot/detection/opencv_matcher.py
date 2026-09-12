@@ -1,12 +1,12 @@
 """OpenCV masked-template matching + HSV pixel-ratio gate + IoU-based NMS. This is a faithful,
 verified port of v1's image_matcher.py core algorithm (read in full — TM_SQDIFF_NORMED, erosion-
 based local-minima candidate search via connected components, HSV gate with hue-wraparound
-handling), not a guess. Per GREENFIELD_PLAN.md decision 6 (the detection spike): this keeps the
+handling), not a guess. An empirical detection spike against live frames confirmed this keeps the
 NMS/dedup step (it measurably cut duplicate candidates ~2x with no shown latency cost) but does
-not carry over v2's extra region-merging/component-region search — that wasn't justified by the
-spike's evidence either way. One deliberate simplification, not a transcription: NMS here is pure
-IoU (via BoundingBox.iou), dropping v1's extra ad-hoc pixel-distance pre-filter — a more principled
-and equally effective way to express "these two boxes overlap."
+not carry over an earlier, unjustified extra region-merging/component-region search. One deliberate
+simplification, not a transcription: NMS here is pure IoU (via BoundingBox.iou), dropping v1's
+extra ad-hoc pixel-distance pre-filter — a more principled and equally effective way to express
+"these two boxes overlap."
 """
 
 import logging
@@ -255,9 +255,9 @@ class OpenCvTemplateMatcher:
         hsv_gate: HsvGate | None,
     ) -> list[MatchCandidate]:
         """Converts the frame to HSV at most once (only if hsv_gate is set) and reuses it across
-        every template — the per-frame-shared-mask optimization GREENFIELD_PLAN.md documents
-        keeping from v2, previously only claimed in this module's docstring, never actually built:
-        each template independently re-converted its own per-candidate ROI to HSV."""
+        every template. This optimization was previously only claimed in this module's docstring
+        and never actually built: each template independently re-converted its own per-candidate
+        ROI to HSV."""
         frame_bgr = _as_bgr(frame, "frame")
         hsv_frame = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV) if hsv_gate is not None else None
         all_candidates: list[MatchCandidate] = []
@@ -268,19 +268,6 @@ class OpenCvTemplateMatcher:
                 )
             )
         return all_candidates
-
-    def find_all_templates(
-        self,
-        frame: np.ndarray,
-        template_names: tuple[str, ...],
-        threshold: float,
-        min_distance: int = 15,
-        hsv_gate: HsvGate | None = None,
-    ) -> list[MatchCandidate]:
-        candidates = self._find_candidates_across_templates(
-            frame, template_names, threshold, min_distance, hsv_gate
-        )
-        return self.suppress_overlaps(candidates, _DEFAULT_NMS_IOU_THRESHOLD)
 
     def find_candidates_across_templates(
         self,

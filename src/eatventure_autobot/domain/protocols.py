@@ -95,15 +95,6 @@ class TemplateMatcher(Protocol):
         hsv_gate: HsvGate | None = None,
     ) -> list[MatchCandidate]: ...
 
-    def find_all_templates(
-        self,
-        frame: np.ndarray,
-        template_names: tuple[str, ...],
-        threshold: float,
-        min_distance: int = 15,
-        hsv_gate: HsvGate | None = None,
-    ) -> list[MatchCandidate]: ...
-
     def find_candidates_across_templates(
         self,
         frame: np.ndarray,
@@ -126,9 +117,3 @@ class Notifier(Protocol):
     def notify_new_level(self, level_number: int, time_spent: float) -> None: ...
 
     def close(self) -> None: ...
-
-
-class HotkeyPoint(Protocol):
-    """Cursor-position readout used by the 'X' debug hotkey, relative to the target window."""
-
-    def __call__(self) -> Point: ...

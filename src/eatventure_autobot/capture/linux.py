@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 _SESSION_TYPE = os.getenv("XDG_SESSION_TYPE", "").lower()
 if _SESSION_TYPE == "wayland" and os.getenv("DISPLAY"):
     # Force PyWinCtl onto its X11 backend so it can control an XWayland-only target.
-    # Native Wayland is out of scope (GREENFIELD_PLAN.md decision 1).
+    # Native Wayland is intentionally out of scope — see the class docstring below.
     os.environ["XDG_SESSION_TYPE"] = "x11"
 
 

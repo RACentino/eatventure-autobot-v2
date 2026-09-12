@@ -12,8 +12,9 @@ _MAX_MESSAGE_LENGTH = 4096
 
 
 def load_telegram_config_from_env() -> TelegramConfig:
-    """Builds TelegramConfig from EATVENTURE_TELEGRAM_* env vars. Credentials are env-var gated
-    and never live in domain/config.py (see GREENFIELD_PLAN.md)."""
+    """Builds TelegramConfig from EATVENTURE_TELEGRAM_* env vars. Credentials are deliberately
+    env-var gated and never live in domain/config.py, so they can't end up in a config dump or
+    committed alongside it."""
     enabled = os.environ.get("EATVENTURE_TELEGRAM_ENABLED", "").strip().casefold() in {
         "1",
         "true",
