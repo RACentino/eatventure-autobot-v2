@@ -47,7 +47,10 @@ class ThresholdConfig:
     new_level_red_icon: float = 0.942
     stats_red_icon: float = 0.943
     upgrade_station: float = 0.910
-    box: float = 0.930  # reverted attempted 0.880 — live-frame evidence showed loosening this let shape-only matches through on unrelated flat UI surfaces (counter/icons); the HSV gate below now carries accuracy instead
+    # Reverted attempted 0.880 — live-frame evidence showed loosening this let shape-only matches
+    # through on unrelated flat UI surfaces (counter/icons); the HSV gate below now carries
+    # accuracy instead.
+    box: float = 0.930
     unlock: float = 0.905
     new_level: float = 0.965
 

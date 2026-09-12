@@ -34,7 +34,11 @@ class LinuxWindowCapture(PyWinCtlWindowCapture):
             self._xdisplay = display.Display()
         except Exception as exc:
             raise CaptureError(f"Cannot open X11 display: {exc}") from exc
-        super().__init__(title, target_width, target_height, stop_event)
+        try:
+            super().__init__(title, target_width, target_height, stop_event)
+        except Exception:
+            self._xdisplay.close()
+            raise
 
     def _resize_hint(self) -> str:
         if _SESSION_TYPE == "wayland":

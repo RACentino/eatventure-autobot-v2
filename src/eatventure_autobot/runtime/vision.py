@@ -12,7 +12,7 @@ import numpy as np
 from eatventure_autobot.detection.opencv_matcher import filter_by_template_consensus
 from eatventure_autobot.domain.config import BotConfig
 from eatventure_autobot.domain.errors import DetectionError
-from eatventure_autobot.domain.protocols import ScreenCapture, TemplateMatcher
+from eatventure_autobot.domain.protocols import InputController, ScreenCapture, TemplateMatcher
 from eatventure_autobot.domain.types import MatchCandidate, MatchResult, Point, Zone
 
 logger = logging.getLogger(__name__)
@@ -103,17 +103,14 @@ class GameVision:
         now = time.monotonic()
         interval = self._config.flow_timing.window_relocate_interval
         should_relocate = now - self._last_relocate_at >= interval
+        self._capture.ensure_window(resize=should_relocate)
         if should_relocate:
             self._last_relocate_at = now
-        self._capture.ensure_window(resize=should_relocate)
 
-    def cursor_position_in_window(self, input_controller: object) -> Point | None:
+    def cursor_position_in_window(self, input_controller: InputController) -> Point | None:
         """Window-relative cursor readout for the 'X' debug hotkey."""
-        getter = getattr(input_controller, "get_cursor_position", None)
-        if not callable(getter):
-            return None
         try:
-            screen_x, screen_y = getter()
+            screen_x, screen_y = input_controller.get_cursor_position()
             bounds = self._capture.get_window_rect()
         except Exception:
             return None

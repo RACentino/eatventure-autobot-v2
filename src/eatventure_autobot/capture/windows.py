@@ -24,7 +24,11 @@ class WindowsWindowCapture(PyWinCtlWindowCapture):
             self._backend: Any = mss.mss()
         except Exception as exc:
             raise CaptureError(f"Cannot initialize Windows capture backend: {exc}") from exc
-        super().__init__(title, target_width, target_height, stop_event)
+        try:
+            super().__init__(title, target_width, target_height, stop_event)
+        except Exception:
+            self._backend.close()
+            raise
 
     def capture(self, max_y: int | None = None) -> np.ndarray:
         with self._lock:

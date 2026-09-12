@@ -8,11 +8,12 @@ dependencies = [
     "numpy==2.4.4",
     "pynput==1.8.2",
     "requests==2.34.0",
+    "PyWinCtl==0.4.1",
 ]
 
 [project.optional-dependencies]
 windows = ["mss==10.2.0"]
-linux = ["PyWinCtl==0.4.1", "python-xlib==0.33"]
+linux = ["python-xlib==0.33"]
 
 [dependency-groups]
 dev = ["pytest==8.4.1", "ruff==0.16.4", "mypy==1.14.1"]
