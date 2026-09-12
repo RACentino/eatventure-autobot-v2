@@ -433,14 +433,16 @@ class EatventureBot:
         targets = self._config.click_targets
         button_clicked = self._input.click(*targets.stats_upgrade_button_pos)
         if button_clicked and self._sleep(self._config.scrcpy_recovery.action_settle_delay):
-            self._input.spam_click_at(
+            if self._input.spam_click_at(
                 *targets.stats_upgrade_pos,
                 self._config.stats_upgrade.click_duration,
                 self._config.stats_upgrade.click_delay,
                 down_duration=self._config.stats_upgrade.mouse_down_duration,
                 up_duration=self._config.stats_upgrade.mouse_up_duration,
-            )
-            self._click_idle()
+            ):
+                self._click_idle()
+            else:
+                logger.warning("Stats upgrade spam-click failed at %s", targets.stats_upgrade_pos)
         return flow.decide_upgrade_stats(flow.StatsIconObservation(False, True))
 
     def _handle_open_boxes(self) -> State:
