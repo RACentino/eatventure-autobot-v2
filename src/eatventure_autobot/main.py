@@ -164,7 +164,7 @@ def _toggle_bot(config: BotConfig) -> None:
     if bot_instance is None:
         return
     if bot_instance.running:
-        bot_instance.stop()
+        bot_instance.stop(manual=True)
         # v1's exact (asymmetric) behavior: priming is cleared only on this manual-stop path.
         # An internal auto-stop (watchdog escalation, foreground loss, an unhandled exception)
         # leaves the prior event-zone selection primed, so the next Z press restarts instantly

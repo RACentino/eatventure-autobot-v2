@@ -96,7 +96,7 @@ class EatventureBot:
     def request_stop(self) -> None:
         self._stop_requested.set()
 
-    def stop(self) -> None:
+    def stop(self, *, manual: bool = False) -> None:
         self.request_stop()
         with self._step_lock:
             was_running = self.running
@@ -105,7 +105,10 @@ class EatventureBot:
             self.state = State.FIND_RED_ICONS
             self.context.reset_run()
             self._watchdog.reset()
-        if was_running:
+        # v1 only sends "Bot Stopped" from the manual Z-toggle stop path; an internal auto-stop
+        # (stop-requested race, lost foreground, an unhandled handler exception, or close()'s
+        # own cleanup call) never notifies there, so it doesn't here either.
+        if was_running and manual:
             self._notifier.notify_bot_stopped()
 
     def close(self) -> None:
