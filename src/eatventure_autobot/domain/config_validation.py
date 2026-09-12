@@ -78,6 +78,11 @@ def validate_upgrade_station(config: UpgradeStationConfig) -> None:
             f"{config.hold_check_interval_min} > {config.hold_check_interval_max}"
         )
     _fraction("threshold_relaxation", config.threshold_relaxation)
+    _fraction("candidate_nms_iou_threshold", config.candidate_nms_iou_threshold)
+    if config.candidate_min_distance < 1:
+        raise ConfigError(
+            f"candidate_min_distance must be >= 1, got {config.candidate_min_distance}"
+        )
     _positive("verify_settle_delay", config.verify_settle_delay)
     if config.disappear_position_tolerance_px < 0:
         raise ConfigError(

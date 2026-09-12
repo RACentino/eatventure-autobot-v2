@@ -140,6 +140,26 @@ class GameVision:
             hsv_gated=True,
         )
 
+    def find_upgrade_station_candidates(
+        self, frame: np.ndarray, threshold: float
+    ) -> list[MatchCandidate]:
+        """Multi-candidate scan so a handler can skip a forbidden-zone best match in favor of
+        the next one — matches v1's _find_upgrade_station_match, which iterates every detected
+        candidate rather than only ever seeing a single best. Only one template exists for this
+        target, so there is no cross-template consensus to require (min_matches=1)."""
+        if UPGRADE_STATION_TEMPLATE not in self._loaded:
+            return []
+        station = self._config.upgrade_station
+        return self._gather(
+            frame,
+            (UPGRADE_STATION_TEMPLATE,),
+            threshold,
+            station.candidate_min_distance,
+            station.hsv,
+            1,
+            station.candidate_nms_iou_threshold,
+        )
+
     def _find_one(
         self, frame: np.ndarray, template_name: str, threshold: float, hsv_gated: bool = False
     ) -> MatchResult:

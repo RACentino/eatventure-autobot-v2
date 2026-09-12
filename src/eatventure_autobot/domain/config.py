@@ -103,6 +103,11 @@ class UpgradeStationConfig:
     search_interval: float = 0.080
     search_attempts: int = 5
     failed_searches_before_scroll: int = 3
+    # Multi-candidate scan geometry so SEARCH_UPGRADE_STATION can skip a forbidden-zone best
+    # match in favor of the next candidate, matching v1's _find_upgrade_station_match exactly:
+    # its own template-match dedup distance and find_all_templates()'s hardcoded NMS threshold.
+    candidate_min_distance: int = 15
+    candidate_nms_iou_threshold: float = 0.20
     # Relaxation applied to the match threshold on later search/verify attempts (both repos'
     # verified behavior). The two call sites that use this trigger it at different attempt
     # counts on purpose — see the comments at each site — only the value is shared here.

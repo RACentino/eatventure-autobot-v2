@@ -262,11 +262,13 @@ class EatventureBot:
         if attempt > 2:
             threshold -= station.threshold_relaxation
         frame = self._vision.capture(max_y=self._config.capture_regions.upgrade_station_search_y)
-        result = self._vision.find_upgrade_station(frame, threshold)
-        position = result.best.center if result.best is not None else None
-        found = position is not None and self._is_clickable(position)
+        candidates = self._vision.find_upgrade_station_candidates(frame, threshold)
+        # v1 picks the first candidate that isn't in a forbidden zone, not necessarily the
+        # highest-confidence one — so a blocked best match doesn't hide a usable second one.
+        position = next((c.center for c in candidates if self._is_clickable(c.center)), None)
+        found = position is not None
         if not found:
-            if result.best is None:
+            if not candidates:
                 self._scrcpy_recovery(self._config.scrcpy_recovery.upgrade_delay)
             # v1 doesn't sleep before giving up on the last attempt.
             if attempt < station.search_attempts:
@@ -287,7 +289,7 @@ class EatventureBot:
                 flow.UpgradeHoldObservation(False, False, False),
             )
 
-        verified = self._verify_upgrade_station(position)
+        verified = self._verify_upgrade_station()
         if verified is None:
             return flow.decide_hold_upgrade_station(
                 self.context,
@@ -343,26 +345,33 @@ class EatventureBot:
                 return None
         return None
 
-    def _verify_upgrade_station(self, position: Point) -> tuple[Point, float] | None:
-        """Single click-then-verify pass before committing to a hold: a settle delay, one click
-        on the stored position, another settle delay, then a single verify_upgrade_station_round()
-        retry loop. Both settle delays reuse the same verify_settle_delay config value v1 used
-        around its verification steps."""
+    def _verify_upgrade_station(self) -> tuple[Point, float] | None:
+        """Two-round pre-hold verification, matching v1's _verify_upgrade_station_hold_target
+        exactly: a settle delay, then round 1 verifies the current on-screen state with no click
+        at all; only if the station is still there does a priming click fire on the
+        freshly-verified position (not the stale stored one), followed by another settle delay
+        and a second round that must also confirm it before committing to a hold."""
         station = self._config.upgrade_station
         if not self._sleep(station.verify_settle_delay):
             return None
 
-        if not self._input.precise_click(*position):
-            logger.info("Upgrade station verification click failed at (%s, %s)", *position)
+        first = self._verify_upgrade_station_round()
+        if first is None:
+            logger.info("Upgrade station was not visible during verification")
+            return None
+
+        target, _ = first
+        if not self._input.precise_click(*target):
+            logger.info("Upgrade station verification click failed at (%s, %s)", *target)
             return None
         if not self._sleep(station.verify_settle_delay):
             return None
 
-        result = self._verify_upgrade_station_round()
-        if result is None:
+        second = self._verify_upgrade_station_round()
+        if second is None:
             logger.info("Upgrade station was not visible during verification")
             return None
-        return result
+        return second
 
     def _station_disappeared(self, threshold: float, position: Point) -> bool:
         """Single capture+check for one poll tick, at the relaxed threshold (the same leniency
@@ -422,16 +431,16 @@ class EatventureBot:
             return flow.decide_upgrade_stats(flow.StatsIconObservation(False, False))
 
         targets = self._config.click_targets
-        if self._input.click(*targets.stats_upgrade_button_pos):
-            if self._sleep(self._config.scrcpy_recovery.action_settle_delay):
-                self._input.spam_click_at(
-                    *targets.stats_upgrade_pos,
-                    self._config.stats_upgrade.click_duration,
-                    self._config.stats_upgrade.click_delay,
-                    down_duration=self._config.stats_upgrade.mouse_down_duration,
-                    up_duration=self._config.stats_upgrade.mouse_up_duration,
-                )
-                self._click_idle()
+        button_clicked = self._input.click(*targets.stats_upgrade_button_pos)
+        if button_clicked and self._sleep(self._config.scrcpy_recovery.action_settle_delay):
+            self._input.spam_click_at(
+                *targets.stats_upgrade_pos,
+                self._config.stats_upgrade.click_duration,
+                self._config.stats_upgrade.click_delay,
+                down_duration=self._config.stats_upgrade.mouse_down_duration,
+                up_duration=self._config.stats_upgrade.mouse_up_duration,
+            )
+            self._click_idle()
         return flow.decide_upgrade_stats(flow.StatsIconObservation(False, True))
 
     def _handle_open_boxes(self) -> State:
