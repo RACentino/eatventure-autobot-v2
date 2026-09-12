@@ -433,12 +433,19 @@ class EatventureBot:
         targets = self._config.click_targets
         button_clicked = self._input.click(*targets.stats_upgrade_button_pos)
         if button_clicked and self._sleep(self._config.scrcpy_recovery.action_settle_delay):
+            # stats_upgrade_pos (290, 310) sits inside the 2-/3-event forbidden zones
+            # (ForbiddenZoneConfig.event_zone_options) meant to protect the event banner from
+            # stray clicks elsewhere in the flow. By the time we click here the stats panel is
+            # already open and covers that banner, so the protection is a false positive for
+            # this one call — bypass it rather than shrinking the zones or moving this
+            # confirmed-correct click target.
             if self._input.spam_click_at(
                 *targets.stats_upgrade_pos,
                 self._config.stats_upgrade.click_duration,
                 self._config.stats_upgrade.click_delay,
                 down_duration=self._config.stats_upgrade.mouse_down_duration,
                 up_duration=self._config.stats_upgrade.mouse_up_duration,
+                check_forbidden=False,
             ):
                 self._click_idle()
             else:

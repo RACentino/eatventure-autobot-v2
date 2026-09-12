@@ -35,7 +35,14 @@ class InputController(Protocol):
 
     def set_event_forbidden_zone(self, zone: Zone) -> None: ...
 
-    def click(self, x: int, y: int, relative: bool = True, delay: float | None = None) -> bool: ...
+    def click(
+        self,
+        x: int,
+        y: int,
+        relative: bool = True,
+        delay: float | None = None,
+        check_forbidden: bool = True,
+    ) -> bool: ...
 
     def precise_click(
         self, x: int, y: int, relative: bool = True, delay: float | None = None
@@ -50,6 +57,7 @@ class InputController(Protocol):
         relative: bool = True,
         down_duration: float | None = None,
         up_duration: float | None = None,
+        check_forbidden: bool = True,
     ) -> bool: ...
 
     def drag(

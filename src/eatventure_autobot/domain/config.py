@@ -261,9 +261,9 @@ class ForbiddenZoneConfig:
     click_zone: Zone = Zone(60, 260, 668, None)
     event_zone_options: dict[int, Zone] = field(
         default_factory=lambda: {
-            1: Zone(290, 350, 93, 260),
-            2: Zone(290, 350, 93, 320),
-            3: Zone(290, 350, 93, 370),
+            1: Zone(310, 360, 93, 260),
+            2: Zone(310, 360, 93, 320),
+            3: Zone(310, 360, 93, 370),
         }
     )
     numbered_zones: tuple[Zone, ...] = (

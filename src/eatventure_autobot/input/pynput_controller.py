@@ -114,8 +114,11 @@ class PynputInputController:
             x, y = self._device.position
             return int(x), int(y)
 
-    def _set_cursor_pos(self, x: int, y: int) -> bool:
-        if self._resolve_screen_position(x, y, relative=False) is None:
+    def _set_cursor_pos(self, x: int, y: int, check_forbidden: bool = True) -> bool:
+        resolved = self._resolve_screen_position(
+            x, y, relative=False, check_forbidden=check_forbidden
+        )
+        if resolved is None:
             return False
         retry_count = max(1, self._timing.retry_count)
         for attempt in range(retry_count):
@@ -203,10 +206,17 @@ class PynputInputController:
             return True
         return self._wait(self._timing.hover_duration)
 
-    def click(self, x: int, y: int, relative: bool = True, delay: float | None = None) -> bool:
+    def click(
+        self,
+        x: int,
+        y: int,
+        relative: bool = True,
+        delay: float | None = None,
+        check_forbidden: bool = True,
+    ) -> bool:
         with self._lock:
-            position = self._resolve_screen_position(x, y, relative)
-            if position is None or not self._set_cursor_pos(*position):
+            position = self._resolve_screen_position(x, y, relative, check_forbidden)
+            if position is None or not self._set_cursor_pos(*position, check_forbidden):
                 return False
             if not self._wait(self._timing.move_delay) or not self._hover_before_click():
                 return False
@@ -243,10 +253,11 @@ class PynputInputController:
         relative: bool = True,
         down_duration: float | None = None,
         up_duration: float | None = None,
+        check_forbidden: bool = True,
     ) -> bool:
         with self._lock:
-            position = self._resolve_screen_position(x, y, relative)
-            if position is None or not self._set_cursor_pos(*position):
+            position = self._resolve_screen_position(x, y, relative, check_forbidden)
+            if position is None or not self._set_cursor_pos(*position, check_forbidden):
                 return False
             if not self._wait(self._timing.move_delay):
                 return False
