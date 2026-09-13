@@ -124,7 +124,10 @@ def decide_search_upgrade_station(
     if obs.found:
         context.upgrade_station_pos = obs.position
         context.upgrade_found_in_cycle = True
-        context.consecutive_failed_upgrade_searches = 0
+        # Deliberately NOT resetting consecutive_failed_upgrade_searches here (moved to
+        # decide_hold_upgrade_station's genuine-completion branch, see comment there): a station
+        # that is found every cycle but never successfully held would otherwise re-zero this
+        # counter on every pass, before the hold below ever gets a chance to increment it past 1.
         context.cycle_counter = 0
         return State.HOLD_UPGRADE_STATION
     if obs.attempt_number >= config.search_attempts:
@@ -148,19 +151,34 @@ class UpgradeHoldObservation:
 def decide_hold_upgrade_station(
     context: FlowContext, config: FlowTimingConfig, obs: UpgradeHoldObservation
 ) -> State:
+    # Intentional deviation from literal v1 parity (v1 has this exact gap too, unfixed): a red
+    # icon whose station is found every SEARCH but never actually holds/clicks successfully would
+    # otherwise loop FIND_RED_ICONS<->OPEN_BOXES forever, since nothing here used to touch this
+    # counter and the same-state watchdog never fires (the state keeps changing every tick).
+    # Reusing consecutive_failed_upgrade_searches feeds the existing OPEN_BOXES->SCROLL escape
+    # (failed_searches_before_scroll) without adding a new counter or config value -- but it only
+    # resets on a genuinely COMPLETED hold below, not on decide_search_upgrade_station's "found"
+    # branch, so repeated hold failures actually accumulate across cycles instead of being
+    # re-zeroed by the very next search success.
     if not obs.target_available:
+        context.consecutive_failed_upgrade_searches += 1
         return State.OPEN_BOXES
     if not obs.verification_passed:
         # Verified: the verification helper itself clears both of these before bailing.
         context.upgrade_station_pos = None
         context.upgrade_found_in_cycle = False
+        context.consecutive_failed_upgrade_searches += 1
         return State.OPEN_BOXES
     # Replace the stored position with the freshly-verified one: if the hold below fails without
     # clearing it (next branch), the next attempt should retry against the accurate position.
     context.upgrade_station_pos = obs.verified_position
     if not obs.hold_completed:
         # Verified: a failed hold returns without clearing the stored position.
+        context.consecutive_failed_upgrade_searches += 1
         return State.OPEN_BOXES
+    # The hold actually completed: real progress, so clear the streak here rather than at
+    # decide_search_upgrade_station's "found" branch (see comment there).
+    context.consecutive_failed_upgrade_searches = 0
     current = current_red_icon_target(context)
     if current is not None:
         context.remember_successful_red_icon_row(current.center[1])
