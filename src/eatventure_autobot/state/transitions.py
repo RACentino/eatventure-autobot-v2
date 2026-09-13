@@ -254,11 +254,20 @@ class NewLevelVerificationObservation:
     verified: bool
     button_click_succeeded: bool | None
     transition_click_succeeded: bool | None
+    # None when no verification scroll was attempted this cycle (already verified from an earlier
+    # pass, so the scroll+rescan branch was skipped); False when the restored verification-scroll
+    # drag (or one of its settle sleeps) failed — distinct from a completed rescan finding no
+    # icon, and distinct from the click-retry tail's own False fields below.
+    scroll_succeeded: bool | None = None
 
 
 def decide_check_new_level(context: FlowContext, obs: NewLevelVerificationObservation) -> State:
     # Verified v1 behavior: the verify phase gives up on the very first miss (no retry loop), and
     # the click-retry tail loops unboundedly (watchdog-only) — neither branch counts attempts.
+    # A failed verification-scroll drag self-loops the same unbounded way, without touching
+    # new_level_red_icon_verified or the search cycle.
+    if obs.scroll_succeeded is False:
+        return State.CHECK_NEW_LEVEL
     if obs.verified:
         context.new_level_red_icon_verified = True
     if not obs.verified:

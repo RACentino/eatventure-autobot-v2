@@ -236,6 +236,17 @@ class LevelTransitionConfig:
     unlock_search_attempts: int = 4
     unlock_search_interval: float = 0.300
     unlock_settle_delay: float = 0.016
+    # Restored from v1 (73f5db0/eccd810; removed in 12e397a as an incidental bundle alongside an
+    # unrelated upgrade-station fix): one down-drag "verification scroll" performed before the
+    # very first new-level red-icon rescan, forcing a fresh render before trusting a miss. Kept
+    # here rather than on ScrollConfig by deliberate decision, despite overlapping defaults —
+    # ScrollConfig is independently used by the oscillating FIND_RED_ICONS/OPEN_BOXES/
+    # UPGRADE_STATS scroll and must not be conflated with this one-shot verification step. Origin
+    # point reuses click_targets.scroll_start_pos; only distance/duration/settle timing are here.
+    verification_scroll_distance: int = 100
+    verification_scroll_duration: float = 0.300
+    verification_scroll_settle_delay: float = 0.300
+    verification_scroll_interval_pause: float = 0.300
 
 
 @dataclass(frozen=True, slots=True)

@@ -512,6 +512,24 @@ class EatventureBot:
             moved = self._sleep(scroll.post_scroll_settle) and self._sleep(scroll.interval_pause)
         return flow.decide_scroll(self.context, moved)
 
+    def _perform_new_level_verification_scroll(self) -> bool:
+        """Restored from v1 (73f5db0/eccd810): one mouse-drag "scroll" gesture used solely to
+        force a fresh render before re-scanning for the new-level red icon. Reuses the shared
+        scroll_start_pos origin; distance/duration/settle timing are dedicated to this step on
+        LevelTransitionConfig, independent of the oscillating ScrollConfig used by _handle_scroll.
+        """
+        level = self._config.level_transition
+        start_x, start_y = self._config.click_targets.scroll_start_pos
+        # Dragging from start_y to start_y - distance scrolls the CONTENT DOWN (finger moves up).
+        target_y = start_y - level.verification_scroll_distance
+        if not self._input.drag(
+            start_x, start_y, start_x, target_y, duration=level.verification_scroll_duration
+        ):
+            return False
+        if not self._sleep(level.verification_scroll_settle_delay):
+            return False
+        return self._sleep(level.verification_scroll_interval_pause)
+
     def _handle_check_new_level(self) -> State:
         # Verified v1 behavior: no attempt caps and no scrcpy-recovery here — a verify miss resets
         # immediately (single-shot), and the click-retry tail is an unbounded, watchdog-only loop.
@@ -521,6 +539,12 @@ class EatventureBot:
             return State.CHECK_NEW_LEVEL
 
         if not self.context.new_level_red_icon_verified:
+            if not self._perform_new_level_verification_scroll():
+                logger.warning("Failed to perform verification scroll for new level red icon")
+                return flow.decide_check_new_level(
+                    self.context,
+                    flow.NewLevelVerificationObservation(False, None, None, scroll_succeeded=False),
+                )
             frame = self._vision.capture(max_y=self._config.capture_regions.extended_search_y)
             candidates = self._vision.find_red_icons(frame)
             _, verified, _ = self._vision.split_red_icons(candidates)
