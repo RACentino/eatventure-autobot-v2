@@ -89,12 +89,21 @@ class BoxDetectionConfig:
     # crates at a 0.99-1.00 HSV match ratio (well clear of the 0.65 floor) while matching 0
     # candidates on the false-positive locations from the earlier attempt.
     hsv: HsvGate = HsvGate(
-        ranges=(HsvRange((10, 90, 130), (26, 255, 255)),),
-        min_match_ratio=0.65,
+        ranges=(
+            HsvRange((10, 90, 130), (26, 255, 255)),
+            HsvRange((10, 65, 180), (13, 105, 255)),
+            HsvRange((13, 90, 120), (15, 190, 245)),
+            HsvRange((18, 90, 120), (18, 129, 245)),
+            HsvRange((18, 130, 120), (18, 130, 229)),
+            HsvRange((18, 130, 235), (18, 130, 245)),
+            HsvRange((18, 131, 120), (18, 190, 245)),
+            HsvRange((20, 115, 220), (20, 125, 245)),
+            HsvRange((23, 65, 140), (30, 115, 255)),),
+        min_match_ratio=0.390,
     )
     template_names: tuple[str, ...] = ("box1", "box2", "box3", "box4")
-    nms_iou_threshold: float = 0.190
-    min_matches: int = 1
+    nms_iou_threshold: float = 0.144
+    min_matches: int = 2
     min_distance: int = 15
 
 
@@ -198,7 +207,7 @@ class CaptureRegionConfig:
 
 @dataclass(frozen=True, slots=True)
 class ClickTargetConfig:
-    idle_click_pos: Point = (2, 707)
+    idle_click_pos: Point = (0, 390)
     stats_upgrade_button_pos: Point = (330, 750)
     stats_upgrade_pos: Point = (290, 310)
     scroll_start_pos: Point = (200, 380)
