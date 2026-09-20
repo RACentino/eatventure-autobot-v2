@@ -102,9 +102,16 @@ class BoxDetectionConfig:
         min_match_ratio=0.390,
     )
     template_names: tuple[str, ...] = ("box1", "box2", "box3", "box4")
-    nms_iou_threshold: float = 0.144
-    min_matches: int = 2
-    min_distance: int = 15
+    # v1 parity (eatventure-autobot-v1/bot.py:_collect_box_candidates/handle_open_boxes): a single
+    # template match is sufficient (min_matches=1, so _gather() takes the plain suppress_overlaps
+    # path, not the cross-template filter_by_template_consensus gate v1 has no equivalent of),
+    # merged via v1's exact suppress_overlaps(box_candidates, 0.20) IoU threshold, with v1's exact
+    # hardcoded min_distance=12 per-template local-minima clustering window. The 2026-09-19 "Config
+    # Changes" commit tightened all three (0.190->0.144, 1->2, unrelated but also stale at 15) with
+    # no v1 basis and is the confirmed cause of reduced box-open frequency.
+    nms_iou_threshold: float = 0.20
+    min_matches: int = 1
+    min_distance: int = 12
 
 
 @dataclass(frozen=True, slots=True)
