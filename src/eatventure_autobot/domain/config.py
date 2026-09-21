@@ -197,6 +197,9 @@ class FlowTimingConfig:
     state_stall_timeout_seconds: float = 9.0
     event_loop_interval: float = 0.016
     focus_settle_delay: float = 0.016
+    # v1's STATE_DELAY: the settle after a completed upgrade-station hold's idle click and after
+    # the stats-panel button click. 0.0 in v1 (still stop-aware), separate from the settles above.
+    state_delay: float = 0.0
     # How often GameVision.ensure_target_ready() is allowed to run the expensive window
     # relocate/resize query (a full window enumeration). A cheap liveness check still runs every
     # step; only the full relocate is throttled to this cadence instead of running unconditionally

@@ -126,6 +126,8 @@ def validate_flow_timing(config: FlowTimingConfig) -> None:
         raise ConfigError(
             f"state_stall_timeout_seconds must be >= 0, got {config.state_stall_timeout_seconds}"
         )
+    if config.state_delay < 0:
+        raise ConfigError(f"state_delay must be >= 0, got {config.state_delay}")
     _positive("window_relocate_interval", config.window_relocate_interval)
 
 
