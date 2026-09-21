@@ -10,6 +10,16 @@ deliberately synthesized a different (sometimes improved) behavior. Attempt caps
 (on CHECK_UNLOCK, UPGRADE_STATS, SCROLL, and both CHECK_NEW_LEVEL branches) have been removed to
 match — those states are unbounded self-loops or single-shot misses in v1, relying solely on the
 same-state watchdog (resilience/watchdog.py) as the backstop.
+
+Deliberate, user-confirmed exceptions to v1 parity -- do NOT "fix" these in a future parity pass:
+  * CHECK_NEW_LEVEL keeps its verification scroll (v1 dropped it in 12e397a; restored in v2 by
+    choice, see runtime/bot.py:_perform_new_level_verification_scroll).
+  * HOLD_UPGRADE_STATION failures count toward consecutive_failed_upgrade_searches, and that
+    counter resets only on a completed hold (v1 resets it on a station find, which leaves a
+    found-but-never-held station looping FIND_RED_ICONS<->OPEN_BOXES forever).
+  * The hold monitor rejects a station match far from the held position (live-verified false
+    positive on the MAX-state popup), which v1 has no equivalent of.
+  * Pixel-calibration config (click targets, zones, footer zone bounds) is v2's own, not v1's.
 """
 
 from collections.abc import Iterable
@@ -61,6 +71,9 @@ def decide_find_red_icons(context: FlowContext, obs: RedIconScanObservation) -> 
         context.cycle_counter = 0
         return State.TRANSITION_LEVEL
     if obs.new_level_footer_icon_found:
+        # Verified v1 behavior (_state_from_red_icon_scan): a fresh footer sighting always makes
+        # CHECK_NEW_LEVEL confirm the icon itself, never trust an earlier pass's confirmation.
+        context.new_level_red_icon_verified = False
         return State.CHECK_NEW_LEVEL
     if not obs.red_icons:
         return State.OPEN_BOXES
@@ -172,6 +185,11 @@ def decide_hold_upgrade_station(
     # Replace the stored position with the freshly-verified one: if the hold below fails without
     # clearing it (next branch), the next attempt should retry against the accurate position.
     context.upgrade_station_pos = obs.verified_position
+    # Verified v1 behavior: the red icon's row is learned as soon as its station verifies, before
+    # the hold, so it is remembered even if the hold below then fails.
+    current = current_red_icon_target(context)
+    if current is not None:
+        context.remember_successful_red_icon_row(current.center[1])
     if not obs.hold_completed:
         # Verified: a failed hold returns without clearing the stored position.
         context.consecutive_failed_upgrade_searches += 1
@@ -179,9 +197,6 @@ def decide_hold_upgrade_station(
     # The hold actually completed: real progress, so clear the streak here rather than at
     # decide_search_upgrade_station's "found" branch (see comment there).
     context.consecutive_failed_upgrade_searches = 0
-    current = current_red_icon_target(context)
-    if current is not None:
-        context.remember_successful_red_icon_row(current.center[1])
     context.upgrade_station_pos = None
     if not obs.post_hold_actions_succeeded:
         return State.OPEN_BOXES
@@ -201,13 +216,16 @@ class StatsIconObservation:
     stats_icon_found: bool
 
 
-def decide_upgrade_stats(obs: StatsIconObservation) -> State:
+def decide_upgrade_stats(context: FlowContext, obs: StatsIconObservation) -> State:
     # Verified v1 behavior: single-shot, no retry — a miss goes straight to SCROLL.
     if obs.new_level_button_found:
         return State.TRANSITION_LEVEL
-    if obs.stats_icon_found:
-        return State.OPEN_BOXES
-    return State.SCROLL
+    if not obs.stats_icon_found:
+        return State.SCROLL
+    # Verified v1: the idle-pass counter clears the moment the stats icon is confirmed, before
+    # any of the panel clicks below it (which then always end at OPEN_BOXES regardless).
+    context.cycle_counter = 0
+    return State.OPEN_BOXES
 
 
 # --- OPEN_BOXES ------------------------------------------------------------------------------

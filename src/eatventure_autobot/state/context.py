@@ -67,18 +67,25 @@ class FlowContext:
         self.oscillation_leg_progress = 0
         self.new_level_red_icon_verified = False
 
+    def refund_attempt(self) -> None:
+        """Undo the attempt the same-state return is about to be charged for: step() adds one
+        whenever a handler returns its own state, so a handler that bails before its search
+        actually ran (v1 retries those without consuming an attempt) calls this to net out."""
+        self.state_attempt -= 1
+
     def reset_run(self) -> None:
-        """The fuller reset applied when the bot stops, matching v2's stop()."""
+        """The fuller reset applied when the bot stops, matching v1's stop(). Deliberately leaves
+        upgrade_station_counter (the stats cadence), successful_red_icon_rows,
+        total_levels_completed and current_level_start_time alone: v1 carries all four across a
+        stop/restart, so stopped time counts toward the next reported level duration."""
         self.reset_search_cycle()
         self.red_icons = []
         self.current_red_icon_index = 0
         self.upgrade_station_pos = None
         self.upgrade_found_in_cycle = False
-        self.upgrade_station_counter = 0
         self.work_done = False
         self.consecutive_failed_upgrade_searches = 0
         self.state_attempt = 1
-        self.current_level_start_time = None
 
     def advance_oscillation(self, increment_step: int, max_cycles: int) -> None:
         """Verified transcription of _advance_oscillation_progress(): each cycle walks a growing
