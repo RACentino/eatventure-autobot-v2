@@ -238,14 +238,17 @@ class GameVision:
         """Partitions a red-icon scan into (actionable icons, new-level footer icon seen, stats
         icon seen). Footer icons live in dedicated zones and are signals, not click targets."""
         zones = self._config.red_icon_zones
+        thresholds = self._config.thresholds
         actionable: list[MatchCandidate] = []
         new_level_seen = False
         stats_seen = False
         for candidate in candidates:
+            # Verified v1: a footer badge must clear its own, stricter confidence floor; one below
+            # it is dropped outright, never reclassified as an actionable icon.
             if self.in_zone(candidate, zones.new_level_zone):
-                new_level_seen = True
+                new_level_seen |= candidate.confidence >= thresholds.new_level_red_icon
             elif self.in_zone(candidate, zones.upgrade_zone):
-                stats_seen = True
+                stats_seen |= candidate.confidence >= thresholds.stats_red_icon
             elif candidate.center[1] < self._config.capture_regions.max_search_y:
                 actionable.append(candidate)
         return actionable, new_level_seen, stats_seen
