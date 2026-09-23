@@ -34,10 +34,10 @@ class WindowConfig:
 @dataclass(frozen=True, slots=True)
 class ScrcpyRecoveryConfig:
     enabled: bool = True
-    red_icon_delay: float = 0.144
-    box_delay: float = 0.144
-    upgrade_delay: float = 0.144
-    action_settle_delay: float = 0.016
+    red_icon_delay: float = 0.0
+    box_delay: float = 0.0
+    upgrade_delay: float = 0.0
+    action_settle_delay: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,7 +123,7 @@ class UpgradeStationConfig:
         ),
         min_match_ratio=0.50,
     )
-    search_interval: float = 0.080
+    search_interval: float = 0.0
     search_attempts: int = 5
     failed_searches_before_scroll: int = 3
     # Multi-candidate scan geometry so SEARCH_UPGRADE_STATION can skip a forbidden-zone best
@@ -136,14 +136,14 @@ class UpgradeStationConfig:
     # counts on purpose — see the comments at each site — only the value is shared here.
     threshold_relaxation: float = 0.05
     verify_search_attempts: int = 4
-    verify_search_interval: float = 0.080
+    verify_search_interval: float = 0.0
     # Settle delay used before each of the two steps in the pre-hold verification pass: once
     # before the priming click on the stored position, and again before the single
     # verify_upgrade_station_round() check that follows it (see
     # EatventureBot._verify_upgrade_station). Ports v1's UPGRADE_STATION_VERIFY_SETTLE_DELAY.
     # This field previously existed and was removed as unread/dead config before this gap was
     # found — it is genuinely read now, so keep it wired up.
-    verify_settle_delay: float = 0.144
+    verify_settle_delay: float = 0.0
     # Consecutive misses required before a hold treats the station as gone; debounces a single
     # flaky/transient miss so a real hold isn't cut short by one bad frame. Each tick now does a
     # single capture+check (see EatventureBot._station_disappeared), so this cross-tick count is
@@ -159,20 +159,20 @@ class UpgradeStationConfig:
     # tuning alone to exclude. A match farther than this from the position actually being held is
     # rejected as not the same station, regardless of where on screen it lands.
     disappear_position_tolerance_px: int = 60
-    hold_check_interval_min: float = 0.080
-    hold_check_interval_max: float = 0.144
-    click_hold_max_duration: float = 9.0
+    hold_check_interval_min: float = 0.0
+    hold_check_interval_max: float = 0.0
+    click_hold_max_duration: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
 class InputTimingConfig:
-    click_delay: float = 0.175
-    move_delay: float = 0.016
-    mouse_down_duration: float = 0.125
-    mouse_up_duration: float = 0.125
+    click_delay: float = 0.0
+    move_delay: float = 0.0
+    mouse_down_duration: float = 0.0
+    mouse_up_duration: float = 0.0
     retry_count: int = 3
-    retry_delay: float = 0.016
-    hover_enabled: bool = False
+    retry_delay: float = 0.0
+    hover_enabled: bool = True
     hover_duration: float = 0.0
     # Default 0 preserves the exact-equality cursor-drift check every click/press/hold path uses
     # (PynputInputController._cursor_on_target). A nonzero value absorbs DPI-scaling/driver
@@ -194,9 +194,9 @@ class FlowTimingConfig:
     # mechanism: an earlier greenfield-only "no progress across changing states" addition was
     # removed after live evidence showed it resetting the oscillating scroll search before it could
     # complete a widening sweep, actively preventing the progress it was meant to detect.
-    state_stall_timeout_seconds: float = 9.0
-    event_loop_interval: float = 0.016
-    focus_settle_delay: float = 0.016
+    state_stall_timeout_seconds: float = 0.0
+    event_loop_interval: float = 0.0
+    focus_settle_delay: float = 0.0
     # v1's STATE_DELAY: the settle after a completed upgrade-station hold's idle click and after
     # the stats-panel button click. 0.0 in v1 (still stop-aware), separate from the settles above.
     state_delay: float = 0.0
@@ -204,7 +204,7 @@ class FlowTimingConfig:
     # relocate/resize query (a full window enumeration). A cheap liveness check still runs every
     # step; only the full relocate is throttled to this cadence instead of running unconditionally
     # on every single step.
-    window_relocate_interval: float = 1.0
+    window_relocate_interval: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,13 +226,13 @@ class ClickTargetConfig:
 
 @dataclass(frozen=True, slots=True)
 class StatsUpgradeConfig:
-    click_duration: float = 1.5
-    click_delay: float = 0.016
+    click_duration: float = 0.0
+    click_delay: float = 0.0
     # Independent of input_timing.mouse_down_duration/mouse_up_duration by design: this is the
     # only click path that needs to be fast enough to register many clicks inside click_duration,
     # and it must not affect every other click the bot makes. Starting point, not a measured
     # minimum — live-verify clicks still register in-game before trusting this blindly.
-    mouse_down_duration: float = 0.016
+    mouse_down_duration: float = 0.0
     mouse_up_duration: float = 0.0
 
 
@@ -244,17 +244,17 @@ class RedIconZoneConfig:
 
 @dataclass(frozen=True, slots=True)
 class LevelTransitionConfig:
-    search_attempts: int = 5
-    search_interval: float = 0.080
-    settle_delay: float = 0.3
-    confirmation_delay: float = 0.300
-    secondary_settle_delay: float = 0.3
+    search_attempts: int = 2
+    search_interval: float = 0.0
+    settle_delay: float = 0.0
+    confirmation_delay: float = 0.0
+    secondary_settle_delay: float = 0.0
     # v1's real, practical give-up point for WAIT_FOR_UNLOCK: reverted from the greenfield
     # redesign's 1000 (which relied on the 9s same-state watchdog as the sole backstop instead) per
     # the decision to follow v1's state-handler flow verbatim, including its pacing.
     unlock_search_attempts: int = 4
-    unlock_search_interval: float = 0.300
-    unlock_settle_delay: float = 0.016
+    unlock_search_interval: float = 0.0
+    unlock_settle_delay: float = 0.0
     # Restored from v1 (73f5db0/eccd810; removed in 12e397a as an incidental bundle alongside an
     # unrelated upgrade-station fix): one down-drag "verification scroll" performed before the
     # very first new-level red-icon rescan, forcing a fresh render before trusting a miss. Kept
@@ -262,10 +262,10 @@ class LevelTransitionConfig:
     # ScrollConfig is independently used by the oscillating FIND_RED_ICONS/OPEN_BOXES/
     # UPGRADE_STATS scroll and must not be conflated with this one-shot verification step. Origin
     # point reuses click_targets.scroll_start_pos; only distance/duration/settle timing are here.
-    verification_scroll_distance: int = 100
-    verification_scroll_duration: float = 0.300
-    verification_scroll_settle_delay: float = 0.300
-    verification_scroll_interval_pause: float = 0.300
+    verification_scroll_distance: int = 200
+    verification_scroll_duration: float = 0.0
+    verification_scroll_settle_delay: float = 0.0
+    verification_scroll_interval_pause: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -275,9 +275,9 @@ class ScrollConfig:
     max_cycles: int = 6
     increment_step: int = 1
     max_idle_pass_attempts: int = 1
-    interval_pause: float = 0.300
-    post_scroll_settle: float = 0.300
-    duration: float = 0.300
+    interval_pause: float = 0.0
+    post_scroll_settle: float = 0.0
+    duration: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -286,7 +286,7 @@ class TelegramConfig:
     bot_token: str = ""
     chat_id: str = ""
     queue_maxsize: int = 100
-    close_timeout: float = 5.0
+    close_timeout: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
