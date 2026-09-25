@@ -97,6 +97,8 @@ def validate_upgrade_station(config: UpgradeStationConfig) -> None:
     ):
         if getattr(config, name) < 1:
             raise ConfigError(f"{name} must be >= 1, got {getattr(config, name)}")
+    if config.max_box_only_passes < 2:
+        raise ConfigError(f"max_box_only_passes must be >= 2, got {config.max_box_only_passes}")
 
 
 def validate_input_timing(config: InputTimingConfig) -> None:

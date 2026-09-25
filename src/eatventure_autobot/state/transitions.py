@@ -199,6 +199,7 @@ def decide_hold_upgrade_station(
     context.consecutive_failed_upgrade_searches = 0
     context.upgrade_station_pos = None
     context.holds_completed += 1
+    context.box_only_passes = 0  # a purchase is progress: the dead-loop guard starts over
     if not obs.post_hold_actions_succeeded:
         return State.OPEN_BOXES
     context.upgrade_station_counter += 1
@@ -250,6 +251,18 @@ def decide_open_boxes(
         context.work_done = True
         context.cycle_counter = 0
         context.boxes_opened_total += obs.boxes_opened
+        # Deliberate deviation from v1 (which never scrolls while boxes keep opening): live logs
+        # showed a stuck "box" re-clicked for hours, work_done re-arming every pass, so SCROLL
+        # (and with it every off-screen upgrade) was starved and the same-state watchdog never
+        # fired because the state changes each tick. Zero-box passes do not reset the count, so an
+        # alternating stuck target can't dodge it.
+        # ponytail: interleave only. A UI-fixed stuck target still burns (K-1)/K of passes;
+        # upgrade path: ignore a position clicked K times in a row (positions are logged on trip).
+        context.box_only_passes += 1
+        if context.box_only_passes >= config.max_box_only_passes:
+            context.box_only_passes = 0
+            context.box_guard_trips += 1
+            return State.SCROLL
 
     # Verified transcription of _next_state_after_box_cycle. Each branch's counter reset is
     # load-bearing: without them the triggering condition stays true and the bot re-enters the
@@ -281,6 +294,7 @@ def decide_scroll(context: FlowContext, scroll_succeeded: bool) -> State:
     if not scroll_succeeded:
         return State.SCROLL
     context.cycle_counter = 0
+    context.box_only_passes = 0
     return State.FIND_RED_ICONS
 
 

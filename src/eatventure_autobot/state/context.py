@@ -30,6 +30,9 @@ class FlowContext:
     upgrade_station_pos: Point | None = None
     upgrade_found_in_cycle: bool = False
     work_done: bool = False
+    # Box-opening passes since the last scroll, completed hold or search-cycle reset: the counter
+    # behind the OPEN_BOXES dead-loop guard (see decide_open_boxes).
+    box_only_passes: int = 0
 
     new_level_red_icon_verified: bool = False
     wait_for_unlock_attempts: int = 0
@@ -38,6 +41,7 @@ class FlowContext:
     # Tallies for the periodic metrics line. Like total_levels_completed they are never reset.
     holds_completed: int = 0
     boxes_opened_total: int = 0
+    box_guard_trips: int = 0  # times the OPEN_BOXES dead-loop guard forced a scroll
 
     oscillation_cycle_index: int = 1
     oscillation_leg_direction: int = 1
@@ -69,6 +73,7 @@ class FlowContext:
         self.oscillation_leg_direction = 1
         self.oscillation_leg_progress = 0
         self.new_level_red_icon_verified = False
+        self.box_only_passes = 0
 
     def refund_attempt(self) -> None:
         """Undo the attempt the same-state return is about to be charged for: step() adds one
@@ -81,7 +86,8 @@ class FlowContext:
         upgrade_station_counter (the stats cadence), successful_red_icon_rows,
         total_levels_completed and current_level_start_time alone: v1 carries all four across a
         stop/restart, so stopped time counts toward the next reported level duration. The
-        metrics tallies (holds_completed, boxes_opened_total) are v2-only and persist likewise."""
+        metrics tallies (holds_completed, boxes_opened_total, box_guard_trips) are v2-only and
+        persist likewise."""
         self.reset_search_cycle()
         self.red_icons = []
         self.current_red_icon_index = 0

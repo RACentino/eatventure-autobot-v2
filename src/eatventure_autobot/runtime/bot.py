@@ -9,6 +9,7 @@ import hashlib
 import logging
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 
 from eatventure_autobot.domain.config import BotConfig
@@ -60,6 +61,9 @@ class EatventureBot:
         self._config_fingerprint = _config_fingerprint(config)
         self._state_seconds: dict[State, float] = dict.fromkeys(State, 0.0)
         self._last_metrics_at = 0.0
+        # Where the last few boxes were clicked, logged when the dead-loop guard trips so a
+        # UI-fixed stuck target (same coordinates every pass) is visible in bot.log.
+        self._recent_box_clicks: deque[Point] = deque(maxlen=8)
         self._handlers: dict[State, Callable[[], State]] = {
             State.FIND_RED_ICONS: self._handle_find_red_icons,
             State.CLICK_RED_ICON: self._handle_click_red_icon,
@@ -223,12 +227,13 @@ class EatventureBot:
         )
         context = self.context
         logger.info(
-            "metrics cfg=%s run_s=%.0f levels=%d holds=%d boxes=%d | %s",
+            "metrics cfg=%s run_s=%.0f levels=%d holds=%d boxes=%d guard_trips=%d | %s",
             self._config_fingerprint,
             total,
             context.total_levels_completed,
             context.holds_completed,
             context.boxes_opened_total,
+            context.box_guard_trips,
             shares or "-",
         )
 
@@ -550,14 +555,24 @@ class EatventureBot:
                 continue
             if self._input.click(*box.center):
                 opened += 1
+                self._recent_box_clicks.append(box.center)
         if opened:
             logger.info("Opened %s boxes", opened)
-        return flow.decide_open_boxes(
+        trips = self.context.box_guard_trips
+        next_state = flow.decide_open_boxes(
             self.context,
             self._config.upgrade_station,
             self._config.scroll.max_idle_pass_attempts,
             flow.BoxCycleObservation(False, opened),
         )
+        if self.context.box_guard_trips != trips:
+            logger.warning(
+                "Box loop guard: %s box passes without a scroll or upgrade; forcing a scroll. "
+                "Last clicked positions: %s",
+                self._config.upgrade_station.max_box_only_passes,
+                list(self._recent_box_clicks),
+            )
+        return next_state
 
     def _handle_scroll(self) -> State:
         if not self._click_idle():
