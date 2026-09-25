@@ -129,6 +129,7 @@ def validate_flow_timing(config: FlowTimingConfig) -> None:
     if config.state_delay < 0:
         raise ConfigError(f"state_delay must be >= 0, got {config.state_delay}")
     _positive("window_relocate_interval", config.window_relocate_interval)
+    _positive("metrics_log_interval", config.metrics_log_interval)
 
 
 def validate_capture_regions(config: CaptureRegionConfig) -> None:

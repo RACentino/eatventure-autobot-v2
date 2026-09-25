@@ -198,6 +198,7 @@ def decide_hold_upgrade_station(
     # decide_search_upgrade_station's "found" branch (see comment there).
     context.consecutive_failed_upgrade_searches = 0
     context.upgrade_station_pos = None
+    context.holds_completed += 1
     if not obs.post_hold_actions_succeeded:
         return State.OPEN_BOXES
     context.upgrade_station_counter += 1
@@ -248,6 +249,7 @@ def decide_open_boxes(
     if obs.boxes_opened > 0:
         context.work_done = True
         context.cycle_counter = 0
+        context.boxes_opened_total += obs.boxes_opened
 
     # Verified transcription of _next_state_after_box_cycle. Each branch's counter reset is
     # load-bearing: without them the triggering condition stays true and the bot re-enters the

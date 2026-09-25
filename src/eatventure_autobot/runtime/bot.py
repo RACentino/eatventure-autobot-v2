@@ -4,6 +4,8 @@ No branching on flow state happens in this file that isn't delegated — if a ha
 where to go next on its own, that logic belongs in state/transitions instead.
 """
 
+import dataclasses
+import hashlib
 import logging
 import threading
 import time
@@ -20,6 +22,17 @@ from eatventure_autobot.state import transitions as flow
 from eatventure_autobot.state.context import FlowContext
 
 logger = logging.getLogger(__name__)
+
+
+def _config_fingerprint(config: BotConfig) -> str:
+    """Short stable id of the tuning in effect, so a metrics line says which config produced it.
+    paths and telegram are left out: one is machine-specific, the other holds a secret."""
+    tuning = {
+        field.name: getattr(config, field.name)
+        for field in dataclasses.fields(config)
+        if field.name not in ("paths", "telegram")
+    }
+    return hashlib.sha1(repr(tuning).encode(), usedforsecurity=False).hexdigest()[:8]
 
 
 class EatventureBot:
@@ -42,6 +55,11 @@ class EatventureBot:
         self.state = State.FIND_RED_ICONS
         self.context = FlowContext()
         self._watchdog = StallWatchdog(config=config.flow_timing)
+        # ponytail: cumulative since process start, no rolling window; subtract consecutive
+        # metrics lines for a per-period rate. Upgrade path: a windowed deque if that gets tedious.
+        self._config_fingerprint = _config_fingerprint(config)
+        self._state_seconds: dict[State, float] = dict.fromkeys(State, 0.0)
+        self._last_metrics_at = 0.0
         self._handlers: dict[State, Callable[[], State]] = {
             State.FIND_RED_ICONS: self._handle_find_red_icons,
             State.CLICK_RED_ICON: self._handle_click_red_icon,
@@ -87,6 +105,7 @@ class EatventureBot:
                 return False
             self._running.set()
             self._watchdog.reset()
+            self._last_metrics_at = time.monotonic()
             self.context.state_attempt = 1
             if self.context.current_level_start_time is None:
                 self.context.current_level_start_time = time.monotonic()
@@ -105,6 +124,8 @@ class EatventureBot:
             self.state = State.FIND_RED_ICONS
             self.context.reset_run()
             self._watchdog.reset()
+            if was_running and self._config.flow_timing.metrics_log_interval > 0:
+                self._log_metrics()
         # v1 only sends "Bot Stopped" from the manual Z-toggle stop path; an internal auto-stop
         # (stop-requested race, lost foreground, an unhandled handler exception, or close()'s
         # own cleanup call) never notifies there, so it doesn't here either.
@@ -144,7 +165,9 @@ class EatventureBot:
                 return False
 
             previous_state = self.state
+            started = time.monotonic()
             next_state = self._handlers[previous_state]()
+            self._state_seconds[previous_state] += time.monotonic() - started
             # v1's StateMachine.update() contract: a handler must return a State, and anything
             # else fails loudly (caught below -> stop) instead of being committed as flow state.
             if not isinstance(next_state, State):
@@ -159,6 +182,7 @@ class EatventureBot:
             )
             self.state = next_state
             self._apply_watchdog(next_state)
+            self._maybe_log_metrics()
             return True
         except (WindowNotAvailableError, CaptureError) as exc:
             logger.error("Stopping bot: %s", exc)
@@ -179,6 +203,34 @@ class EatventureBot:
         self.context.reset_search_cycle()
         self.state = State.FIND_RED_ICONS
         self.context.state_attempt = 1
+
+    def _maybe_log_metrics(self) -> None:
+        interval = self._config.flow_timing.metrics_log_interval
+        now = time.monotonic()
+        if interval <= 0 or now - self._last_metrics_at < interval:
+            return
+        self._last_metrics_at = now
+        self._log_metrics()
+
+    def _log_metrics(self) -> None:
+        """One parseable line: run_s is time spent inside handlers (not the 5 ms loop wake), and
+        each state's share of it — where the run actually went."""
+        total = sum(self._state_seconds.values())
+        shares = " ".join(
+            f"{state.name}={100 * seconds / total:.1f}%"
+            for state, seconds in self._state_seconds.items()
+            if seconds > 0
+        )
+        context = self.context
+        logger.info(
+            "metrics cfg=%s run_s=%.0f levels=%d holds=%d boxes=%d | %s",
+            self._config_fingerprint,
+            total,
+            context.total_levels_completed,
+            context.holds_completed,
+            context.boxes_opened_total,
+            shares or "-",
+        )
 
     # --- shared helpers -------------------------------------------------------------------
 

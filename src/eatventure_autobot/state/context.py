@@ -35,6 +35,9 @@ class FlowContext:
     wait_for_unlock_attempts: int = 0
     total_levels_completed: int = 0
     current_level_start_time: float | None = None
+    # Tallies for the periodic metrics line. Like total_levels_completed they are never reset.
+    holds_completed: int = 0
+    boxes_opened_total: int = 0
 
     oscillation_cycle_index: int = 1
     oscillation_leg_direction: int = 1
@@ -77,7 +80,8 @@ class FlowContext:
         """The fuller reset applied when the bot stops, matching v1's stop(). Deliberately leaves
         upgrade_station_counter (the stats cadence), successful_red_icon_rows,
         total_levels_completed and current_level_start_time alone: v1 carries all four across a
-        stop/restart, so stopped time counts toward the next reported level duration."""
+        stop/restart, so stopped time counts toward the next reported level duration. The
+        metrics tallies (holds_completed, boxes_opened_total) are v2-only and persist likewise."""
         self.reset_search_cycle()
         self.red_icons = []
         self.current_red_icon_index = 0

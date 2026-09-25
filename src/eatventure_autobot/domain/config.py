@@ -227,6 +227,10 @@ class FlowTimingConfig:
     # step; only the full relocate is throttled to this cadence instead of running unconditionally
     # on every single step. A relocate costs 5.6 ms (10.7 ms p95): 1.0 s keeps it near 1% overhead.
     window_relocate_interval: float = 1.0
+    # Period of the INFO "metrics" line (config fingerprint, per-state time share, levels, holds,
+    # boxes) that makes levels/hour measurable from bot.log; 0 disables it, including the closing
+    # line logged when the bot stops. 300 s keeps it to ~12 lines/hour.
+    metrics_log_interval: float = 300.0
 
 
 @dataclass(frozen=True, slots=True)
