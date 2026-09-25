@@ -140,8 +140,9 @@ class UpgradeStationConfig:
     # Dead-loop guard: after this many box-opening passes with no scroll and no completed upgrade
     # hold in between, OPEN_BOXES forces a SCROLL. Live logs (Sep 8-25) held 9 streaks of 393-5,850
     # consecutive box passes (~11 h, zero level completions) where a stuck "box" was re-clicked
-    # forever and the search never scrolled. Healthy runs peak at 3-4 box passes between scrolls,
-    # so 8 leaves 2x headroom before it interleaves.
+    # forever and the search never scrolled. Replaying those logs (purchases approximated by
+    # pauses), only ~6 of 6,344 other box-runs reached 8 and 3 of those were shorter dead loops
+    # (96-224 passes), so a spurious trip costs one spare scroll, roughly 4 per 100 running hours.
     max_box_only_passes: int = 8
     # Multi-candidate scan geometry so SEARCH_UPGRADE_STATION can skip a forbidden-zone best
     # match in favor of the next candidate, matching v1's _find_upgrade_station_match exactly:
