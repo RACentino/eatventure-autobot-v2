@@ -9,6 +9,7 @@ from eatventure_autobot.domain.types import (
     MatchCandidate,
     MatchResult,
     Point,
+    TemplateExplanation,
     WindowBounds,
     Zone,
 )
@@ -93,6 +94,10 @@ class TemplateMatcher(Protocol):
         threshold: float,
         hsv_gate: HsvGate | None = None,
     ) -> MatchResult: ...
+
+    def explain_template(
+        self, frame: np.ndarray, template_name: str, hsv_gate: HsvGate | None = None
+    ) -> TemplateExplanation | None: ...
 
     def find_template_candidates(
         self,

@@ -12,6 +12,8 @@ import time
 from collections import deque
 from collections.abc import Callable
 
+import numpy as np
+
 from eatventure_autobot.domain.config import BotConfig
 from eatventure_autobot.domain.errors import CaptureError, WindowNotAvailableError
 from eatventure_autobot.domain.protocols import InputController, Notifier
@@ -64,6 +66,10 @@ class EatventureBot:
         # Where the last few boxes were clicked, logged when the dead-loop guard trips so a
         # UI-fixed stuck target (same coordinates every pass) is visible in bot.log.
         self._recent_box_clicks: deque[Point] = deque(maxlen=8)
+        # Stall alert (see _maybe_alert_stall): when the idle streak began, and whether the next
+        # OPEN_BOXES scan should log what box detection actually saw.
+        self._idle_started_at = 0.0
+        self._stall_probe_pending = False
         self._handlers: dict[State, Callable[[], State]] = {
             State.FIND_RED_ICONS: self._handle_find_red_icons,
             State.CLICK_RED_ICON: self._handle_click_red_icon,
@@ -227,14 +233,64 @@ class EatventureBot:
         )
         context = self.context
         logger.info(
-            "metrics cfg=%s run_s=%.0f levels=%d holds=%d boxes=%d guard_trips=%d | %s",
+            "metrics cfg=%s run_s=%.0f levels=%d holds=%d boxes=%d guard_trips=%d "
+            "idle_scrolls=%d stall_alerts=%d | %s",
             self._config_fingerprint,
             total,
             context.total_levels_completed,
             context.holds_completed,
             context.boxes_opened_total,
             context.box_guard_trips,
+            context.idle_scrolls,
+            context.stall_alerts,
             shares or "-",
+        )
+
+    def _maybe_alert_stall(self) -> None:
+        """After every landed scroll: the pure counter (context.idle_scrolls) says how long the
+        search has produced nothing. Every `stall_scrolls_before_alert` scrolls, log a WARNING and
+        arm a one-shot probe of box detection on the next OPEN_BOXES frame, so a silent stall
+        names its own cause. No extra capture, gesture or click, so no slowdown.
+        ponytail: boxes only. A red-icon near-miss probe and a scroll re-anchor are deferred until
+        a stall report shows they are the problem."""
+        idle = self.context.idle_scrolls
+        if idle == 1:
+            self._idle_started_at = time.monotonic()
+        every = self._config.scroll.stall_scrolls_before_alert
+        if every <= 0 or idle % every != 0:
+            return
+        context = self.context
+        context.stall_alerts += 1
+        self._stall_probe_pending = True
+        logger.warning(
+            "Stall: %d scrolls over %.0f min with no box opened, upgrade held, stats upgrade or "
+            "level completed (levels=%d holds=%d boxes=%d); probing box detection on the next scan",
+            idle,
+            (time.monotonic() - self._idle_started_at) / 60,
+            context.total_levels_completed,
+            context.holds_completed,
+            context.boxes_opened_total,
+        )
+
+    def _log_box_near_misses(self, frame: np.ndarray, detected: int) -> None:
+        """One text line: how many boxes passed detection on this frame, and for each box template
+        its best raw match against the two gates a box must clear (template score, HSV ratio) and
+        whether that spot is a forbidden zone. Tells a template/HSV miss from a zone block."""
+        parts = []
+        for seen in self._vision.box_near_misses(frame):
+            ratio = "n/a" if seen.hsv_ratio is None else f"{seen.hsv_ratio:.2f}"
+            zone = "" if self._is_clickable(seen.center) else " IN-FORBIDDEN-ZONE"
+            parts.append(
+                f"{seen.template_name} conf={seen.confidence:.3f} at {seen.center} "
+                f"hsv={ratio}{zone}"
+            )
+        logger.warning(
+            "Stall probe: %d box(es) passed detection on this scan. Best raw match per template "
+            "(a box needs conf>=%.3f and hsv>=%.2f, outside forbidden zones): %s",
+            detected,
+            self._config.thresholds.box,
+            self._config.box.hsv.min_match_ratio,
+            "; ".join(parts) or "none",
         )
 
     # --- shared helpers -------------------------------------------------------------------
@@ -549,6 +605,10 @@ class EatventureBot:
                 )
             boxes = self._vision.find_boxes(frame)
 
+        if self._stall_probe_pending:
+            self._stall_probe_pending = False
+            self._log_box_near_misses(frame, len(boxes))
+
         opened = 0
         for box in boxes:
             if not self._is_clickable(box.center):
@@ -591,7 +651,10 @@ class EatventureBot:
         if moved:
             self.context.advance_oscillation(scroll.increment_step, scroll.max_cycles)
             moved = self._sleep(scroll.post_scroll_settle) and self._sleep(scroll.interval_pause)
-        return flow.decide_scroll(self.context, moved)
+        next_state = flow.decide_scroll(self.context, moved)
+        if moved:  # decide_scroll only advances the idle streak on a landed scroll
+            self._maybe_alert_stall()
+        return next_state
 
     def _perform_new_level_verification_scroll(self) -> bool:
         """Restored from v1 (73f5db0/eccd810): one mouse-drag "scroll" gesture used solely to

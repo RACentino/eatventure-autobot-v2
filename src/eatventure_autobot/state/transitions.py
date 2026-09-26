@@ -200,6 +200,7 @@ def decide_hold_upgrade_station(
     context.upgrade_station_pos = None
     context.holds_completed += 1
     context.box_only_passes = 0  # a purchase is progress: the dead-loop guard starts over
+    context.idle_scrolls = 0
     if not obs.post_hold_actions_succeeded:
         return State.OPEN_BOXES
     context.upgrade_station_counter += 1
@@ -227,6 +228,7 @@ def decide_upgrade_stats(context: FlowContext, obs: StatsIconObservation) -> Sta
     # Verified v1: the idle-pass counter clears the moment the stats icon is confirmed, before
     # any of the panel clicks below it (which then always end at OPEN_BOXES regardless).
     context.cycle_counter = 0
+    context.idle_scrolls = 0
     return State.OPEN_BOXES
 
 
@@ -251,6 +253,7 @@ def decide_open_boxes(
         context.work_done = True
         context.cycle_counter = 0
         context.boxes_opened_total += obs.boxes_opened
+        context.idle_scrolls = 0
         # Deliberate deviation from v1 (which never scrolls while boxes keep opening): live logs
         # showed a stuck "box" re-clicked for hours, work_done re-arming every pass, so SCROLL
         # (and with it every off-screen upgrade) was starved and the same-state watchdog never
@@ -295,6 +298,9 @@ def decide_scroll(context: FlowContext, scroll_succeeded: bool) -> State:
         return State.SCROLL
     context.cycle_counter = 0
     context.box_only_passes = 0
+    # Progress elsewhere (box opened, hold, stats, level) zeroes this; a run of landed scrolls
+    # with none of those is the stall the alert in EatventureBot._handle_scroll reports.
+    context.idle_scrolls += 1
     return State.FIND_RED_ICONS
 
 
@@ -369,6 +375,7 @@ def decide_wait_for_unlock(
     # failures, not to discard a real success that happens to land on the last allowed attempt.
     if obs.unlock_found and obs.click_succeeded:
         context.total_levels_completed += 1
+        context.idle_scrolls = 0
         context.wait_for_unlock_attempts = 0
         context.reset_search_cycle()
         return State.FIND_RED_ICONS

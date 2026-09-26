@@ -33,6 +33,9 @@ class FlowContext:
     # Box-opening passes since the last scroll, completed hold or search-cycle reset: the counter
     # behind the OPEN_BOXES dead-loop guard (see decide_open_boxes).
     box_only_passes: int = 0
+    # Completed scrolls since the last real progress (box opened, hold completed, stats upgrade,
+    # level completed): the counter behind the stall alert (see EatventureBot._maybe_alert_stall).
+    idle_scrolls: int = 0
 
     new_level_red_icon_verified: bool = False
     wait_for_unlock_attempts: int = 0
@@ -42,6 +45,7 @@ class FlowContext:
     holds_completed: int = 0
     boxes_opened_total: int = 0
     box_guard_trips: int = 0  # times the OPEN_BOXES dead-loop guard forced a scroll
+    stall_alerts: int = 0  # times the idle-scroll stall alert fired
 
     oscillation_cycle_index: int = 1
     oscillation_leg_direction: int = 1
@@ -86,8 +90,8 @@ class FlowContext:
         upgrade_station_counter (the stats cadence), successful_red_icon_rows,
         total_levels_completed and current_level_start_time alone: v1 carries all four across a
         stop/restart, so stopped time counts toward the next reported level duration. The
-        metrics tallies (holds_completed, boxes_opened_total, box_guard_trips) are v2-only and
-        persist likewise."""
+        metrics tallies (holds_completed, boxes_opened_total, box_guard_trips, stall_alerts) are
+        v2-only and persist likewise; idle_scrolls (a streak, not a tally) is cleared."""
         self.reset_search_cycle()
         self.red_icons = []
         self.current_red_icon_index = 0
@@ -95,6 +99,7 @@ class FlowContext:
         self.upgrade_found_in_cycle = False
         self.work_done = False
         self.consecutive_failed_upgrade_searches = 0
+        self.idle_scrolls = 0
         self.state_attempt = 1
 
     def advance_oscillation(self, increment_step: int, max_cycles: int) -> None:

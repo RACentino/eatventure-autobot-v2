@@ -109,6 +109,18 @@ class MatchCandidate:
 
 
 @dataclass(frozen=True, slots=True)
+class TemplateExplanation:
+    """The best raw match of one template in a frame with no threshold or gate applied — what the
+    detector actually saw. hsv_ratio is the share of the template's pixels inside the HSV gate at
+    that spot (None when no gate was given or it could not be measured). Diagnostics only."""
+
+    template_name: str
+    confidence: float
+    center: Point
+    hsv_ratio: float | None
+
+
+@dataclass(frozen=True, slots=True)
 class MatchResult:
     """Outcome of a single-template search: whether it passed threshold, and the best candidate."""
 

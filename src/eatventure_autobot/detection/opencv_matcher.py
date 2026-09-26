@@ -16,7 +16,14 @@ import cv2
 import numpy as np
 
 from eatventure_autobot.domain.errors import DetectionError
-from eatventure_autobot.domain.types import BoundingBox, HsvGate, MatchCandidate, MatchResult, Point
+from eatventure_autobot.domain.types import (
+    BoundingBox,
+    HsvGate,
+    MatchCandidate,
+    MatchResult,
+    Point,
+    TemplateExplanation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +106,46 @@ def _hsv_range_mask(
     )
 
 
+def _hsv_match_ratio(
+    screenshot: np.ndarray,
+    template: np.ndarray,
+    location: Point,
+    mask: np.ndarray | None,
+    hsv_gate: HsvGate,
+    hsv_frame: np.ndarray | None = None,
+) -> float | None:
+    """Share of the template's visible pixels whose colour is inside the HSV gate at `location`;
+    None when it can't be measured (window falls off the frame, conversion failed, no pixels)."""
+    x, y = location
+    height, width = template.shape[:2]
+    if hsv_frame is not None:
+        # Caller already converted the whole frame to HSV once (see
+        # _find_candidates_across_templates) — slice instead of re-converting per candidate.
+        hsv_region = hsv_frame[y : y + height, x : x + width]
+        if hsv_region.shape[:2] != (height, width):
+            return None
+    else:
+        roi = screenshot[y : y + height, x : x + width]
+        if roi.shape[:2] != (height, width):
+            return None
+        try:
+            hsv_region = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+        except cv2.error as exc:
+            logger.debug("HSV gate conversion failed: %s", exc)
+            return None
+    active_mask = np.ones((height, width), dtype=bool) if mask is None else mask > 0
+    active_count = int(np.count_nonzero(active_mask))
+    if active_count <= 0:
+        return None
+    combined: np.ndarray = np.zeros((height, width), dtype=np.uint8)
+    for hsv_range in hsv_gate.ranges:
+        combined = cv2.bitwise_or(
+            combined, _hsv_range_mask(hsv_region, hsv_range.lower, hsv_range.upper)
+        )
+    matched_count = int(np.count_nonzero((combined > 0) & active_mask))
+    return matched_count / active_count
+
+
 def _check_hsv_gate(
     screenshot: np.ndarray,
     template: np.ndarray,
@@ -107,34 +154,8 @@ def _check_hsv_gate(
     hsv_gate: HsvGate,
     hsv_frame: np.ndarray | None = None,
 ) -> bool:
-    x, y = location
-    height, width = template.shape[:2]
-    if hsv_frame is not None:
-        # Caller already converted the whole frame to HSV once (see
-        # _find_candidates_across_templates) — slice instead of re-converting per candidate.
-        hsv_region = hsv_frame[y : y + height, x : x + width]
-        if hsv_region.shape[:2] != (height, width):
-            return False
-    else:
-        roi = screenshot[y : y + height, x : x + width]
-        if roi.shape[:2] != (height, width):
-            return False
-        try:
-            hsv_region = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-        except cv2.error as exc:
-            logger.debug("HSV gate conversion failed: %s", exc)
-            return False
-    active_mask = np.ones((height, width), dtype=bool) if mask is None else mask > 0
-    active_count = int(np.count_nonzero(active_mask))
-    if active_count <= 0:
-        return False
-    combined: np.ndarray = np.zeros((height, width), dtype=np.uint8)
-    for hsv_range in hsv_gate.ranges:
-        combined = cv2.bitwise_or(
-            combined, _hsv_range_mask(hsv_region, hsv_range.lower, hsv_range.upper)
-        )
-    matched_count = int(np.count_nonzero((combined > 0) & active_mask))
-    return (matched_count / active_count) >= hsv_gate.min_match_ratio
+    ratio = _hsv_match_ratio(screenshot, template, location, mask, hsv_gate, hsv_frame)
+    return ratio is not None and ratio >= hsv_gate.min_match_ratio
 
 
 def filter_by_template_consensus(
@@ -213,6 +234,33 @@ class OpenCvTemplateMatcher:
         box = BoundingBox(location[0], location[1], location[0] + width, location[1] + height)
         candidate = MatchCandidate(template_name, confidence, center, box)
         return MatchResult(found=True, best=candidate)
+
+    def explain_template(
+        self, frame: np.ndarray, template_name: str, hsv_gate: HsvGate | None = None
+    ) -> TemplateExplanation | None:
+        """The single best raw match of a template with no threshold or gate applied, plus how
+        much of it sits inside `hsv_gate` — what the detector saw when it reported no match.
+        Diagnostics only (the stall probe); never used to decide a click."""
+        template, mask = self._lookup(template_name)
+        frame = _as_bgr(frame, "frame")
+        if template.shape[0] > frame.shape[0] or template.shape[1] > frame.shape[1]:
+            return None
+        result = _match_template(frame, template, mask, template_name)
+        if result is None:
+            return None
+        min_value, _, min_location, _ = cv2.minMaxLoc(result)
+        confidence = float(1.0 - min_value)
+        if not np.isfinite(confidence):
+            return None
+        location = (int(min_location[0]), int(min_location[1]))
+        ratio = (
+            None
+            if hsv_gate is None
+            else _hsv_match_ratio(frame, template, location, mask, hsv_gate)
+        )
+        height, width = template.shape[:2]
+        center = (location[0] + width // 2, location[1] + height // 2)
+        return TemplateExplanation(template_name, confidence, center, ratio)
 
     def find_template_candidates(
         self,

@@ -159,6 +159,10 @@ def validate_scroll(config: ScrollConfig) -> None:
         raise ConfigError(f"pixel_step must be > 0, got {config.pixel_step}")
     if config.max_cycles < 1:
         raise ConfigError(f"max_cycles must be >= 1, got {config.max_cycles}")
+    if config.stall_scrolls_before_alert < 0:
+        raise ConfigError(
+            f"stall_scrolls_before_alert must be >= 0, got {config.stall_scrolls_before_alert}"
+        )
 
 
 def validate_telegram(config: TelegramConfig) -> None:

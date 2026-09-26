@@ -317,6 +317,12 @@ class ScrollConfig:
     interval_pause: float = 0.300
     post_scroll_settle: float = 0.300
     duration: float = 0.300
+    # Stall alert: after this many completed scrolls in a row with no box opened, upgrade held,
+    # stats upgrade or level completed, log a WARNING and probe box detection on the next scan.
+    # 150 idle passes is ~8-9 min (an idle pass is 3.0-3.5 s); the Sep 8-25 logs held 12 idle-scroll
+    # stalls of >= 5 min (10 of them >= 9 min, longest 5.3 h) in which the bot logged nothing.
+    # Repeats every multiple. 0 disables.
+    stall_scrolls_before_alert: int = 150
 
 
 @dataclass(frozen=True, slots=True)

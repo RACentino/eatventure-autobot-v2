@@ -13,7 +13,13 @@ from eatventure_autobot.detection.opencv_matcher import filter_by_template_conse
 from eatventure_autobot.domain.config import BotConfig
 from eatventure_autobot.domain.errors import DetectionError
 from eatventure_autobot.domain.protocols import InputController, ScreenCapture, TemplateMatcher
-from eatventure_autobot.domain.types import MatchCandidate, MatchResult, Point, Zone
+from eatventure_autobot.domain.types import (
+    MatchCandidate,
+    MatchResult,
+    Point,
+    TemplateExplanation,
+    Zone,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -205,6 +211,16 @@ class GameVision:
             min(self._config.box.min_matches, len(loaded)),
             iou_threshold=self._config.box.nms_iou_threshold,
         )
+
+    def box_near_misses(self, frame: np.ndarray) -> list[TemplateExplanation]:
+        """Best raw match per loaded box template with the threshold and HSV gate NOT applied: what
+        the detector saw when find_boxes reported nothing. Diagnostics only (the stall probe)."""
+        explained = (
+            self._matcher.explain_template(frame, name, self._config.box.hsv)
+            for name in self._config.box.template_names
+            if name in self._loaded
+        )
+        return [item for item in explained if item is not None]
 
     def _gather(
         self,
