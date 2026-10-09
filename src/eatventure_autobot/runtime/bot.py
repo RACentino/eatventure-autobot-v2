@@ -17,12 +17,13 @@ import numpy as np
 from eatventure_autobot.domain.config import BotConfig
 from eatventure_autobot.domain.errors import CaptureError, WindowNotAvailableError
 from eatventure_autobot.domain.protocols import InputController, Notifier
-from eatventure_autobot.domain.state import State
-from eatventure_autobot.domain.types import Point, Zone
+from eatventure_autobot.domain.state import X_LOCKED_STATES, State
+from eatventure_autobot.domain.types import MatchCandidate, Point, Zone
 from eatventure_autobot.resilience.watchdog import StallWatchdog, WatchdogVerdict
+from eatventure_autobot.runtime.game_recovery import GameLauncher
 from eatventure_autobot.runtime.vision import GameVision
 from eatventure_autobot.state import transitions as flow
-from eatventure_autobot.state.context import FlowContext
+from eatventure_autobot.state.context import FlowContext, LevelMark
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,50 @@ def _config_fingerprint(config: BotConfig) -> str:
     return hashlib.sha1(repr(tuning).encode(), usedforsecurity=False).hexdigest()[:8]
 
 
+# The recovery window judges "is the screen alive" from its last few seconds.
+_RECOVERY_TAIL_SECONDS = 5.0
+
+# Auto-resume (see EatventureBot.poll_resume): how often the cursor is sampled for movement, how
+# often an unchanged check is logged anyway, and the longest wait between failed live attempts.
+_RESUME_SAMPLE_SECONDS = 1.0
+_RESUME_HEARTBEAT_SECONDS = 600.0
+_RESUME_MAX_BACKOFF_SECONDS = 900.0
+
+
+@dataclasses.dataclass
+class _ResumeWatch:
+    """One auto-resume episode, created when the bot stops itself on a window or focus error."""
+
+    reason: str
+    since: float  # when the bot stopped itself
+    activity_at: float  # the last key press or cursor movement seen
+    sample_at: float  # next cursor sample
+    check_at: float  # next readiness check
+    cursor: Point | None = None
+    attempts: int = 0
+    logged: tuple[bool, bool] | None = None  # (ready, quiet) of the last logged check
+    logged_at: float = 0.0
+
+
+def _top_close_position(positions: dict[Point, int]) -> str:
+    """The most-tapped X position as 'x,yxCOUNT' text (e.g. 308,250x3698), or 'none': the unattended
+    logs' only clue to which popup keeps coming back."""
+    if not positions:
+        return "none"
+    (x, y), count = max(positions.items(), key=lambda item: item[1])
+    return f"{x},{y}x{count}"
+
+
+def _frame_thumbnail(frame: np.ndarray) -> np.ndarray:
+    """64x36 grayscale subsample, enough to tell a frozen or dimmed view from a live one.
+    ponytail: nearest-pixel sampling, not an area average; it only has to distinguish an identical
+    frame (delta 0) from an animated one, so no cv2 call and any frame size works."""
+    gray = frame.mean(axis=2) if frame.ndim == 3 else frame.astype(np.float64)
+    rows = np.linspace(0, gray.shape[0] - 1, 36).astype(int)
+    cols = np.linspace(0, gray.shape[1] - 1, 64).astype(int)
+    return np.asarray(gray[rows][:, cols])
+
+
 class EatventureBot:
     def __init__(
         self,
@@ -46,11 +91,19 @@ class EatventureBot:
         input_controller: InputController,
         notifier: Notifier,
         stop_event: threading.Event | None = None,
+        game_launcher: GameLauncher | None = None,
+        desktop_notifier: Callable[[str, str], None] | None = None,
     ) -> None:
         self._config = config
         self._vision = vision
         self._input = input_controller
         self._notifier = notifier
+        # (title, body) popup shown when the bot stops itself; None = off (tests, other platforms).
+        self._desktop_notifier = desktop_notifier
+        self._started_at = 0.0  # monotonic start() time of this run, for the self-stop line
+        # Armed (not None) only while the bot is stopped after an environment self-stop and nobody
+        # has restarted it since; see poll_resume.
+        self._resume: _ResumeWatch | None = None
         self._stop_requested = stop_event or threading.Event()
         self._running = threading.Event()
         self._step_lock = threading.RLock()
@@ -62,14 +115,40 @@ class EatventureBot:
         # metrics lines for a per-period rate. Upgrade path: a windowed deque if that gets tedious.
         self._config_fingerprint = _config_fingerprint(config)
         self._state_seconds: dict[State, float] = dict.fromkeys(State, 0.0)
+        # The state whose handler ran last step; self.state is already the NEXT one by the time the
+        # popup pre-check runs, which is why the "Closed popup" line carries it as after=.
+        self._last_handled_state: State | None = None
         self._last_metrics_at = 0.0
-        # Where the last few boxes were clicked, logged when the dead-loop guard trips so a
-        # UI-fixed stuck target (same coordinates every pass) is visible in bot.log.
-        self._recent_box_clicks: deque[Point] = deque(maxlen=8)
+        # Where the last few boxes were clicked and how sure the match was, logged when the
+        # dead-loop guard trips so a UI-fixed stuck target (same coordinates every pass) and a
+        # weak-match false positive (low confidence) are both visible in bot.log.
+        self._recent_box_clicks: deque[tuple[int, int, float]] = deque(maxlen=8)
         # Stall alert (see _maybe_alert_stall): when the idle streak began, and whether the next
         # OPEN_BOXES scan should log what box detection actually saw.
         self._idle_started_at = 0.0
         self._stall_probe_pending = False
+        self._last_probe_thumb: np.ndarray | None = None
+        # Dead-game detection: thumbnail of the first OPEN_BOXES scan of the current idle streak
+        # (the "before" picture), the latest scan, and the one at the previous metrics line.
+        # None launcher = recovery off (tests, or disabled in config); the thumbnails still feed
+        # the stall probe and the frame_delta_5m metric.
+        self._launcher = game_launcher
+        self._package_probed = False
+        self._streak_thumb: np.ndarray | None = None
+        self._latest_thumb: np.ndarray | None = None
+        self._metrics_thumb: np.ndarray | None = None
+        self._relaunch_progress: tuple[int, int] | None = None
+        # Red-X rule (see _dismiss_popup): where the last X was tapped and how many times in a row,
+        # when the rule may act again after standing down, when the post-level lock ends, and the
+        # time the pre-check has cost (capture + match), reported in the metrics line.
+        self._close_last_pos: Point | None = None
+        self._close_streak = 0
+        self._close_suppressed_until = 0.0
+        self._close_level_lock_until = 0.0
+        self._close_check_seconds = 0.0
+        # Clock for the recovery window (a test advances it from a fake sleep); everything else
+        # keeps using time.monotonic directly.
+        self._clock: Callable[[], float] = time.monotonic
         self._handlers: dict[State, Callable[[], State]] = {
             State.FIND_RED_ICONS: self._handle_find_red_icons,
             State.CLICK_RED_ICON: self._handle_click_red_icon,
@@ -93,7 +172,8 @@ class EatventureBot:
     def running(self) -> bool:
         return self._running.is_set()
 
-    def start(self) -> bool:
+    def start(self, *, report: bool = True) -> bool:
+        """report=False is for the auto-resume retries, which must not alert on every failed try."""
         with self._step_lock:
             if self.running:
                 return True
@@ -107,15 +187,23 @@ class EatventureBot:
                 self._vision.ensure_target_ready()
             except CaptureError as exc:
                 logger.error("Cannot start bot: %s", exc)
+                if report:
+                    self._report_self_stop(f"cannot start: {exc}")
                 self._stop_requested.set()
                 return False
             if not self._input.is_target_foreground():
                 logger.error("Cannot start: '%s' is not foreground", self._config.window.title)
+                if report:
+                    self._report_self_stop("cannot start: target window is not foreground")
                 self._stop_requested.set()
                 return False
+            if self._launcher is not None and not self._package_probed:
+                self._package_probed = True  # once per process: adb is only touched at start
+                self._launcher.detect_package()
             self._running.set()
+            self._resume = None  # running again, by a person or by poll_resume
             self._watchdog.reset()
-            self._last_metrics_at = time.monotonic()
+            self._started_at = self._last_metrics_at = time.monotonic()
             self.context.state_attempt = 1
             if self.context.current_level_start_time is None:
                 self.context.current_level_start_time = time.monotonic()
@@ -171,13 +259,26 @@ class EatventureBot:
             self._vision.ensure_target_ready()
             if not self._input.is_target_foreground():
                 logger.error("Target lost foreground; stopping bot")
+                self._report_self_stop("target lost foreground")
                 self.stop()
+                self._arm_resume("target lost foreground")
                 return False
+
+            if self._dismiss_popup():
+                return True  # a popup was closed this step; the handler runs on the next one
 
             previous_state = self.state
             started = time.monotonic()
             next_state = self._handlers[previous_state]()
             self._state_seconds[previous_state] += time.monotonic() - started
+            self._last_handled_state = previous_state
+            if previous_state in X_LOCKED_STATES:
+                # Hard-lock layer 2: any New Level step (attempt, miss or completion) keeps the X
+                # rule off afterwards, so a dialog still open when control returns is left to it.
+                self._close_level_lock_until = max(
+                    self._close_level_lock_until,
+                    time.monotonic() + self._config.close_button.new_level_lock_seconds,
+                )
             # v1's StateMachine.update() contract: a handler must return a State, and anything
             # else fails loudly (caught below -> stop) instead of being committed as flow state.
             if not isinstance(next_state, State):
@@ -196,14 +297,242 @@ class EatventureBot:
             return True
         except (WindowNotAvailableError, CaptureError) as exc:
             logger.error("Stopping bot: %s", exc)
+            self._report_self_stop(str(exc))
             self.stop()
+            self._arm_resume(str(exc))
             return False
         except Exception:
             logger.exception("Stopping bot after an unexpected handler failure")
+            self._report_self_stop("unexpected handler failure")
             self.stop()
             return False
         finally:
             self._step_lock.release()
+
+    # --- auto-resume after an environment self-stop -----------------------------------------
+
+    def _arm_resume(self, reason: str) -> None:
+        """Only the two environment self-stops (window gone, focus lost) call this. A Z press, a
+        stop request and a handler bug leave the decision to a person or a code fix, so they never
+        arm it: the stopped-but-primed state alone cannot tell those apart."""
+        now = self._clock()
+        self._resume = _ResumeWatch(
+            reason, now, now, now, now + self._config.resume.check_seconds
+        )
+
+    def poll_resume(self, last_key_at: float) -> None:
+        """Called on every pass of the main loop while the bot is stopped; a no-op unless armed.
+        last_key_at is the latest key press on this PC, on the same clock as self._clock.
+
+        Shadow mode (resume.enabled False, the default): each check only logs whether it WOULD
+        start the bot, so the share of downtime it could recover is measured first. Live mode: when
+        the window is already in a state start() will not touch (GameVision.environment_ready: so
+        no resize, no restore(), no focus change) and nobody has pressed a key or moved the mouse
+        for resume.idle_seconds, it calls start(). A failed attempt backs off exponentially, and
+        max_attempts failures in one stop make it give up and wait for a person.
+        Never raises: the main loop has to survive whatever happens in here."""
+        watch = self._resume
+        if watch is None or self.running:
+            return
+        now = self._clock()
+        if now < watch.sample_at:
+            return
+        watch.sample_at = now + _RESUME_SAMPLE_SECONDS
+        try:
+            cursor = self._input.get_cursor_position()
+            # The first sample is only a baseline; a later change means a person moved the mouse.
+            if watch.cursor is not None and cursor != watch.cursor:
+                watch.activity_at = now
+            watch.cursor = cursor
+            if now >= watch.check_at:
+                self._check_resume(watch, now, last_key_at)
+        except Exception:
+            logger.exception("Resume check failed")
+            watch.check_at = now + self._config.resume.check_seconds
+
+    def _check_resume(self, watch: _ResumeWatch, now: float, last_key_at: float) -> None:
+        config = self._config.resume
+        idle = now - max(watch.activity_at, last_key_at)
+        ready = self._vision.environment_ready()
+        quiet = idle >= config.idle_seconds
+        watch.check_at = now + config.check_seconds
+        # One line per change plus a heartbeat, not one per minute of a 20 h stop.
+        if (ready, quiet) != watch.logged or now - watch.logged_at >= _RESUME_HEARTBEAT_SECONDS:
+            watch.logged, watch.logged_at = (ready, quiet), now
+            go = "resuming" if config.enabled else "would resume"
+            logger.info(
+                "Resume check (%s): ready=%s idle_s=%.0f/%.0f down_min=%.0f -> %s | %s",
+                "live" if config.enabled else "shadow",
+                ready,
+                idle,
+                config.idle_seconds,
+                (now - watch.since) / 60,
+                go if ready and quiet else "waiting",
+                self._vision.describe_environment(),
+            )
+        if not (config.enabled and ready and quiet):
+            return
+        watch.attempts += 1
+        if self.start(report=False):
+            logger.info(
+                "Auto-resumed after %.0f min (attempt %d): %s",
+                (now - watch.since) / 60,
+                watch.attempts,
+                watch.reason,
+            )
+            return
+        if watch.attempts >= config.max_attempts:
+            logger.warning(
+                "Auto-resume gave up after %d attempts: %s", watch.attempts, watch.reason
+            )
+            self._resume = None
+            return
+        backoff = min(_RESUME_MAX_BACKOFF_SECONDS, config.check_seconds * 2**watch.attempts)
+        watch.check_at = now + backoff
+
+    def _report_self_stop(self, reason: str) -> None:
+        """Whenever the bot stops itself (not a Z press) it stays stopped until a person comes back
+        (44.5 h of 205 over Sep 28-Oct 6), so log the facts that may explain why and alert once.
+        Diagnostics only: never raises, never changes what the caller does next. ran_min is "-"
+        for a start that failed, since there was no run."""
+        try:
+            ran = f"{(time.monotonic() - self._started_at) / 60:.0f}" if self.running else "-"
+            logger.warning(
+                "Self-stop: %s | ran_min=%s | %s", reason, ran, self._vision.describe_environment()
+            )
+            self._notifier.notify_bot_self_stopped(reason, 0.0 if ran == "-" else float(ran))
+            if self._desktop_notifier is not None:
+                self._desktop_notifier("Eatventure bot stopped itself", reason)
+        except Exception:
+            logger.exception("Self-stop report failed")
+
+    def _dismiss_popup(self) -> bool:
+        """Red-X priority: runs before the state handler, so it outranks every handler and asset.
+        Returns True when it tapped an X (the step is then spent on that).
+
+        Hard lock for the New Level dialog (its X looks exactly like this one), two layers, either
+        of which blocks the tap:
+        1. state: while CHECK_NEW_LEVEL / TRANSITION_LEVEL / WAIT_FOR_UNLOCK owns the screen, return
+           before any capture;
+        2. afterwards: for new_level_lock_seconds after any step in those states (attempt, miss or
+           completion), leave the screen alone so a dialog still open is left to the flow.
+        Deliberately NOT a lock on seeing the `unlock` button: that template also matches the blue
+        "Collect x2" button of the Offline Earnings popup (0.935 vs a 0.905 threshold), which would
+        have locked out the very popup this rule exists for.
+        Stand-down guard: the same spot tapped max_consecutive_clicks times in a row means the tap
+        is not closing anything, so the rule pauses for suppress_seconds instead of starving the
+        flow."""
+        config = self._config.close_button
+        if not config.enabled or self.state in X_LOCKED_STATES:
+            return False
+        now = time.monotonic()
+        if now < self._close_level_lock_until or now < self._close_suppressed_until:
+            return False
+        frame = self._vision.capture()
+        found = self._vision.find_close_buttons(frame)
+        self._close_check_seconds += time.monotonic() - now
+        if not found:
+            self._close_last_pos, self._close_streak = None, 0
+            return False
+        target = found[0]
+        x, y = target.center
+        last = self._close_last_pos
+        same_spot = last is not None and abs(last[0] - x) <= 3 and abs(last[1] - y) <= 3
+        if same_spot and self._close_streak >= config.max_consecutive_clicks:
+            self.context.close_suppressed += 1
+            self._close_last_pos, self._close_streak = None, 0
+            self._close_suppressed_until = now + config.suppress_seconds
+            logger.warning(
+                "Red X at (%d, %d) still there after %d taps; ignoring X's for %.0f s",
+                x,
+                y,
+                config.max_consecutive_clicks,
+                config.suppress_seconds,
+            )
+            return False
+        self._close_streak = self._close_streak + 1 if same_spot else 1
+        self._close_last_pos = (x, y)
+        self._tap_close_button(target)
+        return True
+
+    def _tap_close_button(
+        self, target: MatchCandidate, *, remaining: float | None = None, recovery: bool = False
+    ) -> bool:
+        """Taps one detected X and waits out the modal settle (clamped to `remaining` seconds when
+        the recovery window is closing). Shared by the main-flow rule and the recovery window."""
+        x, y = target.center
+        context = self.context
+        # check_forbidden=False: the X is the intended target, wherever the popup puts it (same
+        # precedent as the stats button).
+        clicked = self._input.click(x, y, check_forbidden=False)
+        if clicked:
+            context.close_clicks += 1
+            context.recovery_taps += recovery
+        context.close_positions[(x, y)] = context.close_positions.get((x, y), 0) + 1
+        after = self._last_handled_state
+        logger.info(
+            "Closed popup at (%d, %d) conf=%.3f state=%s%s%s%s",
+            x,
+            y,
+            target.confidence,
+            self.state.name,
+            " (recovery)" if recovery else "",
+            "" if clicked else " (tap failed)",
+            "" if after is None else f" after={after.name}",
+        )
+        settle = self._config.close_button.settle_delay
+        self._sleep(settle if remaining is None else max(0.0, min(settle, remaining)))
+        return clicked
+
+    def _recover_popups(self) -> None:
+        """The recovery window after an adb relaunch: for the whole `relaunch_settle_seconds`
+        ONLY the red-X rule runs. No handler, no other asset (red icons, boxes, unlock, scroll, idle
+        click), no New Level lock and no stand-down guard (nothing is in flight in a freshly
+        restarted game, and the window is time-bounded). It always runs the full window, even after
+        the X is gone, because popups can arrive late in a cold start. A capture error is retried
+        until the deadline; a stop request ends the window early."""
+        config = self._config.game_recovery
+        started = self._clock()
+        deadline = started + config.relaunch_settle_seconds
+        tail_from = deadline - _RECOVERY_TAIL_SECONDS
+        tail: np.ndarray | None = None
+        last: np.ndarray | None = None
+        taps = capture_errors = 0
+        while self._clock() < deadline and not self._stop_requested.is_set():
+            remaining = deadline - self._clock()
+            try:
+                frame = self._vision.capture()
+                found = self._vision.find_close_buttons(frame)
+            except CaptureError as exc:
+                capture_errors += 1
+                if capture_errors == 1:
+                    logger.warning("Recovery: capture failed (%s); retrying until it ends", exc)
+                self._sleep(min(config.recovery_poll_seconds, remaining))
+                continue
+            last = _frame_thumbnail(frame)
+            if tail is None and self._clock() >= tail_from:
+                tail = last
+            if found:
+                taps += 1
+                self._tap_close_button(found[0], remaining=remaining, recovery=True)
+            else:
+                self._sleep(min(config.recovery_poll_seconds, remaining))
+        elapsed = self._clock() - started
+        if tail is None or last is None:  # stopped early or never captured: no verdict to give
+            logger.info("Recovery window ended after %.0f s: %d X tapped", elapsed, taps)
+            return
+        delta = float(np.abs(last - tail).mean())
+        changing = delta >= self._config.game_recovery.static_frame_delta
+        (logger.info if changing else logger.warning)(
+            "Recovery window ended after %.0f s: %d X tapped, screen %s "
+            "(frame delta %.2f over the last %.0f s)%s",
+            elapsed,
+            taps,
+            "changing" if changing else "still static",
+            delta,
+            _RECOVERY_TAIL_SECONDS,
+            "" if changing else "; the next stall alert will relaunch again",
+        )
 
     def _apply_watchdog(self, current_state: State) -> None:
         verdict = self._watchdog.tick(current_state)
@@ -234,7 +563,9 @@ class EatventureBot:
         context = self.context
         logger.info(
             "metrics cfg=%s run_s=%.0f levels=%d holds=%d boxes=%d guard_trips=%d "
-            "idle_scrolls=%d stall_alerts=%d | %s",
+            "idle_scrolls=%d stall_alerts=%d hold_capped=%d hold_avg_s=%.1f nl_unlock_miss=%d "
+            "relaunches=%d relaunch_failures=%d frame_delta_5m=%s close_clicks=%d "
+            "close_suppressed=%d close_check_s=%.1f recovery_taps=%d close_top=%s | %s",
             self._config_fingerprint,
             total,
             context.total_levels_completed,
@@ -243,8 +574,28 @@ class EatventureBot:
             context.box_guard_trips,
             context.idle_scrolls,
             context.stall_alerts,
+            context.holds_capped,
+            context.hold_seconds_total / max(1, context.holds_completed),
+            context.nl_unlock_miss,
+            context.relaunches,
+            context.relaunch_failures,
+            self._frame_delta_since_last_metrics(),
+            context.close_clicks,
+            context.close_suppressed,
+            self._close_check_seconds,
+            context.recovery_taps,
+            _top_close_position(context.close_positions),
             shares or "-",
         )
+
+    def _frame_delta_since_last_metrics(self) -> str:
+        """Mean-abs-diff between the latest scan and the one at the previous metrics line: the
+        healthy-farm baseline that static_frame_delta is judged against (a dead game reads ~0)."""
+        latest, before = self._latest_thumb, self._metrics_thumb
+        self._metrics_thumb = latest
+        if latest is None or before is None:
+            return "n/a"
+        return f"{np.abs(latest - before).mean():.1f}"
 
     def _maybe_alert_stall(self) -> None:
         """After every landed scroll: the pure counter (context.idle_scrolls) says how long the
@@ -284,10 +635,21 @@ class EatventureBot:
                 f"{seen.template_name} conf={seen.confidence:.3f} at {seen.center} "
                 f"hsv={ratio}{zone}"
             )
+        thumb = _frame_thumbnail(frame)
+        previous, self._last_probe_thumb = self._last_probe_thumb, thumb
+        # delta ~0 between alerts (minutes apart) = frozen stream or static overlay; the quadrant
+        # means (TL TR BL BR) show a dimmed screen. Text only: no pixels leave the process.
+        delta = "n/a" if previous is None else f"{np.abs(thumb - previous).mean():.2f}"
+        quads = " ".join(
+            f"{thumb[r:r + 18, c:c + 32].mean():.0f}" for r in (0, 18) for c in (0, 32)
+        )
         logger.warning(
-            "Stall probe: %d box(es) passed detection on this scan. Best raw match per template "
+            "Stall probe: %d box(es) passed detection on this scan. Frame delta vs last probe="
+            "%s, quadrant brightness=[%s]. Best raw match per template "
             "(a box needs conf>=%.3f and hsv>=%.2f, outside forbidden zones): %s",
             detected,
+            delta,
+            quads,
             self._config.thresholds.box,
             self._config.box.hsv.min_match_ratio,
             "; ".join(parts) or "none",
@@ -421,6 +783,7 @@ class EatventureBot:
             station.hold_check_interval_min,
             min(station.hold_check_interval_max, station.verify_search_interval),
         )
+        hold_started = time.monotonic()
         held = self._input.hold_at(
             target[0],
             target[1],
@@ -432,6 +795,8 @@ class EatventureBot:
                 station.disappear_confirmation_count,
             ),
         )
+        if held:
+            self._record_hold(time.monotonic() - hold_started)
         post_ok = (
             held
             and self._click_idle()
@@ -442,6 +807,12 @@ class EatventureBot:
             self._config.flow_timing,
             flow.UpgradeHoldObservation(True, True, held, post_ok, verified_position=target),
         )
+
+    def _record_hold(self, seconds: float) -> None:
+        self.context.hold_seconds_total += seconds
+        # Within one poll gap of the cap = the clock ran out, not the popup vanishing.
+        if seconds >= self._config.upgrade_station.click_hold_max_duration - 0.1:
+            self.context.holds_capped += 1
 
     def _verify_upgrade_station_round(self) -> tuple[Point, float] | None:
         """One full verify_search_attempts retry loop: base threshold on the first attempt,
@@ -584,6 +955,10 @@ class EatventureBot:
             return State.OPEN_BOXES
         box_search_y = self._config.capture_regions.box_search_y
         frame = self._vision.capture(max_y=box_search_y)
+        thumb = _frame_thumbnail(frame)
+        self._latest_thumb = thumb
+        if self.context.idle_scrolls == 1:  # first scan after the first scroll of an idle streak
+            self._streak_thumb = thumb
         if self._vision.find_new_level_button(frame).found:
             logger.info("New level found while opening boxes")
             return flow.decide_open_boxes(
@@ -608,6 +983,8 @@ class EatventureBot:
         if self._stall_probe_pending:
             self._stall_probe_pending = False
             self._log_box_near_misses(frame, len(boxes))
+            if self._game_looks_dead(_frame_thumbnail(frame)):
+                return self._relaunch_game()
 
         opened = 0
         for box in boxes:
@@ -615,7 +992,7 @@ class EatventureBot:
                 continue
             if self._input.click(*box.center):
                 opened += 1
-                self._recent_box_clicks.append(box.center)
+                self._recent_box_clicks.append((*box.center, box.confidence))
         if opened:
             logger.info("Opened %s boxes", opened)
         trips = self.context.box_guard_trips
@@ -630,9 +1007,69 @@ class EatventureBot:
                 "Box loop guard: %s box passes without a scroll or upgrade; forcing a scroll. "
                 "Last clicked positions: %s",
                 self._config.upgrade_station.max_box_only_passes,
-                list(self._recent_box_clicks),
+                [(x, y, round(conf, 3)) for x, y, conf in self._recent_box_clicks],
             )
         return next_state
+
+    def _game_looks_dead(self, thumb: np.ndarray) -> bool:
+        """Runs only on a stall probe (>= stall_scrolls_before_alert idle scrolls, ~7.5 min): the
+        picture has not changed since the streak began. Healthy idle streaks peak near 66 scrolls
+        (p99 of 671 metrics samples), so the scroll count alone is no evidence; the frame is."""
+        before = self._streak_thumb
+        if before is None or self._launcher is None:  # no launcher = recovery switched off
+            return False
+        limit = self._config.game_recovery.static_frame_delta
+        delta = float(np.abs(thumb - before).mean())
+        static = delta < limit
+        # The decision's own inputs: the stall probe's "Frame delta vs last probe" compares a
+        # different pair of frames, so on its own it cannot tell whether a relaunch was justified.
+        logger.info(
+            "Dead-game check: frame delta vs streak start=%.2f (static below %.2f), "
+            "idle_scrolls=%d -> %s",
+            delta,
+            limit,
+            self.context.idle_scrolls,
+            "static" if static else "alive",
+        )
+        if static and self._launcher.package is None:
+            logger.warning("Game appears dead (frame unchanged) but adb relaunch is not available")
+            return False
+        return static
+
+    def _relaunch_game(self) -> State:
+        """adb force-stop + launch, wait out the cold start, and restart the search from scratch.
+        No cap on repeats (by choice): the next chance is another full stall alert, ~8 min away."""
+        launcher, context = self._launcher, self.context
+        assert launcher is not None  # _game_looks_dead only says yes when a launcher is armed
+        progress = (context.holds_completed, context.boxes_opened_total)
+        again = ""
+        if progress == self._relaunch_progress:
+            again = " (still static after the previous relaunch; the scrcpy window may be frozen)"
+        logger.warning(
+            "Game appears dead: frame unchanged for %.0f min%s; relaunching %s",
+            (time.monotonic() - self._idle_started_at) / 60,
+            again,
+            launcher.package,
+        )
+        self._relaunch_progress = progress
+        minutes = (time.monotonic() - self._idle_started_at) / 60
+        if launcher.relaunch():
+            context.relaunches += 1
+            self._notifier.notify_game_relaunch(True, minutes)
+            self._recover_popups()  # exclusive X-only window; the main flow resumes after it
+        else:
+            # Nothing restarted, so there is nothing to wait for: log (done by the launcher) and
+            # carry on with the main flow as before.
+            context.relaunch_failures += 1
+            self._notifier.notify_game_relaunch(False, minutes)
+        context.idle_scrolls = 0
+        context.reset_search_cycle()
+        self._streak_thumb = None
+        self._last_probe_thumb = None
+        # The restarted game starts the X rule from scratch: no stale stand-down or lock window.
+        self._close_last_pos, self._close_streak = None, 0
+        self._close_suppressed_until = self._close_level_lock_until = 0.0
+        return State.FIND_RED_ICONS
 
     def _handle_scroll(self) -> State:
         if not self._click_idle():
@@ -677,6 +1114,8 @@ class EatventureBot:
     def _handle_check_new_level(self) -> State:
         # Verified v1 behavior: no attempt caps and no scrcpy-recovery here — a verify miss resets
         # immediately (single-shot), and the click-retry tail is an unbounded, watchdog-only loop.
+        if self.context.nl_first_mark is None:  # every sighting routes here; first one per level
+            self.context.nl_first_mark = self._level_mark()
         if not self._click_idle():
             return State.CHECK_NEW_LEVEL
         if not self._sleep(self._config.flow_timing.focus_settle_delay):
@@ -751,20 +1190,49 @@ class EatventureBot:
         result = self._vision.find_unlock_button(frame)
         if result.best is None or not self._is_clickable(result.best.center):
             self._sleep(level.unlock_search_interval)
-            return flow.decide_wait_for_unlock(
+            missed = flow.decide_wait_for_unlock(
                 self.context, level, flow.WaitForUnlockObservation(False, None)
             )
+            if missed != State.WAIT_FOR_UNLOCK:  # attempts exhausted: back to the economy loop
+                self._note_unlock_miss(frame)
+            return missed
 
         clicked = self._input.click(*result.best.center)
         previous_total = self.context.total_levels_completed
         next_state = flow.decide_wait_for_unlock(
             self.context, level, flow.WaitForUnlockObservation(True, clicked)
         )
+        if (
+            self.context.total_levels_completed == previous_total
+            and next_state != State.WAIT_FOR_UNLOCK
+        ):
+            self._note_unlock_miss(frame)
         if self.context.total_levels_completed > previous_total:
             self._report_level_completion()
             # v1 sleeps here regardless of outcome before returning to FIND_RED_ICONS.
             self._sleep(level.unlock_settle_delay)
         return next_state
+
+    def _note_unlock_miss(self, frame: np.ndarray) -> None:
+        self.context.nl_unlock_miss += 1
+        # best_conf = the raw best `unlock` match, threshold not applied: low = the button is greyed
+        # out (cash is the limit), near the threshold = an appearance problem. Diagnostics only.
+        best = self._vision.unlock_near_miss(frame)
+        logger.info(
+            "New level: unlock button not found (miss %d, levels=%d, best_conf=%s)",
+            self.context.nl_unlock_miss,
+            self.context.total_levels_completed,
+            "-" if best is None else f"{best.confidence:.3f}",
+        )
+
+    def _level_mark(self) -> LevelMark:
+        context = self.context
+        return LevelMark(
+            sum(self._state_seconds.values()),
+            context.holds_completed,
+            context.boxes_opened_total,
+            context.nl_unlock_miss,
+        )
 
     def _report_level_completion(self) -> None:
         now = time.monotonic()
@@ -773,5 +1241,28 @@ class EatventureBot:
         self.context.current_level_start_time = now
         logger.info(
             "Restaurant %s completed in %.1fs", self.context.total_levels_completed, elapsed
+        )
+        # Breakdown in RUNNING seconds (the line above is wall-clock and includes stopped time).
+        # "before" = up to the first New Level sighting, "after" = from it to the completion; a
+        # level with no recorded sighting counts wholly as "before". The running time of the handler
+        # that is completing the level is not in _state_seconds yet (a few seconds at most).
+        context = self.context
+        start, end = context.level_start_mark, self._level_mark()
+        seen = context.nl_first_mark or end
+        context.level_start_mark, context.nl_first_mark = end, None
+        logger.info(
+            "Level %d breakdown: run_s=%.0f holds=%d boxes=%d unlock_miss=%d | "
+            "before_nl: run_s=%.0f holds=%d boxes=%d | after_nl: run_s=%.0f holds=%d boxes=%d",
+            context.total_levels_completed,
+            end.run_s - start.run_s,
+            end.holds - start.holds,
+            end.boxes - start.boxes,
+            end.unlock_miss - start.unlock_miss,
+            seen.run_s - start.run_s,
+            seen.holds - start.holds,
+            seen.boxes - start.boxes,
+            end.run_s - seen.run_s,
+            end.holds - seen.holds,
+            end.boxes - seen.boxes,
         )
         self._notifier.notify_new_level(self.context.total_levels_completed, elapsed)

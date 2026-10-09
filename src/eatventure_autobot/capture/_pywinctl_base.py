@@ -22,6 +22,15 @@ except Exception as exc:  # pragma: no cover - exercised only when the dependenc
     _PYWINCTL_IMPORT_ERROR = exc
 
 
+def _flag(window: Any, name: str) -> bool:
+    """A pywinctl window state that is a property in some versions and a method in others."""
+    try:
+        value = getattr(window, name)
+        return bool(value() if callable(value) else value)
+    except Exception:
+        return False
+
+
 class PyWinCtlWindowCapture(ABC):
     def __init__(
         self,
@@ -154,6 +163,60 @@ class PyWinCtlWindowCapture(ABC):
             except CaptureError:
                 return False
             return self._window_title(self._window) == self._title and self._is_active(self._window)
+
+    def describe_environment(self) -> str:
+        """One line of facts for a self-stop log: is the window there, at what size and state, and
+        which app has the focus (the app name only, never a title: titles can carry tab names).
+        Read-only and never raises. It asks pywinctl directly rather than going through
+        ensure_window(): that would resize the window and, after a stop, fail on the set stop
+        event inside _wait()."""
+        try:
+            with self._lock:
+                windows = self._live_windows()
+                facts = [f"windows={len(windows)}"]
+                if windows:
+                    window = windows[0]
+                    try:
+                        bounds = self._client_bounds(window)
+                        facts.append(f"client={bounds.width}x{bounds.height}")
+                    except CaptureError:
+                        facts.append("client=?")
+                    for name in ("isMaximized", "isMinimized", "isActive"):
+                        facts.append(f"{name[2:].lower()}={_flag(window, name)}")
+                active = pywinctl.getActiveWindow()
+                facts.append(f"active_app={active.getAppName() if active is not None else 'none'}")
+        except Exception as exc:
+            return f"unavailable ({type(exc).__name__})"
+        return " ".join(facts)
+
+    def environment_ready(self) -> bool:
+        """True only when start() would leave the window alone: exactly one live window, already at
+        the target client size, neither maximized nor minimized, and already the active window.
+        start() resizes (and pywinctl's restore() activates) a window that is not, which would move
+        a person's window and take their focus. Read-only for the same reasons as
+        describe_environment(); any doubt reads as not ready."""
+        try:
+            with self._lock:
+                windows = self._live_windows()
+                if len(windows) != 1:
+                    return False
+                window = windows[0]
+                bounds = self._client_bounds(window)
+                return (
+                    (bounds.width, bounds.height) == (self._target_width, self._target_height)
+                    and not _flag(window, "isMaximized")
+                    and not _flag(window, "isMinimized")
+                    and _flag(window, "isActive")
+                )
+        except Exception:
+            return False
+
+    def _live_windows(self) -> list[Any]:
+        return [
+            window
+            for window in pywinctl.getWindowsWithTitle(self._title) or []
+            if self._is_alive(window) and self._window_title(window) == self._title
+        ]
 
     @abstractmethod
     def capture(self, max_y: int | None = None) -> np.ndarray: ...

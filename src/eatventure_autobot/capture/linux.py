@@ -1,5 +1,7 @@
 import logging
 import os
+import re
+import subprocess
 import threading
 
 import numpy as np
@@ -14,6 +16,37 @@ if _SESSION_TYPE == "wayland" and os.getenv("DISPLAY"):
     # Force PyWinCtl onto its X11 backend so it can control an XWayland-only target.
     # Native Wayland is intentionally out of scope — see the class docstring below.
     os.environ["XDG_SESSION_TYPE"] = "x11"
+
+
+def _session_facts(title: str) -> str:
+    """loginctl's lock/idle hints and whether the scrcpy mirror (found by its window title: a
+    separate `scrcpy --otg` process must not count) still runs: the usual suspects when the window
+    vanishes or loses focus. Best effort, a couple of seconds at most, only on a self-stop."""
+    facts: list[str] = []
+    try:
+        out = subprocess.run(
+            ["loginctl", "show-session", "auto", "-p", "LockedHint", "-p", "IdleHint"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        ).stdout
+        facts += [
+            line.strip().lower().replace("hint", "") for line in out.splitlines() if "=" in line
+        ]
+    except (OSError, subprocess.SubprocessError):
+        facts.append("session=?")
+    try:
+        mirror = subprocess.run(
+            ["pgrep", "-f", "--", f"scrcpy.*{re.escape(title)}"],
+            capture_output=True,
+            timeout=2,
+            check=False,
+        )
+        facts.append(f"scrcpy={'up' if mirror.returncode == 0 else 'down'}")
+    except (OSError, subprocess.SubprocessError):
+        facts.append("scrcpy=?")
+    return " ".join(facts)
 
 
 class LinuxWindowCapture(PyWinCtlWindowCapture):
@@ -39,6 +72,9 @@ class LinuxWindowCapture(PyWinCtlWindowCapture):
         except Exception:
             self._xdisplay.close()
             raise
+
+    def describe_environment(self) -> str:
+        return f"{super().describe_environment()} {_session_facts(self._title)}"
 
     def _resize_hint(self) -> str:
         if _SESSION_TYPE == "wayland":

@@ -8,6 +8,7 @@ import queue
 import signal
 import sys
 import threading
+import time
 from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 from pathlib import Path
 from typing import Any
@@ -18,8 +19,10 @@ from eatventure_autobot.domain.config import BotConfig
 from eatventure_autobot.domain.types import Zone
 from eatventure_autobot.input import create_input_controller
 from eatventure_autobot.notifier import create_notifier
+from eatventure_autobot.notifier.desktop import notify_desktop
 from eatventure_autobot.runtime.bot import EatventureBot
 from eatventure_autobot.runtime.config_factory import build_default_config
+from eatventure_autobot.runtime.game_recovery import GameLauncher
 from eatventure_autobot.runtime.vision import GameVision
 
 logger = logging.getLogger(__name__)
@@ -35,6 +38,9 @@ _log_listener: QueueListener | None = None
 _log_handlers: list[logging.Handler] = []
 _pressed_keys: set[str] = set()
 _pressed_keys_lock = threading.Lock()
+# time.monotonic() of the latest key press anywhere on the PC (the hotkey listener is global): the
+# keyboard half of the "is a person here" gate that auto-resume waits on.
+_last_key_at = 0.0
 
 
 # --- composition root ---------------------------------------------------------------------
@@ -57,8 +63,15 @@ def build_bot(config: BotConfig) -> EatventureBot:
     input_controller = create_input_controller(
         capture, config.input_timing, static_zones, stop_event
     )
+    launcher = GameLauncher(config.game_recovery) if config.game_recovery.enabled else None
     return EatventureBot(
-        config, vision, input_controller, create_notifier(config.telegram), stop_event
+        config,
+        vision,
+        input_controller,
+        create_notifier(config.telegram),
+        stop_event,
+        game_launcher=launcher,
+        desktop_notifier=notify_desktop,
     )
 
 
@@ -71,6 +84,8 @@ def _key_character(key: Any) -> str | None:
 
 
 def on_press(key: Any) -> None:
+    global _last_key_at
+    _last_key_at = time.monotonic()
     character = _key_character(key)
     if character not in HOTKEYS:
         return
@@ -255,6 +270,8 @@ def _run(config: BotConfig) -> None:
             _toggle_red_icon_mode()
         elif bot_instance is not None and bot_instance.running:
             bot_instance.step()
+        elif bot_instance is not None:
+            bot_instance.poll_resume(_last_key_at)  # a no-op unless it stopped itself on an error
         should_exit.wait(config.flow_timing.event_loop_interval)
 
 

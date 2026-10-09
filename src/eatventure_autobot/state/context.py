@@ -16,6 +16,18 @@ ROW_DEDUPE_DISTANCE = 12
 ROW_PROXIMITY_DISTANCE = 50
 
 
+@dataclass(frozen=True)
+class LevelMark:
+    """Cumulative tallies at one instant. run_s is time spent inside handlers (the metrics line's
+    run_s), so unlike wall-clock it does not count the time the bot sat stopped. Two marks bracket
+    a level, or the part of it after the first New Level sighting."""
+
+    run_s: float = 0.0
+    holds: int = 0
+    boxes: int = 0
+    unlock_miss: int = 0
+
+
 @dataclass
 class FlowContext:
     red_icons: list[MatchCandidate] = field(default_factory=list)
@@ -46,6 +58,26 @@ class FlowContext:
     boxes_opened_total: int = 0
     box_guard_trips: int = 0  # times the OPEN_BOXES dead-loop guard forced a scroll
     stall_alerts: int = 0  # times the idle-scroll stall alert fired
+    # Hold outcome tallies (diagnostics only): a hold that ran to click_hold_max_duration means cash
+    # was not the limit; one cut short by the popup vanishing means it was. nl_unlock_miss counts
+    # new-level attempts that exhausted WAIT_FOR_UNLOCK without finding the unlock button.
+    holds_capped: int = 0
+    hold_seconds_total: float = 0.0
+    nl_unlock_miss: int = 0
+    # Level breakdown (diagnostics only, see EatventureBot._report_level_completion): the tallies at
+    # the level's start and at its first New Level sighting (None until one happens). Never reset
+    # by stop(): running seconds do not grow while stopped, which current_level_start_time's do.
+    level_start_mark: LevelMark = field(default_factory=LevelMark)
+    nl_first_mark: LevelMark | None = None
+    # Dead-game recovery (see EatventureBot._relaunch_game): adb relaunches sent / that failed.
+    relaunches: int = 0
+    relaunch_failures: int = 0
+    # Red-X popup rule (see EatventureBot._dismiss_popup): X's tapped, and times the rule stood
+    # down after repeated taps on one spot.
+    close_clicks: int = 0
+    close_suppressed: int = 0
+    recovery_taps: int = 0  # X's tapped inside the recovery window (also counted in close_clicks)
+    close_positions: dict[Point, int] = field(default_factory=dict)  # taps per X position
 
     oscillation_cycle_index: int = 1
     oscillation_leg_direction: int = 1

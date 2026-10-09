@@ -105,6 +105,13 @@ class TelegramNotifier:
             f"{level_number}. restaurant completed! Time spent: {minutes:02d}:{seconds:02d}"
         )
 
+    def notify_game_relaunch(self, succeeded: bool, minutes: float) -> None:
+        outcome = "relaunch OK" if succeeded else "relaunch FAILED"
+        self.send_message(f"Game looked dead for {minutes:.0f} min: {outcome}")
+
+    def notify_bot_self_stopped(self, reason: str, minutes: float) -> None:
+        self.send_message(f"Bot stopped itself (ran {minutes:.0f} min): {reason}")
+
     def close(self) -> None:
         """Stops accepting new messages and lets the worker drain what's already queued
         (including a message sent moments before close(), e.g. notify_bot_stopped()) before

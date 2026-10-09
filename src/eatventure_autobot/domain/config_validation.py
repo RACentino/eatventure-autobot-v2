@@ -6,10 +6,13 @@ from eatventure_autobot.domain.config import (
     BotConfig,
     BoxDetectionConfig,
     CaptureRegionConfig,
+    CloseButtonConfig,
     FlowTimingConfig,
+    GameRecoveryConfig,
     InputTimingConfig,
     LevelTransitionConfig,
     RedIconDetectionConfig,
+    ResumeConfig,
     ScrcpyRecoveryConfig,
     ScrollConfig,
     StatsUpgradeConfig,
@@ -165,6 +168,52 @@ def validate_scroll(config: ScrollConfig) -> None:
         )
 
 
+def validate_close_button(config: CloseButtonConfig, threshold: float) -> None:
+    _fraction("close_button threshold", threshold)
+    if config.min_distance < 1:
+        raise ConfigError(f"close_button min_distance must be >= 1, got {config.min_distance}")
+    _fraction("close_button nms_iou_threshold", config.nms_iou_threshold)
+    _fraction("close_button block_min_fraction", config.block_min_fraction)
+    if config.block_window < 3 or not config.block_ranges:
+        raise ConfigError("close_button needs block_window >= 3 and some block_ranges")
+    if min(config.settle_delay, config.suppress_seconds, config.new_level_lock_seconds) < 0:
+        raise ConfigError(
+            "close_button settle_delay/suppress_seconds/new_level_lock_seconds must be >= 0"
+        )
+    if config.max_consecutive_clicks < 1:
+        raise ConfigError(
+            f"close_button max_consecutive_clicks must be >= 1, got {config.max_consecutive_clicks}"
+        )
+    if config.enabled and not config.template_names:
+        raise ConfigError("close_button is enabled but template_names is empty")
+
+
+def validate_game_recovery(config: GameRecoveryConfig) -> None:
+    if config.static_frame_delta <= 0:
+        raise ConfigError(f"static_frame_delta must be > 0, got {config.static_frame_delta}")
+    if config.relaunch_settle_seconds < 0:
+        raise ConfigError(
+            f"relaunch_settle_seconds must be >= 0, got {config.relaunch_settle_seconds}"
+        )
+    if config.command_timeout <= 0:
+        raise ConfigError(f"command_timeout must be > 0, got {config.command_timeout}")
+    if config.recovery_poll_seconds <= 0:
+        raise ConfigError(
+            f"recovery_poll_seconds must be > 0, got {config.recovery_poll_seconds}"
+        )
+    if config.enabled and not (config.adb_path.strip() and config.package_hint.strip()):
+        raise ConfigError("game_recovery is enabled but adb_path/package_hint is empty")
+
+
+def validate_resume(config: ResumeConfig) -> None:
+    if config.check_seconds <= 0:
+        raise ConfigError(f"resume.check_seconds must be > 0, got {config.check_seconds}")
+    if config.idle_seconds < 0:
+        raise ConfigError(f"resume.idle_seconds must be >= 0, got {config.idle_seconds}")
+    if config.max_attempts < 1:
+        raise ConfigError(f"resume.max_attempts must be >= 1, got {config.max_attempts}")
+
+
 def validate_telegram(config: TelegramConfig) -> None:
     if config.enabled and not (config.bot_token and config.chat_id):
         raise ConfigError("Telegram is enabled but bot_token/chat_id are incomplete")
@@ -187,6 +236,9 @@ def validate_bot_config(config: BotConfig) -> None:
     validate_level_transition(config.level_transition)
     validate_scroll(config.scroll)
     validate_telegram(config.telegram)
+    validate_game_recovery(config.game_recovery)
+    validate_resume(config.resume)
+    validate_close_button(config.close_button, config.thresholds.close_button)
 
     stall_timeout = config.flow_timing.state_stall_timeout_seconds
     bounded_retry_budgets = (

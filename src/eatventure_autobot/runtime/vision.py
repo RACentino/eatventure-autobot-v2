@@ -7,13 +7,18 @@ import logging
 import time
 from pathlib import Path
 
+import cv2
 import numpy as np
 
-from eatventure_autobot.detection.opencv_matcher import filter_by_template_consensus
+from eatventure_autobot.detection.opencv_matcher import (
+    _hsv_range_mask,
+    filter_by_template_consensus,
+)
 from eatventure_autobot.domain.config import BotConfig
 from eatventure_autobot.domain.errors import DetectionError
 from eatventure_autobot.domain.protocols import InputController, ScreenCapture, TemplateMatcher
 from eatventure_autobot.domain.types import (
+    BoundingBox,
     MatchCandidate,
     MatchResult,
     Point,
@@ -26,6 +31,17 @@ logger = logging.getLogger(__name__)
 NEW_LEVEL_TEMPLATE = "newLevel"
 UNLOCK_TEMPLATE = "unlock"
 UPGRADE_STATION_TEMPLATE = "upgradeStation"
+
+
+def _shifted(candidate: MatchCandidate, dx: int, dy: int) -> MatchCandidate:
+    """A candidate found inside a cropped area, expressed in full-frame coordinates."""
+    box = candidate.bounding_box
+    return MatchCandidate(
+        candidate.template_name,
+        candidate.confidence,
+        (candidate.center[0] + dx, candidate.center[1] + dy),
+        BoundingBox(box.x_min + dx, box.y_min + dy, box.x_max + dx, box.y_max + dy),
+    )
 
 
 class GameVision:
@@ -72,6 +88,7 @@ class GameVision:
             UPGRADE_STATION_TEMPLATE,
             *sorted(red_icon_names),
             *self._config.box.template_names,
+            *self._config.close_button.template_names,
         )
 
     def validate_required_templates(self) -> list[str]:
@@ -112,6 +129,20 @@ class GameVision:
         self._capture.ensure_window(resize=should_relocate)
         if should_relocate:
             self._last_relocate_at = now
+
+    def describe_environment(self) -> str:
+        """Facts about the window for a self-stop log line. Diagnostics only: never raises."""
+        try:
+            return self._capture.describe_environment()
+        except Exception as exc:
+            return f"unavailable ({type(exc).__name__})"
+
+    def environment_ready(self) -> bool:
+        """True when starting would not touch the window (see the capture layer). Never raises."""
+        try:
+            return self._capture.environment_ready()
+        except Exception:
+            return False
 
     def cursor_position_in_window(self, input_controller: InputController) -> Point | None:
         """Window-relative cursor readout for the 'X' debug hotkey."""
@@ -212,6 +243,57 @@ class GameVision:
             iou_threshold=self._config.box.nms_iou_threshold,
         )
 
+    def find_close_buttons(self, frame: np.ndarray) -> list[MatchCandidate]:
+        """The red X of a popup, found the same way boxes are: masked template match plus the
+        per-asset HSV gate. Not in validate_required_templates: a missing asset turns the rule off
+        (load_templates already logs it) instead of blocking start."""
+        config = self._config.close_button
+        loaded = tuple(name for name in config.template_names if name in self._loaded)
+        if not loaded:
+            return []
+        area = self._red_block_area(frame)
+        if area is None:
+            return []
+        left, top, right, bottom = area
+        found = self._gather(
+            frame[top:bottom, left:right],
+            loaded,
+            self._config.thresholds.close_button,
+            config.min_distance,
+            config.hsv,
+            1,
+            iou_threshold=config.nms_iou_threshold,
+        )
+        return [_shifted(candidate, left, top) for candidate in found]
+
+    def _red_block_area(self, frame: np.ndarray) -> tuple[int, int, int, int] | None:
+        """Bounding area (left, top, right, bottom) around every solid red block the size of the X
+        button, or None when the frame has none: the ~4 ms gate in front of the ~85 ms match."""
+        config = self._config.close_button
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        red: np.ndarray = np.zeros(frame.shape[:2], dtype=np.uint8)
+        for hsv_range in config.block_ranges:
+            red = cv2.bitwise_or(red, _hsv_range_mask(hsv, hsv_range.lower, hsv_range.upper))
+        window = config.block_window
+        share = cv2.boxFilter(
+            (red > 0).astype(np.float32),
+            -1,
+            (window, window),
+            normalize=True,
+            borderType=cv2.BORDER_CONSTANT,
+        )
+        rows, cols = np.where(share >= config.block_min_fraction)
+        if rows.size == 0:
+            return None
+        reach = window // 2 + window // 2 + 6  # block centre -> far edge of a template placed on it
+        height, width = frame.shape[:2]
+        return (
+            max(0, int(cols.min()) - reach),
+            max(0, int(rows.min()) - reach),
+            min(width, int(cols.max()) + reach),
+            min(height, int(rows.max()) + reach),
+        )
+
     def box_near_misses(self, frame: np.ndarray) -> list[TemplateExplanation]:
         """Best raw match per loaded box template with the threshold and HSV gate NOT applied: what
         the detector saw when find_boxes reported nothing. Diagnostics only (the stall probe)."""
@@ -221,6 +303,13 @@ class GameVision:
             if name in self._loaded
         )
         return [item for item in explained if item is not None]
+
+    def unlock_near_miss(self, frame: np.ndarray) -> TemplateExplanation | None:
+        """Best raw `unlock` match with the threshold NOT applied: a greyed-out button reads low, a
+        near-miss reads close to the threshold. Diagnostics only (the unlock-miss log line)."""
+        if UNLOCK_TEMPLATE not in self._loaded:
+            return None
+        return self._matcher.explain_template(frame, UNLOCK_TEMPLATE)
 
     def _gather(
         self,

@@ -63,6 +63,11 @@ class ThresholdConfig:
     box: float = 0.930
     unlock: float = 0.905
     new_level: float = 0.965
+    # assets/redX.png masks the white X glyph plus 2 px of red face (249 px): a full-silhouette mask
+    # let a flat red square (0.948) and a red "!" button (0.944) through. With the glyph mask the
+    # true X scores >= 0.986 (captured frames, JPEG q40, noise, brightness), the best lookalike
+    # 0.887 and the best real-frame false match 0.882, so 0.940 leaves >= 0.046 / 0.053.
+    close_button: float = 0.980
 
 
 @dataclass(frozen=True, slots=True)
@@ -326,6 +331,90 @@ class ScrollConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class GameRecoveryConfig:
+    """Revive a dead game over adb. The 09-30 logs held two stalls (39 and 21 min) where the stall
+    probe saw a static frame (dark, or bright and frozen; mean-abs-diff 0.06-0.86 over minutes) and
+    the bot scrolled for nothing until a human stopped it."""
+
+    enabled: bool = True
+    adb_path: str = "adb"
+    # The game's package is found once at start: the single installed package whose id contains
+    # this (case-insensitive). Zero or several matches disable relaunch rather than guess.
+    # Checked on the real phone (09-30): the game is com.hwqgrhhjfd.idlefastfood. "eatventure"
+    # matches nothing there, and "food" also matches com.global.foodpanda.android.
+    package_hint: str = "idlefastfood"
+    # Mean-abs-diff on a 64x36 gray thumbnail between the first scan of an idle streak and the
+    # scan at the stall alert (~7.5 min later). A live farm animates; measured static frames 0.86.
+    static_frame_delta: float = 1.5
+    # Length of the recovery window after the launch command: the main flow stays suspended for
+    # all of it, and only the red-X rule runs (cold start + any popups); see _recover_popups.
+    relaunch_settle_seconds: float = 60.0
+    # Pause between X scans inside the recovery window when no X is on screen.
+    recovery_poll_seconds: float = 0.3
+    command_timeout: float = 10.0
+
+
+@dataclass(frozen=True, slots=True)
+class ResumeConfig:
+    """Auto-resume after the bot stopped itself on a window or focus error. Over Sep 28-Oct 6,
+    44.5 of 205 hours went to such stops followed by nothing until a person came back. Off by
+    default: until `enabled` is set the check only LOGS what it would do (shadow mode), so the
+    share of that downtime it could really recover is measured before the bot may act on it."""
+
+    enabled: bool = False
+    # Seconds between checks; also the first backoff step after a failed live attempt.
+    check_seconds: float = 60.0
+    # No key press and no cursor movement for this long before the bot may start itself: it never
+    # takes the mouse from someone who is at the PC.
+    idle_seconds: float = 600.0
+    # Failed live attempts in one stop before the bot gives up and waits for a person.
+    max_attempts: int = 20
+
+
+@dataclass(frozen=True, slots=True)
+class CloseButtonConfig:
+    """The red X that closes boot/event popups (the Offline Earnings dialog after a relaunch), which
+    takes priority over every handler except the hard-locked New Level flow."""
+
+    enabled: bool = True
+    template_names: tuple[str, ...] = ("redX",)
+    # Built from assets/redX.png's own masked pixels (coral red face hue 1-2, S 105-190, V 207-255;
+    # white glyph S <= 66, V >= 238), the way the box ranges were built. On the true X the ratio is
+    # >= 0.944 under stress; real-frame false matches reach 0.21, so 0.85 leaves 0.09 / 0.64.
+    hsv: HsvGate = HsvGate(
+        ranges=(
+            HsvRange((0, 90, 180), (12, 255, 255)),
+            HsvRange((166, 90, 180), (179, 255, 255)),
+            HsvRange((0, 0, 225), (179, 70, 255)),
+        ),
+        min_match_ratio=0.85,
+    )
+    min_distance: int = 20
+    nms_iou_threshold: float = 0.20
+    # Cheap prefilter so the rule can run every step: the full masked match costs ~85 ms on a
+    # 780x360 frame, a red-block scan ~4 ms. The X button is a solid red block of block_window px
+    # (its on-screen size, 38): 0.93 of the window on the real X under JPEG q40 / noise / brightness
+    # stress, at most 0.31 on real farm frames, so 0.60 leaves room on both sides. Only a frame
+    # with such a block is handed to the template match, and only the area around the block.
+    block_ranges: tuple[HsvRange, ...] = (
+        HsvRange((0, 90, 180), (12, 255, 255)),
+        HsvRange((166, 90, 180), (179, 255, 255)),
+    )
+    block_window: int = 38
+    block_min_fraction: float = 0.60
+    # Blind wait after the tap: the same modal-settle constant as every other popup dismissal.
+    settle_delay: float = 0.800
+    # Guard for absolute priority: the same spot tapped this many times in a row means the tap is
+    # not closing it (or it is not an X), so the rule stands down for suppress_seconds instead of
+    # starving every other behaviour.
+    max_consecutive_clicks: int = 6
+    suppress_seconds: float = 60.0
+    # Hard-lock layer 2: after any step in a New Level state, the X rule stays off this long, so
+    # whatever dialog is still open runs exactly as it does without the rule.
+    new_level_lock_seconds: float = 10.0
+
+
+@dataclass(frozen=True, slots=True)
 class TelegramConfig:
     enabled: bool = False
     bot_token: str = ""
@@ -372,3 +461,6 @@ class BotConfig:
     scroll: ScrollConfig = field(default_factory=ScrollConfig)
     telegram: TelegramConfig = TelegramConfig()
     forbidden_zones: ForbiddenZoneConfig = field(default_factory=ForbiddenZoneConfig)
+    game_recovery: GameRecoveryConfig = field(default_factory=GameRecoveryConfig)
+    close_button: CloseButtonConfig = field(default_factory=CloseButtonConfig)
+    resume: ResumeConfig = field(default_factory=ResumeConfig)
