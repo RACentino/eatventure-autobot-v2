@@ -57,6 +57,21 @@ class FlowContext:
     holds_completed: int = 0
     boxes_opened_total: int = 0
     box_guard_trips: int = 0  # times the OPEN_BOXES dead-loop guard forced a scroll
+    # Boxes that passed detection but were not opened: skipped because the spot is a forbidden
+    # zone, or clicked and the click failed. Both used to be invisible in the logs.
+    box_zone_skips: int = 0
+    box_click_fails: int = 0
+    # No-work loop FIND -> UPGRADE_STATS -> OPEN -> SCROLL -> OPEN -> FIND. Both flags live for ONE
+    # step: FIND sets stats_from_find (so a stats miss goes to OPEN, not SCROLL as after a hold),
+    # a landed scroll sets scan_boxes_after_scroll (so that OPEN pass hands back to FIND instead of
+    # counting another idle pass and scrolling forever). Each is consumed by its handler.
+    stats_from_find: bool = False
+    scan_boxes_after_scroll: bool = False
+    # Tallies for the metrics line: stats-badge looks and upgrades done, and crates that only the
+    # post-scroll scan opened (the number that says whether the extra scan earns its time).
+    stats_checks: int = 0
+    stats_hits: int = 0
+    post_scroll_boxes: int = 0
     stall_alerts: int = 0  # times the idle-scroll stall alert fired
     # Hold outcome tallies (diagnostics only): a hold that ran to click_hold_max_duration means cash
     # was not the limit; one cut short by the popup vanishing means it was. nl_unlock_miss counts
@@ -110,6 +125,8 @@ class FlowContext:
         self.oscillation_leg_progress = 0
         self.new_level_red_icon_verified = False
         self.box_only_passes = 0
+        self.stats_from_find = False
+        self.scan_boxes_after_scroll = False
 
     def refund_attempt(self) -> None:
         """Undo the attempt the same-state return is about to be charged for: step() adds one

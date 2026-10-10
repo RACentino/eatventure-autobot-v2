@@ -146,6 +146,28 @@ def _hsv_match_ratio(
     return matched_count / active_count
 
 
+def _hsv_median(
+    screenshot: np.ndarray, template: np.ndarray, location: Point, mask: np.ndarray | None
+) -> tuple[int, int, int] | None:
+    """Median (H, S, V) of the template's visible pixels at `location`; None when the window falls
+    off the frame, has no visible pixels or can't be converted. Diagnostics only (stall probe)."""
+    x, y = location
+    height, width = template.shape[:2]
+    roi = screenshot[y : y + height, x : x + width]
+    if roi.shape[:2] != (height, width):
+        return None
+    active = np.ones((height, width), dtype=bool) if mask is None else mask > 0
+    if not active.any():
+        return None
+    try:
+        hsv_region = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    except cv2.error as exc:
+        logger.debug("HSV median conversion failed: %s", exc)
+        return None
+    hue, saturation, value = (int(np.median(hsv_region[:, :, c][active])) for c in range(3))
+    return hue, saturation, value
+
+
 def _check_hsv_gate(
     screenshot: np.ndarray,
     template: np.ndarray,
@@ -260,7 +282,8 @@ class OpenCvTemplateMatcher:
         )
         height, width = template.shape[:2]
         center = (location[0] + width // 2, location[1] + height // 2)
-        return TemplateExplanation(template_name, confidence, center, ratio)
+        median = _hsv_median(frame, template, location, mask)
+        return TemplateExplanation(template_name, confidence, center, ratio, median)
 
     def find_template_candidates(
         self,

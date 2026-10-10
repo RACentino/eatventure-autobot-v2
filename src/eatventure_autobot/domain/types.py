@@ -112,12 +112,15 @@ class MatchCandidate:
 class TemplateExplanation:
     """The best raw match of one template in a frame with no threshold or gate applied — what the
     detector actually saw. hsv_ratio is the share of the template's pixels inside the HSV gate at
-    that spot (None when no gate was given or it could not be measured). Diagnostics only."""
+    that spot (None when no gate was given or it could not be measured). hsv_median is the median
+    (H, S, V) of the template's visible pixels there: the colour the gate was judging, as numbers.
+    Diagnostics only."""
 
     template_name: str
     confidence: float
     center: Point
     hsv_ratio: float | None
+    hsv_median: tuple[int, int, int] | None = None
 
 
 @dataclass(frozen=True, slots=True)

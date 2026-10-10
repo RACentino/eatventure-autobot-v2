@@ -304,6 +304,16 @@ class GameVision:
         )
         return [item for item in explained if item is not None]
 
+    def red_icon_near_misses(self, frame: np.ndarray) -> list[TemplateExplanation]:
+        """box_near_misses for the red-icon templates the current mode really matches: threshold,
+        HSV gate and zones NOT applied. Set against box_near_misses it tells a crate-only miss from
+        a miss of everything on screen. Diagnostics only (the early stall probe)."""
+        explained = (
+            self._matcher.explain_template(frame, name, self._config.red_icon.hsv)
+            for name in self._active_red_icon_template_names()
+        )
+        return [item for item in explained if item is not None]
+
     def unlock_near_miss(self, frame: np.ndarray) -> TemplateExplanation | None:
         """Best raw `unlock` match with the threshold NOT applied: a greyed-out button reads low, a
         near-miss reads close to the threshold. Diagnostics only (the unlock-miss log line)."""

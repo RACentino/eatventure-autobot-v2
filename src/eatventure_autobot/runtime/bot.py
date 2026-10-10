@@ -18,7 +18,7 @@ from eatventure_autobot.domain.config import BotConfig
 from eatventure_autobot.domain.errors import CaptureError, WindowNotAvailableError
 from eatventure_autobot.domain.protocols import InputController, Notifier
 from eatventure_autobot.domain.state import X_LOCKED_STATES, State
-from eatventure_autobot.domain.types import MatchCandidate, Point, Zone
+from eatventure_autobot.domain.types import MatchCandidate, Point, TemplateExplanation, Zone
 from eatventure_autobot.resilience.watchdog import StallWatchdog, WatchdogVerdict
 from eatventure_autobot.runtime.game_recovery import GameLauncher
 from eatventure_autobot.runtime.vision import GameVision
@@ -26,6 +26,12 @@ from eatventure_autobot.state import transitions as flow
 from eatventure_autobot.state.context import FlowContext, LevelMark
 
 logger = logging.getLogger(__name__)
+
+
+# Names the state flow in effect. Bump it when the flow changes without a config change: the
+# fingerprint below hashes config only, so metrics lines from before and after would otherwise
+# carry the same cfg= id and could not be told apart.
+FLOW_REVISION = "no-work: FIND>STATS>OPEN>SCROLL>OPEN>FIND"
 
 
 def _config_fingerprint(config: BotConfig) -> str:
@@ -36,6 +42,7 @@ def _config_fingerprint(config: BotConfig) -> str:
         for field in dataclasses.fields(config)
         if field.name not in ("paths", "telegram")
     }
+    tuning["flow_revision"] = FLOW_REVISION
     return hashlib.sha1(repr(tuning).encode(), usedforsecurity=False).hexdigest()[:8]
 
 
@@ -83,6 +90,26 @@ def _frame_thumbnail(frame: np.ndarray) -> np.ndarray:
     return np.asarray(gray[rows][:, cols])
 
 
+def _format_near_misses(
+    seen: list[TemplateExplanation], clickable: Callable[[Point], bool] | None = None
+) -> str:
+    """Text for the early probe: per template its best raw match, how much of it sits inside the
+    HSV gate, the median colour it had (H,S,V: judge the gate in numbers, not images) and, when a
+    zone check is given, whether that spot is a forbidden zone. The alert probe keeps its own,
+    test-pinned format (_log_box_near_misses)."""
+    parts = []
+    for item in seen:
+        ratio = "n/a" if item.hsv_ratio is None else f"{item.hsv_ratio:.2f}"
+        hsv = item.hsv_median
+        median = "" if hsv is None else f" med_hsv={hsv[0]},{hsv[1]},{hsv[2]}"
+        zone = " IN-FORBIDDEN-ZONE" if clickable and not clickable(item.center) else ""
+        parts.append(
+            f"{item.template_name} conf={item.confidence:.3f} at {item.center} "
+            f"hsv={ratio}{median}{zone}"
+        )
+    return "; ".join(parts) or "none"
+
+
 class EatventureBot:
     def __init__(
         self,
@@ -128,6 +155,11 @@ class EatventureBot:
         self._idle_started_at = 0.0
         self._stall_probe_pending = False
         self._last_probe_thumb: np.ndarray | None = None
+        # Early probe (see _maybe_alert_stall): armed once per idle streak and logged on the next
+        # OPEN_BOXES scan. _scan_delta is how far that scan's picture is from the previous scan's
+        # (taken before the last drag): near the animation-only level means the drag moved nothing.
+        self._early_probe_pending = False
+        self._scan_delta: float | None = None
         # Dead-game detection: thumbnail of the first OPEN_BOXES scan of the current idle streak
         # (the "before" picture), the latest scan, and the one at the previous metrics line.
         # None launcher = recovery off (tests, or disabled in config); the thumbnails still feed
@@ -135,6 +167,9 @@ class EatventureBot:
         self._launcher = game_launcher
         self._package_probed = False
         self._streak_thumb: np.ndarray | None = None
+        # Armed by the first landed scroll of an idle streak (_maybe_alert_stall); the next
+        # OPEN_BOXES scan takes the "before" picture and disarms it, whatever else happened between.
+        self._streak_anchor_pending = False
         self._latest_thumb: np.ndarray | None = None
         self._metrics_thumb: np.ndarray | None = None
         self._relaunch_progress: tuple[int, int] | None = None
@@ -565,7 +600,9 @@ class EatventureBot:
             "metrics cfg=%s run_s=%.0f levels=%d holds=%d boxes=%d guard_trips=%d "
             "idle_scrolls=%d stall_alerts=%d hold_capped=%d hold_avg_s=%.1f nl_unlock_miss=%d "
             "relaunches=%d relaunch_failures=%d frame_delta_5m=%s close_clicks=%d "
-            "close_suppressed=%d close_check_s=%.1f recovery_taps=%d close_top=%s | %s",
+            "close_suppressed=%d close_check_s=%.1f recovery_taps=%d close_top=%s "
+            "box_zone_skips=%d box_click_fails=%d stats_checks=%d stats_hits=%d "
+            "post_scroll_boxes=%d | %s",
             self._config_fingerprint,
             total,
             context.total_levels_completed,
@@ -585,6 +622,11 @@ class EatventureBot:
             self._close_check_seconds,
             context.recovery_taps,
             _top_close_position(context.close_positions),
+            context.box_zone_skips,
+            context.box_click_fails,
+            context.stats_checks,
+            context.stats_hits,
+            context.post_scroll_boxes,
             shares or "-",
         )
 
@@ -602,11 +644,16 @@ class EatventureBot:
         search has produced nothing. Every `stall_scrolls_before_alert` scrolls, log a WARNING and
         arm a one-shot probe of box detection on the next OPEN_BOXES frame, so a silent stall
         names its own cause. No extra capture, gesture or click, so no slowdown.
-        ponytail: boxes only. A red-icon near-miss probe and a scroll re-anchor are deferred until
-        a stall report shows they are the problem."""
+        Separately, at `stall_probe_scrolls` (earlier, log-only) arm the early probe, which also
+        reads the red icons: the alert's probe is boxes only and a hand stop can beat it.
+        ponytail: a scroll re-anchor stays deferred until a probe shows it is the problem."""
         idle = self.context.idle_scrolls
         if idle == 1:
             self._idle_started_at = time.monotonic()
+            self._streak_anchor_pending = True
+        early = self._config.scroll.stall_probe_scrolls
+        if early > 0 and idle == early:
+            self._early_probe_pending = True
         every = self._config.scroll.stall_scrolls_before_alert
         if every <= 0 or idle % every != 0:
             return
@@ -654,6 +701,51 @@ class EatventureBot:
             self._config.box.hsv.min_match_ratio,
             "; ".join(parts) or "none",
         )
+
+    def _log_early_probe(self, frame: np.ndarray, detected: int) -> None:
+        """One INFO line at `stall_probe_scrolls` idle scrolls: what box AND red-icon detection saw
+        on this scan (best raw match per template, gates and zones not applied) and whether the last
+        drag changed the picture. Box vs red-icon conf tells a crate-only miss from a miss of
+        everything; a flat picture change says the drag moved nothing. Log-only: no alert, never
+        reaches the dead-game check, leaves the alert probe's thumbnail alone, and a failure here
+        is logged, not raised (an unexpected handler error would stop the whole bot)."""
+        if self.context.idle_scrolls <= 0:  # progress ended the streak before this scan ran
+            return
+        try:
+            context = self.context
+            thumb = _frame_thumbnail(frame)
+            start = self._streak_thumb
+            streak = "n/a" if start is None else f"{np.abs(thumb - start).mean():.2f}"
+            drag = "n/a" if self._scan_delta is None else f"{self._scan_delta:.2f}"
+            quads = " ".join(
+                f"{thumb[r:r + 18, c:c + 32].mean():.0f}" for r in (0, 18) for c in (0, 32)
+            )
+            boxes = _format_near_misses(self._vision.box_near_misses(frame), self._is_clickable)
+            icons = _format_near_misses(self._vision.red_icon_near_misses(frame))
+            thresholds = self._config.thresholds
+            logger.info(
+                "Early probe: %d idle scrolls (%.1f min), %d box(es) passed detection, "
+                "box_zone_skips=%d box_click_fails=%d. Picture change across the last drag=%s, "
+                "vs streak start=%s, quadrant brightness=[%s]. "
+                "Boxes (need conf>=%.3f and hsv>=%.2f): %s. "
+                "Red icons (need conf>=%.3f and hsv>=%.2f): %s",
+                context.idle_scrolls,
+                (time.monotonic() - self._idle_started_at) / 60,
+                detected,
+                context.box_zone_skips,
+                context.box_click_fails,
+                drag,
+                streak,
+                quads,
+                thresholds.box,
+                self._config.box.hsv.min_match_ratio,
+                boxes,
+                thresholds.red_icon,
+                self._config.red_icon.hsv.min_match_ratio,
+                icons,
+            )
+        except Exception:
+            logger.exception("Early probe failed")
 
     # --- shared helpers -------------------------------------------------------------------
 
@@ -912,6 +1004,9 @@ class EatventureBot:
         return check
 
     def _handle_upgrade_stats(self) -> State:
+        # Consumed on every entry, even through the idle-click bail-out below, so it can't go stale.
+        from_find = self.context.stats_from_find
+        self.context.stats_from_find = False
         # Verified v1 behavior: single-shot, no retry loop and no scrcpy-recovery here. This is
         # also the one state where an idle-click failure does NOT retry itself.
         if not self._click_idle():
@@ -920,13 +1015,17 @@ class EatventureBot:
         if self._vision.find_new_level_button(
             frame[: self._config.capture_regions.max_search_y]
         ).found:
-            return flow.decide_upgrade_stats(self.context, flow.StatsIconObservation(True, False))
+            return flow.decide_upgrade_stats(
+                self.context, flow.StatsIconObservation(True, False, from_find)
+            )
 
         # Reuses the shared red-icon scan; split_red_icons applies the stats-icon threshold.
         candidates = self._vision.find_red_icons(frame)
         _, _, stats_seen = self._vision.split_red_icons(candidates)
         if not stats_seen:
-            return flow.decide_upgrade_stats(self.context, flow.StatsIconObservation(False, False))
+            return flow.decide_upgrade_stats(
+                self.context, flow.StatsIconObservation(False, False, from_find)
+            )
 
         targets = self._config.click_targets
         button_clicked = self._input.click(*targets.stats_upgrade_button_pos)
@@ -948,16 +1047,26 @@ class EatventureBot:
                 self._click_idle()
             else:
                 logger.warning("Stats upgrade spam-click failed at %s", targets.stats_upgrade_pos)
-        return flow.decide_upgrade_stats(self.context, flow.StatsIconObservation(False, True))
+        return flow.decide_upgrade_stats(
+            self.context, flow.StatsIconObservation(False, True, from_find)
+        )
 
     def _handle_open_boxes(self) -> State:
         if not self._click_idle():
-            return State.OPEN_BOXES
+            return State.OPEN_BOXES  # retries this same pass, so the after-scroll flag is kept
+        # Consumed only now that the pass is really running (FlowContext.scan_boxes_after_scroll).
+        after_scroll = self.context.scan_boxes_after_scroll
+        self.context.scan_boxes_after_scroll = False
         box_search_y = self._config.capture_regions.box_search_y
         frame = self._vision.capture(max_y=box_search_y)
         thumb = _frame_thumbnail(frame)
+        previous = self._latest_thumb
+        self._scan_delta = None if previous is None else float(np.abs(thumb - previous).mean())
         self._latest_thumb = thumb
-        if self.context.idle_scrolls == 1:  # first scan after the first scroll of an idle streak
+        # First scan after the first scroll of an idle streak. Armed once per streak, not keyed on
+        # idle_scrolls == 1: that stays 1 for the next cycle too, whose scan would overwrite it.
+        if self._streak_anchor_pending:
+            self._streak_anchor_pending = False
             self._streak_thumb = thumb
         if self._vision.find_new_level_button(frame).found:
             logger.info("New level found while opening boxes")
@@ -980,6 +1089,10 @@ class EatventureBot:
                 )
             boxes = self._vision.find_boxes(frame)
 
+        if self._early_probe_pending:  # log-only: kept clear of the relaunch decision below
+            self._early_probe_pending = False
+            self._log_early_probe(frame, len(boxes))
+
         if self._stall_probe_pending:
             self._stall_probe_pending = False
             self._log_box_near_misses(frame, len(boxes))
@@ -989,10 +1102,13 @@ class EatventureBot:
         opened = 0
         for box in boxes:
             if not self._is_clickable(box.center):
+                self.context.box_zone_skips += 1
                 continue
             if self._input.click(*box.center):
                 opened += 1
                 self._recent_box_clicks.append((*box.center, box.confidence))
+            else:
+                self.context.box_click_fails += 1
         if opened:
             logger.info("Opened %s boxes", opened)
         trips = self.context.box_guard_trips
@@ -1000,7 +1116,7 @@ class EatventureBot:
             self.context,
             self._config.upgrade_station,
             self._config.scroll.max_idle_pass_attempts,
-            flow.BoxCycleObservation(False, opened),
+            flow.BoxCycleObservation(False, opened, after_scroll),
         )
         if self.context.box_guard_trips != trips:
             logger.warning(
@@ -1012,9 +1128,12 @@ class EatventureBot:
         return next_state
 
     def _game_looks_dead(self, thumb: np.ndarray) -> bool:
-        """Runs only on a stall probe (>= stall_scrolls_before_alert idle scrolls, ~7.5 min): the
-        picture has not changed since the streak began. Healthy idle streaks peak near 66 scrolls
-        (p99 of 671 metrics samples), so the scroll count alone is no evidence; the frame is."""
+        """Runs only on a stall probe (>= stall_scrolls_before_alert idle scrolls, ~10 min at the
+        no-work loop's ~4.2 s per scroll; it was ~7.5 min at 3.0 s). It runs on the scan right
+        after a drag, when a live game has just moved and a frozen one has not: the picture has not
+        changed since the streak began. Healthy idle streaks peak near 66 scrolls (measured at 3.0 s
+        per scroll, p99 of 671 metrics samples), so the scroll count alone is no evidence; the
+        frame is."""
         before = self._streak_thumb
         if before is None or self._launcher is None:  # no launcher = recovery switched off
             return False

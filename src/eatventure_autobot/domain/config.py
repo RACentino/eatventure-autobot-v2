@@ -216,7 +216,7 @@ class InputTimingConfig:
 
 @dataclass(frozen=True, slots=True)
 class FlowTimingConfig:
-    upgrades_before_stats: int = 2
+    upgrades_before_stats: int = 1
     # Must exceed the longest legitimate same-state chain (WAIT_FOR_UNLOCK: unlock_search_attempts x
     # (idle click + focus_settle_delay + capture + unlock_search_interval) ~ 5.3 s) and the longest
     # single hold (click_hold_max_duration, 9.0 s); 9.0 s clears the former by 1.7x.
@@ -264,7 +264,7 @@ class ClickTargetConfig:
 
 @dataclass(frozen=True, slots=True)
 class StatsUpgradeConfig:
-    click_duration: float = 2.0
+    click_duration: float = 1.5
     click_delay: float = 0.032
     # Independent of input_timing.mouse_down_duration/mouse_up_duration by design: this is the
     # only click path that needs to be fast enough to register many clicks inside click_duration,
@@ -324,10 +324,17 @@ class ScrollConfig:
     duration: float = 0.300
     # Stall alert: after this many completed scrolls in a row with no box opened, upgrade held,
     # stats upgrade or level completed, log a WARNING and probe box detection on the next scan.
-    # 150 idle passes is ~8-9 min (an idle pass is 3.0-3.5 s); the Sep 8-25 logs held 12 idle-scroll
-    # stalls of >= 5 min (10 of them >= 9 min, longest 5.3 h) in which the bot logged nothing.
+    # 150 idle passes is ~10.5 min in the no-work loop (FIND, UPGRADE_STATS, OPEN, SCROLL, OPEN:
+    # ~4.2 s per scroll; it was ~7.5 min at 3.0 s); the Sep 8-25 logs held 12 idle-scroll stalls
+    # of >= 5 min (10 of them >= 9 min, longest 5.3 h) in which the bot logged nothing.
     # Repeats every multiple. 0 disables.
     stall_scrolls_before_alert: int = 150
+    # Early, log-only probe: once per idle streak, at this many completed scrolls (~2 min), one
+    # INFO line says what box AND red-icon detection saw on the next scan. It never alerts and never
+    # triggers the dead-game relaunch (that stays at stall_scrolls_before_alert). The 150-scroll
+    # alert can't name a stall that is stopped by hand sooner (Oct 9: stopped at ~110 scrolls, so no
+    # probe data existed); healthy streaks of this length are ~3 a day. 0 disables.
+    stall_probe_scrolls: int = 30
 
 
 @dataclass(frozen=True, slots=True)

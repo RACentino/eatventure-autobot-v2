@@ -166,6 +166,8 @@ def validate_scroll(config: ScrollConfig) -> None:
         raise ConfigError(
             f"stall_scrolls_before_alert must be >= 0, got {config.stall_scrolls_before_alert}"
         )
+    if config.stall_probe_scrolls < 0:
+        raise ConfigError(f"stall_probe_scrolls must be >= 0, got {config.stall_probe_scrolls}")
 
 
 def validate_close_button(config: CloseButtonConfig, threshold: float) -> None:

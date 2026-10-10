@@ -20,6 +20,10 @@ Deliberate, user-confirmed exceptions to v1 parity -- do NOT "fix" these in a fu
   * The hold monitor rejects a station match far from the held position (live-verified false
     positive on the MAX-state popup), which v1 has no equivalent of.
   * Pixel-calibration config (click targets, zones, footer zone bounds) is v2's own, not v1's.
+  * The no-work loop is FIND_RED_ICONS -> UPGRADE_STATS -> OPEN_BOXES -> SCROLL -> OPEN_BOXES ->
+    FIND_RED_ICONS (v1: FIND_RED_ICONS -> OPEN_BOXES -> SCROLL -> FIND_RED_ICONS): a stats-badge
+    look on every no-icon pass, and a crate scan right after every landed scroll. After a completed
+    hold, a stats miss still goes straight to SCROLL, as in v1.
 """
 
 from collections.abc import Iterable
@@ -76,7 +80,10 @@ def decide_find_red_icons(context: FlowContext, obs: RedIconScanObservation) -> 
         context.new_level_red_icon_verified = False
         return State.CHECK_NEW_LEVEL
     if not obs.red_icons:
-        return State.OPEN_BOXES
+        # No-work loop: the stats badge gets a look before the crate scan (see
+        # FlowContext.stats_from_find for why the next step must know where it came from).
+        context.stats_from_find = True
+        return State.UPGRADE_STATS
     context.red_icons = sort_red_icons_by_priority(context, obs.red_icons)
     context.current_red_icon_index = 0
     context.cycle_counter = 0
@@ -217,18 +224,27 @@ def decide_hold_upgrade_station(
 class StatsIconObservation:
     new_level_button_found: bool
     stats_icon_found: bool
+    # Entered from FIND_RED_ICONS (the no-work loop) rather than after a completed hold.
+    from_find: bool = False
 
 
 def decide_upgrade_stats(context: FlowContext, obs: StatsIconObservation) -> State:
-    # Verified v1 behavior: single-shot, no retry — a miss goes straight to SCROLL.
+    # Verified v1 behavior: single-shot, no retry. After a hold a miss goes straight to SCROLL; in
+    # the no-work loop (from_find) it goes to OPEN_BOXES, and that loop's own scroll comes after it.
     if obs.new_level_button_found:
         return State.TRANSITION_LEVEL
+    context.stats_checks += 1
     if not obs.stats_icon_found:
-        return State.SCROLL
+        return State.OPEN_BOXES if obs.from_find else State.SCROLL
+    context.stats_hits += 1
     # Verified v1: the idle-pass counter clears the moment the stats icon is confirmed, before
     # any of the panel clicks below it (which then always end at OPEN_BOXES regardless).
     context.cycle_counter = 0
-    context.idle_scrolls = 0
+    # A hit after a hold is progress. A hit found by the idle loop is NOT: a badge that stays up
+    # would zero the stall counter every cycle, so the early probe and the stall alert would never
+    # fire, and a frozen frame that shows the badge would never be relaunched.
+    if not obs.from_find:
+        context.idle_scrolls = 0
     return State.OPEN_BOXES
 
 
@@ -239,6 +255,8 @@ def decide_upgrade_stats(context: FlowContext, obs: StatsIconObservation) -> Sta
 class BoxCycleObservation:
     new_level_button_found: bool
     boxes_opened: int = 0
+    # The scan that follows a landed scroll (FlowContext.scan_boxes_after_scroll).
+    after_scroll: bool = False
 
 
 def decide_open_boxes(
@@ -262,10 +280,21 @@ def decide_open_boxes(
         # ponytail: interleave only. A UI-fixed stuck target still burns (K-1)/K of passes;
         # upgrade path: ignore a position clicked K times in a row (positions are logged on trip).
         context.box_only_passes += 1
-        if context.box_only_passes >= config.max_box_only_passes:
+        if obs.after_scroll:
+            context.post_scroll_boxes += obs.boxes_opened
+        # The post-scroll pass never trips the guard: it must never answer SCROLL (see below).
+        if context.box_only_passes >= config.max_box_only_passes and not obs.after_scroll:
             context.box_only_passes = 0
             context.box_guard_trips += 1
             return State.SCROLL
+
+    if obs.after_scroll:
+        # The scan right after a landed scroll is not an idle pass. Run through the ladder below it
+        # would count one, answer SCROLL again, and FIND_RED_ICONS would never run (scroll forever);
+        # so it always hands back to the red-icon scan, leaving work_done and the failed-search and
+        # upgrade-found triggers for the next ordinary OPEN_BOXES pass.
+        context.cycle_counter = 0
+        return State.FIND_RED_ICONS
 
     # Verified transcription of _next_state_after_box_cycle. Each branch's counter reset is
     # load-bearing: without them the triggering condition stays true and the bot re-enters the
@@ -301,7 +330,9 @@ def decide_scroll(context: FlowContext, scroll_succeeded: bool) -> State:
     # Progress elsewhere (box opened, hold, stats, level) zeroes this; a run of landed scrolls
     # with none of those is the stall the alert in EatventureBot._handle_scroll reports.
     context.idle_scrolls += 1
-    return State.FIND_RED_ICONS
+    # The post-scroll crate scan runs before the next red-icon scan (see decide_open_boxes).
+    context.scan_boxes_after_scroll = True
+    return State.OPEN_BOXES
 
 
 # --- CHECK_NEW_LEVEL -----------------------------------------------------------------------
