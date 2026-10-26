@@ -73,6 +73,12 @@ class FlowContext:
     stats_hits: int = 0
     post_scroll_boxes: int = 0
     stall_alerts: int = 0  # times the idle-scroll stall alert fired
+    # Popup-latency probe (EatventureBot._settle_and_watch, diagnostics only): ms from the red-icon
+    # click's return to the first scan that showed the station popup (the last 500), how many
+    # settles saw it, and how many never did (a locked station shows `unlock` instead).
+    popup_ms: list[int] = field(default_factory=list)
+    popup_seen: int = 0
+    popup_never: int = 0
     # Hold outcome tallies (diagnostics only): a hold that ran to click_hold_max_duration means cash
     # was not the limit; one cut short by the popup vanishing means it was. nl_unlock_miss counts
     # new-level attempts that exhausted WAIT_FOR_UNLOCK without finding the unlock button.

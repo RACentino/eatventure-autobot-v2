@@ -7,6 +7,7 @@ where to go next on its own, that logic belongs in state/transitions instead.
 import dataclasses
 import hashlib
 import logging
+import math
 import threading
 import time
 from collections import deque
@@ -78,6 +79,18 @@ def _top_close_position(positions: dict[Point, int]) -> str:
         return "none"
     (x, y), count = max(positions.items(), key=lambda item: item[1])
     return f"{x},{y}x{count}"
+
+
+def _popup_summary(samples: list[int]) -> str:
+    """p50/p95/max in ms of the recent popup first-seen times (nearest rank), or '-' with none."""
+    if not samples:
+        return "-"
+    ordered = sorted(samples)
+
+    def pick(share: float) -> int:
+        return ordered[round(share * (len(ordered) - 1))]
+
+    return f"{pick(0.5)}/{pick(0.95)}/{ordered[-1]}"
 
 
 def _frame_thumbnail(frame: np.ndarray) -> np.ndarray:
@@ -170,6 +183,10 @@ class EatventureBot:
         # Armed by the first landed scroll of an idle streak (_maybe_alert_stall); the next
         # OPEN_BOXES scan takes the "before" picture and disarms it, whatever else happened between.
         self._streak_anchor_pending = False
+        # A recent picture of the same streak (the early-probe scan, then each alert's scan): the
+        # dead-game check also asks whether the screen stopped moving SINCE then, because the
+        # "before" picture above can predate a freeze (see GameRecoveryConfig.static_recent_delta).
+        self._recent_thumb: np.ndarray | None = None
         self._latest_thumb: np.ndarray | None = None
         self._metrics_thumb: np.ndarray | None = None
         self._relaunch_progress: tuple[int, int] | None = None
@@ -602,7 +619,7 @@ class EatventureBot:
             "relaunches=%d relaunch_failures=%d frame_delta_5m=%s close_clicks=%d "
             "close_suppressed=%d close_check_s=%.1f recovery_taps=%d close_top=%s "
             "box_zone_skips=%d box_click_fails=%d stats_checks=%d stats_hits=%d "
-            "post_scroll_boxes=%d | %s",
+            "post_scroll_boxes=%d popup_ms=%s popup_seen=%d popup_never=%d | %s",
             self._config_fingerprint,
             total,
             context.total_levels_completed,
@@ -627,6 +644,9 @@ class EatventureBot:
             context.stats_checks,
             context.stats_hits,
             context.post_scroll_boxes,
+            _popup_summary(context.popup_ms),
+            context.popup_seen,
+            context.popup_never,
             shares or "-",
         )
 
@@ -651,6 +671,7 @@ class EatventureBot:
         if idle == 1:
             self._idle_started_at = time.monotonic()
             self._streak_anchor_pending = True
+            self._recent_thumb = None  # a new streak never compares against an old one's picture
         early = self._config.scroll.stall_probe_scrolls
         if early > 0 and idle == early:
             self._early_probe_pending = True
@@ -722,13 +743,20 @@ class EatventureBot:
             )
             boxes = _format_near_misses(self._vision.box_near_misses(frame), self._is_clickable)
             icons = _format_near_misses(self._vision.red_icon_near_misses(frame))
+            open_seen = self._vision.new_level_near_miss(frame)
+            open_button = _format_near_misses(open_seen)
+            if open_seen:  # how far the best match sits from the New Level flow's blind Open click
+                target = self._config.click_targets.level_transition_pos
+                open_button += f" ({math.dist(open_seen[0].center, target):.0f} px from {target})"
+            close_x = _format_near_misses(self._vision.close_button_near_misses(frame))
             thresholds = self._config.thresholds
             logger.info(
                 "Early probe: %d idle scrolls (%.1f min), %d box(es) passed detection, "
                 "box_zone_skips=%d box_click_fails=%d. Picture change across the last drag=%s, "
                 "vs streak start=%s, quadrant brightness=[%s]. "
                 "Boxes (need conf>=%.3f and hsv>=%.2f): %s. "
-                "Red icons (need conf>=%.3f and hsv>=%.2f): %s",
+                "Red icons (need conf>=%.3f and hsv>=%.2f): %s. "
+                "Open button (need conf>=%.3f): %s. Close X (need conf>=%.3f): %s",
                 context.idle_scrolls,
                 (time.monotonic() - self._idle_started_at) / 60,
                 detected,
@@ -743,6 +771,10 @@ class EatventureBot:
                 thresholds.red_icon,
                 self._config.red_icon.hsv.min_match_ratio,
                 icons,
+                thresholds.new_level,
+                open_button,
+                thresholds.close_button,
+                close_x,
             )
         except Exception:
             logger.exception("Early probe failed")
@@ -761,6 +793,44 @@ class EatventureBot:
         if not self._config.scrcpy_recovery.enabled:
             return False
         return self._sleep(delay)
+
+    def _settle_and_watch(self, duration: float) -> bool:
+        """_sleep(duration) that also notes, log-only, when the popup the last click opened first
+        shows (tally in the metrics line). It ends at the same deadline, clicks nothing and never
+        raises: any trouble just stops the looking and sleeps the rest.
+        ponytail: watches for the station popup only, so a locked station (which shows `unlock`)
+        counts as never seen; the last scan can run one capture past the deadline."""
+        interval = self._config.scrcpy_recovery.popup_probe_interval
+        if interval <= 0 or duration <= 0:
+            return self._sleep(duration)
+        started = self._clock()
+        deadline = started + duration
+        watching = True
+        while (remaining := deadline - self._clock()) > 0:
+            if watching:
+                try:
+                    frame = self._vision.capture(
+                        max_y=self._config.capture_regions.upgrade_station_search_y
+                    )
+                    if self._vision.find_upgrade_station(frame).found:
+                        self._record_popup_seen(round(1000 * (self._clock() - started)))
+                        watching = False
+                except Exception:
+                    logger.debug("Popup probe stopped", exc_info=True)
+                    watching = False
+                remaining = deadline - self._clock()
+            nap = min(interval, remaining) if watching else remaining
+            if nap > 0 and not self._sleep(nap):
+                return False
+        if watching:
+            self.context.popup_never += 1
+        return True
+
+    def _record_popup_seen(self, milliseconds: int) -> None:
+        context = self.context
+        context.popup_seen += 1
+        context.popup_ms.append(milliseconds)
+        del context.popup_ms[:-500]
 
     def _is_clickable(self, point: Point) -> bool:
         return not self._input.is_in_forbidden_zone(*point)
@@ -819,7 +889,7 @@ class EatventureBot:
         return flow.decide_click_red_icon(self.context, self._input.click(x, y))
 
     def _handle_check_unlock(self) -> State:
-        if not self._sleep(self._config.scrcpy_recovery.action_settle_delay):
+        if not self._settle_and_watch(self._config.scrcpy_recovery.action_settle_delay):
             return State.CHECK_UNLOCK
         frame = self._vision.capture(max_y=self._config.capture_regions.max_search_y)
         result = self._vision.find_unlock_button(frame)
@@ -1092,12 +1162,18 @@ class EatventureBot:
         if self._early_probe_pending:  # log-only: kept clear of the relaunch decision below
             self._early_probe_pending = False
             self._log_early_probe(frame, len(boxes))
+            # A picture to compare the alert's scan with; a store only, never a decision. Skipped
+            # when the alert is due on this very scan: it would be compared with itself.
+            if self.context.idle_scrolls > 0 and not self._stall_probe_pending:
+                self._recent_thumb = _frame_thumbnail(frame)
 
         if self._stall_probe_pending:
             self._stall_probe_pending = False
             self._log_box_near_misses(frame, len(boxes))
-            if self._game_looks_dead(_frame_thumbnail(frame)):
+            alert_thumb = _frame_thumbnail(frame)
+            if self._game_looks_dead(alert_thumb):
                 return self._relaunch_game()
+            self._recent_thumb = alert_thumb  # the next alert compares with this scan
 
         opened = 0
         for box in boxes:
@@ -1133,20 +1209,31 @@ class EatventureBot:
         after a drag, when a live game has just moved and a frozen one has not: the picture has not
         changed since the streak began. Healthy idle streaks peak near 66 scrolls (measured at 3.0 s
         per scroll, p99 of 671 metrics samples), so the scroll count alone is no evidence; the
-        frame is."""
+        frame is. Static means unchanged since the streak began OR since a recent scan (the early
+        probe's, then the previous alert's): a screen that changed once and then froze (a dimmed
+        New Level panel, 2026-10-16) differs from the streak start for good yet is static now."""
         before = self._streak_thumb
         if before is None or self._launcher is None:  # no launcher = recovery switched off
             return False
-        limit = self._config.game_recovery.static_frame_delta
+        config = self._config.game_recovery
+        limit = config.static_frame_delta
         delta = float(np.abs(thumb - before).mean())
         static = delta < limit
+        recent_note = ""
+        if self._recent_thumb is not None:
+            recent_delta = float(np.abs(thumb - self._recent_thumb).mean())
+            static = static or recent_delta < config.static_recent_delta
+            recent_note = (
+                f", vs recent={recent_delta:.2f} (static below {config.static_recent_delta:.2f})"
+            )
         # The decision's own inputs: the stall probe's "Frame delta vs last probe" compares a
         # different pair of frames, so on its own it cannot tell whether a relaunch was justified.
         logger.info(
-            "Dead-game check: frame delta vs streak start=%.2f (static below %.2f), "
+            "Dead-game check: frame delta vs streak start=%.2f (static below %.2f)%s, "
             "idle_scrolls=%d -> %s",
             delta,
             limit,
+            recent_note,
             self.context.idle_scrolls,
             "static" if static else "alive",
         )
@@ -1184,6 +1271,7 @@ class EatventureBot:
         context.idle_scrolls = 0
         context.reset_search_cycle()
         self._streak_thumb = None
+        self._recent_thumb = None
         self._last_probe_thumb = None
         # The restarted game starts the X rule from scratch: no stale stand-down or lock window.
         self._close_last_pos, self._close_streak = None, 0
@@ -1290,6 +1378,14 @@ class EatventureBot:
             return flow.decide_transition_level(
                 self.context, level, flow.TransitionLevelObservation(False, attempt, None)
             )
+        # v1 logs this too. Here it also records where the Open button really is and how sure the
+        # match was (the early probe compares a stuck screen's best match with it).
+        logger.info(
+            "New level button found at %s conf=%.3f on attempt %d",
+            result.best.center,
+            result.best.confidence,
+            attempt,
+        )
         clicked = self._input.click(*result.best.center)
         if clicked:
             self._sleep(level.settle_delay)

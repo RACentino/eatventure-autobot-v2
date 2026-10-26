@@ -40,7 +40,13 @@ def validate_window(config: WindowConfig) -> None:
 
 
 def validate_scrcpy_recovery(config: ScrcpyRecoveryConfig) -> None:
-    for name in ("red_icon_delay", "box_delay", "upgrade_delay", "action_settle_delay"):
+    for name in (
+        "red_icon_delay",
+        "box_delay",
+        "upgrade_delay",
+        "action_settle_delay",
+        "popup_probe_interval",
+    ):
         _positive(name, getattr(config, name))
 
 
@@ -193,6 +199,8 @@ def validate_close_button(config: CloseButtonConfig, threshold: float) -> None:
 def validate_game_recovery(config: GameRecoveryConfig) -> None:
     if config.static_frame_delta <= 0:
         raise ConfigError(f"static_frame_delta must be > 0, got {config.static_frame_delta}")
+    if config.static_recent_delta <= 0:
+        raise ConfigError(f"static_recent_delta must be > 0, got {config.static_recent_delta}")
     if config.relaunch_settle_seconds < 0:
         raise ConfigError(
             f"relaunch_settle_seconds must be >= 0, got {config.relaunch_settle_seconds}"

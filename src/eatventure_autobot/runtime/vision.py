@@ -321,6 +321,28 @@ class GameVision:
             return None
         return self._matcher.explain_template(frame, UNLOCK_TEMPLATE)
 
+    def new_level_near_miss(self, frame: np.ndarray) -> list[TemplateExplanation]:
+        """Best raw `newLevel` ("Open" button) match with the threshold NOT applied. On a dimmed
+        screen it reads far below the gate (a uniform dim of k scores about 1 - (1-k)^2/k) while its
+        centre may still name the button, so the early probe logs where it sits and how far under
+        the gate it is. One item, or none when the template did not load. Diagnostics only."""
+        if NEW_LEVEL_TEMPLATE not in self._loaded:
+            return []
+        seen = self._matcher.explain_template(frame, NEW_LEVEL_TEMPLATE)
+        return [] if seen is None else [seen]
+
+    def close_button_near_misses(self, frame: np.ndarray) -> list[TemplateExplanation]:
+        """Best raw match per loaded red-X template with the threshold, the red-block prefilter and
+        the HSV gate NOT applied (the gate's ratio is reported): what the X rule saw when it found
+        nothing on a screen where an X is plainly visible. Diagnostics only (the early probe)."""
+        config = self._config.close_button
+        explained = (
+            self._matcher.explain_template(frame, name, config.hsv)
+            for name in config.template_names
+            if name in self._loaded
+        )
+        return [item for item in explained if item is not None]
+
     def _gather(
         self,
         frame: np.ndarray,

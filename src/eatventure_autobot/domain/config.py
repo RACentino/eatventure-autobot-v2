@@ -48,6 +48,11 @@ class ScrcpyRecoveryConfig:
     # after release, minus the click's own 0.16 s post-release wait (0.78 s), plus a visible-frame
     # margin, rounded to 0.800; the SEARCH poll that follows absorbs any tail beyond it.
     action_settle_delay: float = 0.800
+    # Log-only look during that settle (EatventureBot._settle_and_watch): how often to scan for the
+    # popup the click opened, to learn its real latency on the CURRENT scrcpy pipeline (the 0.8 s
+    # was measured on 4.1 / h265 / 16M; the rig now runs 5.0.1 / h264 / 12M / --video-buffer=0).
+    # One visible frame (35 ms). 0 turns it off and the settle is the plain blind sleep again.
+    popup_probe_interval: float = 0.035
 
 
 @dataclass(frozen=True, slots=True)
@@ -353,6 +358,12 @@ class GameRecoveryConfig:
     # Mean-abs-diff on a 64x36 gray thumbnail between the first scan of an idle streak and the
     # scan at the stall alert (~7.5 min later). A live farm animates; measured static frames 0.86.
     static_frame_delta: float = 1.5
+    # The same measure against a RECENT scan of the streak (the early-probe scan, then the previous
+    # alert's scan) instead of its first one. The first scan can predate the freeze: on 2026-10-16
+    # a New Level panel dimmed and stopped the screen after it (delta vs streak start 78-82, "alive"
+    # on all 48 alerts, 8.7 h lost) while consecutive scans differed by 0.4-1.5. Healthy farms
+    # measured >= 5.4 (n=1,663 five-minute samples, median ~37), so 3.0 keeps ~2x margin each side.
+    static_recent_delta: float = 3.0
     # Length of the recovery window after the launch command: the main flow stays suspended for
     # all of it, and only the red-X rule runs (cold start + any popups); see _recover_popups.
     relaunch_settle_seconds: float = 60.0
