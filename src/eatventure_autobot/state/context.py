@@ -79,6 +79,32 @@ class FlowContext:
     popup_ms: list[int] = field(default_factory=list)
     popup_seen: int = 0
     popup_never: int = 0
+    # popup_early: settles that ended before the deadline because the popup had appeared after the
+    # click and held still (ScrcpyRecoveryConfig.popup_early_exit). check_unlock_clicks:
+    # CHECK_UNLOCK entries whose `unlock` click landed (sizes the unlock_settle_delay after it).
+    popup_early: int = 0
+    check_unlock_clicks: int = 0
+    # Why a seen popup still ran the full settle (diagnostics only, same probe): popup_stale = it
+    # was already on screen at the first scan and every scan after, popup_moving = it appeared after
+    # the click but never held still twice in a row. popup_moving_px keeps the smallest scan-to-scan
+    # jump of each moving settle (the last 500): a 3 px jitter is a tolerance problem, 40 px is not.
+    popup_stale: int = 0
+    popup_moving: int = 0
+    popup_moving_px: list[int] = field(default_factory=list)
+    # Milliseconds between consecutive OPEN_BOXES captures (the last 500): the time crates, which
+    # last under 3 s, can come and go unseen. Diagnostics only.
+    box_gap_ms: list[int] = field(default_factory=list)
+    # New Level attempts (diagnostics only, see EatventureBot._handle_wait_for_unlock): nl_route is
+    # how the current WAIT_FOR_UNLOCK sequence was entered ("footer" badge or the "open" button),
+    # nl_attempts / nl_done the finished sequences and the completions per route. unlock_ms is when
+    # the Unlock dialog first showed during the first try's settle (the last 500), unlock_never how
+    # many first tries never showed it; nl_greyed_exits the sequences cut short on a greyed button.
+    nl_route: str | None = None
+    nl_attempts: dict[str, int] = field(default_factory=dict)
+    nl_done: dict[str, int] = field(default_factory=dict)
+    unlock_ms: list[int] = field(default_factory=list)
+    unlock_never: int = 0
+    nl_greyed_exits: int = 0
     # Hold outcome tallies (diagnostics only): a hold that ran to click_hold_max_duration means cash
     # was not the limit; one cut short by the popup vanishing means it was. nl_unlock_miss counts
     # new-level attempts that exhausted WAIT_FOR_UNLOCK without finding the unlock button.

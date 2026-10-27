@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 # Names the state flow in effect. Bump it when the flow changes without a config change: the
 # fingerprint below hashes config only, so metrics lines from before and after would otherwise
 # carry the same cfg= id and could not be told apart.
-FLOW_REVISION = "no-work: FIND>STATS>OPEN>SCROLL>OPEN>FIND"
+FLOW_REVISION = "no-work: FIND>STATS>OPEN>SCROLL>OPEN>FIND; unlock: greyed early-out"
 
 
 def _config_fingerprint(config: BotConfig) -> str:
@@ -49,6 +49,15 @@ def _config_fingerprint(config: BotConfig) -> str:
 
 # The recovery window judges "is the screen alive" from its last few seconds.
 _RECOVERY_TAIL_SECONDS = 5.0
+
+# Two consecutive scans of the station popup this close (px) count as "has stopped moving"
+# (ScrcpyRecoveryConfig.popup_early_exit). The matcher reports whole-pixel positions, so a settled
+# panel reads 0; 2 only absorbs a single sub-pixel rounding flip.
+_POPUP_STILL_PX = 2.0
+
+# A gap between two box scans longer than this spans a stop or a long New Level / hold stretch, not
+# the cadence crates are caught at; it is left out of the box_gap_ms tally.
+_BOX_GAP_MAX_SECONDS = 120.0
 
 # Auto-resume (see EatventureBot.poll_resume): how often the cursor is sampled for movement, how
 # often an unchanged check is logged anyway, and the longest wait between failed live attempts.
@@ -91,6 +100,12 @@ def _popup_summary(samples: list[int]) -> str:
         return ordered[round(share * (len(ordered) - 1))]
 
     return f"{pick(0.5)}/{pick(0.95)}/{ordered[-1]}"
+
+
+def _nl_routes(attempts: dict[str, int], done: dict[str, int]) -> str:
+    """'footer:12/1,open:30/2': finished New Level sequences / completions per way in, or '-'."""
+    ways = sorted(attempts.items())
+    return ",".join(f"{route}:{count}/{done.get(route, 0)}" for route, count in ways) or "-"
 
 
 def _frame_thumbnail(frame: np.ndarray) -> np.ndarray:
@@ -155,6 +170,11 @@ class EatventureBot:
         # metrics lines for a per-period rate. Upgrade path: a windowed deque if that gets tedious.
         self._config_fingerprint = _config_fingerprint(config)
         self._state_seconds: dict[State, float] = dict.fromkeys(State, 0.0)
+        # Handler calls per state (a self-loop counts every pass): a state's seconds divided by it
+        # is the cost per entry, and the OPEN_BOXES count gives the crate-scan cadence.
+        self._state_calls: dict[State, int] = dict.fromkeys(State, 0)
+        # When the last OPEN_BOXES scan was captured (None after a start), for the box_gap_ms tally.
+        self._last_box_scan_at: float | None = None
         # The state whose handler ran last step; self.state is already the NEXT one by the time the
         # popup pre-check runs, which is why the "Closed popup" line carries it as after=.
         self._last_handled_state: State | None = None
@@ -255,6 +275,7 @@ class EatventureBot:
             self._running.set()
             self._resume = None  # running again, by a person or by poll_resume
             self._watchdog.reset()
+            self._last_box_scan_at = None  # a gap that spans a stop is not a scan cadence
             self._started_at = self._last_metrics_at = time.monotonic()
             self.context.state_attempt = 1
             if self.context.current_level_start_time is None:
@@ -323,6 +344,7 @@ class EatventureBot:
             started = time.monotonic()
             next_state = self._handlers[previous_state]()
             self._state_seconds[previous_state] += time.monotonic() - started
+            self._state_calls[previous_state] += 1
             self._last_handled_state = previous_state
             if previous_state in X_LOCKED_STATES:
                 # Hard-lock layer 2: any New Level step (attempt, miss or completion) keeps the X
@@ -376,12 +398,13 @@ class EatventureBot:
         """Called on every pass of the main loop while the bot is stopped; a no-op unless armed.
         last_key_at is the latest key press on this PC, on the same clock as self._clock.
 
-        Shadow mode (resume.enabled False, the default): each check only logs whether it WOULD
-        start the bot, so the share of downtime it could recover is measured first. Live mode: when
-        the window is already in a state start() will not touch (GameVision.environment_ready: so
-        no resize, no restore(), no focus change) and nobody has pressed a key or moved the mouse
-        for resume.idle_seconds, it calls start(). A failed attempt backs off exponentially, and
-        max_attempts failures in one stop make it give up and wait for a person.
+        Live mode (resume.enabled, the default since 2026-10-27): once nobody has pressed a key or
+        moved the mouse for resume.idle_seconds it calls start(). A window start() would touch
+        (GameVision.environment_ready False: another app has the focus) is first brought up with
+        raise_window, the one focus change the bot makes on its own; with that off, only a window
+        that is already in front is started. Shadow mode (enabled False): each check only logs
+        whether it WOULD start the bot. A failed attempt backs off exponentially, and max_attempts
+        failures in one stop make it give up and wait for a person.
         Never raises: the main loop has to survive whatever happens in here."""
         watch = self._resume
         if watch is None or self.running:
@@ -419,11 +442,18 @@ class EatventureBot:
                 idle,
                 config.idle_seconds,
                 (now - watch.since) / 60,
-                go if ready and quiet else "waiting",
+                go if quiet and (ready or config.raise_window) else "waiting",
                 self._vision.describe_environment(),
             )
-        if not (config.enabled and ready and quiet):
+        if not (config.enabled and quiet):
             return
+        if not ready:
+            # Not ready means start() would touch the window (usually: another app has the focus).
+            # Nobody has used the PC for idle_seconds, so this is the one place the bot brings the
+            # window up itself; a failed raise (locked session, window gone) just waits a check.
+            if not (config.raise_window and self._vision.raise_target()):
+                return
+            logger.info("Resume: raised the game window after %.0f s of nobody at the PC", idle)
         watch.attempts += 1
         if self.start(report=False):
             logger.info(
@@ -619,7 +649,10 @@ class EatventureBot:
             "relaunches=%d relaunch_failures=%d frame_delta_5m=%s close_clicks=%d "
             "close_suppressed=%d close_check_s=%.1f recovery_taps=%d close_top=%s "
             "box_zone_skips=%d box_click_fails=%d stats_checks=%d stats_hits=%d "
-            "post_scroll_boxes=%d popup_ms=%s popup_seen=%d popup_never=%d | %s",
+            "post_scroll_boxes=%d popup_ms=%s popup_seen=%d popup_never=%d popup_early=%d "
+            "check_unlock_clicks=%d popup_stale=%d popup_moving=%d popup_moving_px=%s "
+            "box_gap_ms=%s unlock_ms=%s unlock_never=%d nl_greyed_exits=%d nl_routes=%s "
+            "calls=%s | %s",
             self._config_fingerprint,
             total,
             context.total_levels_completed,
@@ -647,6 +680,18 @@ class EatventureBot:
             _popup_summary(context.popup_ms),
             context.popup_seen,
             context.popup_never,
+            context.popup_early,
+            context.check_unlock_clicks,
+            context.popup_stale,
+            context.popup_moving,
+            _popup_summary(context.popup_moving_px),
+            _popup_summary(context.box_gap_ms),
+            _popup_summary(context.unlock_ms),
+            context.unlock_never,
+            context.nl_greyed_exits,
+            _nl_routes(context.nl_attempts, context.nl_done),
+            ",".join(f"{state.name}:{count}" for state, count in self._state_calls.items() if count)
+            or "-",
             shares or "-",
         )
 
@@ -795,26 +840,49 @@ class EatventureBot:
         return self._sleep(delay)
 
     def _settle_and_watch(self, duration: float) -> bool:
-        """_sleep(duration) that also notes, log-only, when the popup the last click opened first
-        shows (tally in the metrics line). It ends at the same deadline, clicks nothing and never
-        raises: any trouble just stops the looking and sleeps the rest.
+        """_sleep(duration) that also notes when the popup the last click opened first shows (tally
+        in the metrics line). It clicks nothing and never raises: any trouble just stops the looking
+        and sleeps the rest.
+        With popup_early_exit it may end BEFORE the deadline, only when the popup is fresh and
+        still: some scan since the click saw no popup (so it did not predate the click) and the
+        station match then sat at the same spot on two consecutive scans (so it stopped moving).
+        Anything else, including a popup already up on the first scan, runs the full `duration`.
         ponytail: watches for the station popup only, so a locked station (which shows `unlock`)
         counts as never seen; the last scan can run one capture past the deadline."""
-        interval = self._config.scrcpy_recovery.popup_probe_interval
+        config = self._config.scrcpy_recovery
+        interval = config.popup_probe_interval
         if interval <= 0 or duration <= 0:
             return self._sleep(duration)
         started = self._clock()
         deadline = started + duration
         watching = True
+        seen = False
+        fresh = False  # a scan since the click showed no popup
+        last: Point | None = None  # where the previous scan saw it, None once it was missing
+        closest: float | None = None  # the smallest scan-to-scan jump seen, for the moving tally
         while (remaining := deadline - self._clock()) > 0:
             if watching:
                 try:
                     frame = self._vision.capture(
                         max_y=self._config.capture_regions.upgrade_station_search_y
                     )
-                    if self._vision.find_upgrade_station(frame).found:
-                        self._record_popup_seen(round(1000 * (self._clock() - started)))
-                        watching = False
+                    best = self._vision.find_upgrade_station(frame).best
+                    if best is None:
+                        fresh, last = True, None
+                    else:
+                        if not seen:
+                            seen = True
+                            self._record_popup_seen(round(1000 * (self._clock() - started)))
+                        jump = None if last is None else math.dist(last, best.center)
+                        if not config.popup_early_exit:
+                            watching = False
+                        elif fresh and jump is not None and jump <= _POPUP_STILL_PX:
+                            self.context.popup_early += 1
+                            return True
+                        else:
+                            if jump is not None and (closest is None or jump < closest):
+                                closest = jump
+                            last = best.center
                 except Exception:
                     logger.debug("Popup probe stopped", exc_info=True)
                     watching = False
@@ -822,9 +890,66 @@ class EatventureBot:
             nap = min(interval, remaining) if watching else remaining
             if nap > 0 and not self._sleep(nap):
                 return False
-        if watching:
-            self.context.popup_never += 1
+        context = self.context
+        if not seen and watching:
+            context.popup_never += 1
+        elif seen and watching:  # popup_early_exit is on here (off would have stopped watching)
+            # The popup showed but the settle still ran in full. Already up from the first scan on:
+            # stale (nothing the click did). Appeared after the click but never held still twice
+            # in a row: moving, with how close two scans came (a few px = tolerance, tens = real).
+            if not fresh:
+                context.popup_stale += 1
+            else:
+                context.popup_moving += 1
+                if closest is not None:
+                    context.popup_moving_px.append(round(closest))
+                    del context.popup_moving_px[:-500]
         return True
+
+    def _settle_and_time_unlock(self, duration: float) -> bool:
+        """_sleep(duration) that also notes when the Unlock dialog first shows (unlock_ms in the
+        metrics line), to learn how much of WAIT_FOR_UNLOCK's blind settle is needed. Log-only: it
+        clicks nothing, ends at the same deadline, and never raises (trouble just stops the looking
+        and sleeps the rest). "Shows" = the raw best `unlock` match reaches greyed_unlock_min_conf,
+        which a greyed and an enabled button both do; a first try that never gets there is
+        unlock_never (the dialog did not open, or the screen is something else).
+        ponytail: the early exit waits for these numbers; upgrade path: end the settle at the first
+        sighting once unlock_ms p95 is well under focus_settle_delay."""
+        interval = self._config.scrcpy_recovery.popup_probe_interval
+        if interval <= 0 or duration <= 0:
+            return self._sleep(duration)
+        started = self._clock()
+        deadline = started + duration
+        floor = self._config.level_transition.greyed_unlock_min_conf
+        watching = True
+        while (remaining := deadline - self._clock()) > 0:
+            if watching:
+                try:
+                    seen = self._vision.unlock_near_miss(self._vision.capture())
+                    if seen is not None and seen.confidence >= floor:
+                        watching = False
+                        shown = self.context.unlock_ms
+                        shown.append(round(1000 * (self._clock() - started)))
+                        del shown[:-500]
+                except Exception:
+                    logger.debug("Unlock probe stopped", exc_info=True)
+                    watching = False  # a broken probe has no verdict: no sighting, no unlock_never
+                remaining = deadline - self._clock()
+            nap = min(interval, remaining) if watching else remaining
+            if nap > 0 and not self._sleep(nap):
+                return False
+        if watching:
+            self.context.unlock_never += 1
+        return True
+
+    def _record_box_scan(self) -> None:
+        """Notes the gap since the previous OPEN_BOXES capture (box_gap_ms in the metrics line)."""
+        now = self._clock()
+        last, self._last_box_scan_at = self._last_box_scan_at, now
+        if last is not None and now - last <= _BOX_GAP_MAX_SECONDS:
+            gaps = self.context.box_gap_ms
+            gaps.append(round(1000 * (now - last)))
+            del gaps[:-500]
 
     def _record_popup_seen(self, milliseconds: int) -> None:
         context = self.context
@@ -897,6 +1022,7 @@ class EatventureBot:
             return flow.decide_check_unlock(False, None)
         clicked = self._input.click(*result.best.center)
         if clicked:
+            self.context.check_unlock_clicks += 1
             self._sleep(self._config.level_transition.unlock_settle_delay)
         return flow.decide_check_unlock(True, clicked)
 
@@ -1129,6 +1255,7 @@ class EatventureBot:
         self.context.scan_boxes_after_scroll = False
         box_search_y = self._config.capture_regions.box_search_y
         frame = self._vision.capture(max_y=box_search_y)
+        self._record_box_scan()
         thumb = _frame_thumbnail(frame)
         previous = self._latest_thumb
         self._scan_delta = None if previous is None else float(np.abs(thumb - previous).mean())
@@ -1353,10 +1480,13 @@ class EatventureBot:
             transition_ok = self._input.click(*targets.level_transition_pos)
             if transition_ok:
                 self._sleep(level.secondary_settle_delay)
-        return flow.decide_check_new_level(
+        next_state = flow.decide_check_new_level(
             self.context,
             flow.NewLevelVerificationObservation(True, button_ok, transition_ok),
         )
+        if next_state == State.WAIT_FOR_UNLOCK:
+            self.context.nl_route = "footer"  # the badge route; see _end_unlock_sequence
+        return next_state
 
     def _handle_transition_level(self) -> State:
         level = self._config.level_transition
@@ -1389,27 +1519,49 @@ class EatventureBot:
         clicked = self._input.click(*result.best.center)
         if clicked:
             self._sleep(level.settle_delay)
-        return flow.decide_transition_level(
+        next_state = flow.decide_transition_level(
             self.context, level, flow.TransitionLevelObservation(True, attempt, clicked)
         )
+        if next_state == State.WAIT_FOR_UNLOCK:
+            self.context.nl_route = "open"  # the Open-button route; see _end_unlock_sequence
+        return next_state
 
     def _handle_wait_for_unlock(self) -> State:
         if not self._click_idle():
             return State.WAIT_FOR_UNLOCK
-        if not self._sleep(self._config.flow_timing.focus_settle_delay):
-            return State.WAIT_FOR_UNLOCK
         level = self._config.level_transition
+        # Only the first try of a sequence is timed: the dialog is already up on the retries.
+        settle = (
+            self._settle_and_time_unlock
+            if self.context.wait_for_unlock_attempts == 0
+            else self._sleep
+        )
+        if not settle(self._config.flow_timing.focus_settle_delay):
+            return State.WAIT_FOR_UNLOCK
         # v1 captures the full window height here (no max_y limit) — distinct from CHECK_UNLOCK,
         # which uses the same "unlock" template against a max_search_y-limited frame.
         frame = self._vision.capture()
         result = self._vision.find_unlock_button(frame)
         if result.best is None or not self._is_clickable(result.best.center):
-            self._sleep(level.unlock_search_interval)
+            # The gate found nothing. Whether that is a greyed-out button (a raw match just under
+            # the gate, so more tries cannot help) decides if the retries are worth their ~1.3 s.
+            # One match only: it also feeds the miss line below.
+            seen = None
+            if result.best is None and level.greyed_unlock_early_out:
+                seen = self._vision.unlock_near_miss(frame)
+            greyed = seen is not None and seen.confidence >= level.greyed_unlock_min_conf
+            if not greyed:
+                self._sleep(level.unlock_search_interval)
+            cut_short = greyed and self.context.wait_for_unlock_attempts + 1 < (
+                level.unlock_search_attempts
+            )
             missed = flow.decide_wait_for_unlock(
-                self.context, level, flow.WaitForUnlockObservation(False, None)
+                self.context, level, flow.WaitForUnlockObservation(False, None, greyed)
             )
             if missed != State.WAIT_FOR_UNLOCK:  # attempts exhausted: back to the economy loop
-                self._note_unlock_miss(frame)
+                self.context.nl_greyed_exits += cut_short
+                self._note_unlock_miss(frame, seen)
+                self._end_unlock_sequence(completed=False)
             return missed
 
         clicked = self._input.click(*result.best.center)
@@ -1422,22 +1574,40 @@ class EatventureBot:
             and next_state != State.WAIT_FOR_UNLOCK
         ):
             self._note_unlock_miss(frame)
+            self._end_unlock_sequence(completed=False)
         if self.context.total_levels_completed > previous_total:
             self._report_level_completion()
+            self._end_unlock_sequence(completed=True)
             # v1 sleeps here regardless of outcome before returning to FIND_RED_ICONS.
             self._sleep(level.unlock_settle_delay)
         return next_state
 
-    def _note_unlock_miss(self, frame: np.ndarray) -> None:
+    def _end_unlock_sequence(self, *, completed: bool) -> None:
+        """One New Level attempt is over, completed or given up: tally it against the way it was
+        entered (footer badge or Open button, set by the handler that sent it to WAIT_FOR_UNLOCK).
+        """
+        context = self.context
+        route = context.nl_route or "other"
+        context.nl_route = None
+        context.nl_attempts[route] = context.nl_attempts.get(route, 0) + 1
+        if completed:
+            context.nl_done[route] = context.nl_done.get(route, 0) + 1
+
+    def _note_unlock_miss(
+        self, frame: np.ndarray, best: TemplateExplanation | None = None
+    ) -> None:
         self.context.nl_unlock_miss += 1
-        # best_conf = the raw best `unlock` match, threshold not applied: low = the button is greyed
-        # out (cash is the limit), near the threshold = an appearance problem. Diagnostics only.
-        best = self._vision.unlock_near_miss(frame)
+        # best_conf = the raw best `unlock` match, threshold not applied: low = nothing like the
+        # button on screen, 0.85-0.90 = the button there but greyed out (cash or a requirement is
+        # short). via = the way in (footer badge or Open button). Diagnostics only.
+        if best is None:
+            best = self._vision.unlock_near_miss(frame)
         logger.info(
-            "New level: unlock button not found (miss %d, levels=%d, best_conf=%s)",
+            "New level: unlock button not found (miss %d, levels=%d, best_conf=%s) via=%s",
             self.context.nl_unlock_miss,
             self.context.total_levels_completed,
             "-" if best is None else f"{best.confidence:.3f}",
+            self.context.nl_route or "-",
         )
 
     def _level_mark(self) -> LevelMark:

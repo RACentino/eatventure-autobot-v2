@@ -78,6 +78,8 @@ def validate_box_detection(config: BoxDetectionConfig) -> None:
         raise ConfigError(f"min_matches must be >= 1, got {config.min_matches}")
     if config.min_distance < 1:
         raise ConfigError(f"min_distance must be >= 1, got {config.min_distance}")
+    if config.match_threads < 1:
+        raise ConfigError(f"match_threads must be >= 1, got {config.match_threads}")
 
 
 def validate_upgrade_station(config: UpgradeStationConfig) -> None:
@@ -157,10 +159,16 @@ def validate_stats_upgrade(config: StatsUpgradeConfig) -> None:
     _positive("mouse_up_duration", config.mouse_up_duration)
 
 
-def validate_level_transition(config: LevelTransitionConfig) -> None:
+def validate_level_transition(config: LevelTransitionConfig, unlock_threshold: float) -> None:
     for name in ("search_attempts", "unlock_search_attempts"):
         if getattr(config, name) < 1:
             raise ConfigError(f"{name} must be >= 1, got {getattr(config, name)}")
+    # A "greyed" match is one the gate rejected, so it has to sit strictly below the gate.
+    if not 0 < config.greyed_unlock_min_conf < unlock_threshold:
+        raise ConfigError(
+            f"greyed_unlock_min_conf must be > 0 and < the unlock threshold ({unlock_threshold}), "
+            f"got {config.greyed_unlock_min_conf}"
+        )
 
 
 def validate_scroll(config: ScrollConfig) -> None:
@@ -243,7 +251,7 @@ def validate_bot_config(config: BotConfig) -> None:
     validate_flow_timing(config.flow_timing)
     validate_capture_regions(config.capture_regions)
     validate_stats_upgrade(config.stats_upgrade)
-    validate_level_transition(config.level_transition)
+    validate_level_transition(config.level_transition, config.thresholds.unlock)
     validate_scroll(config.scroll)
     validate_telegram(config.telegram)
     validate_game_recovery(config.game_recovery)

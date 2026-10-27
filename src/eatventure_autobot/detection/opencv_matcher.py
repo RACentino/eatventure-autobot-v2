@@ -10,6 +10,7 @@ extra ad-hoc pixel-distance pre-filter — a more principled and equally effecti
 """
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import cv2
@@ -209,8 +210,14 @@ def filter_by_template_consensus(
 
 
 class OpenCvTemplateMatcher:
-    def __init__(self) -> None:
+    def __init__(self, threads: int = 1) -> None:
         self._templates: dict[str, tuple[np.ndarray, np.ndarray | None]] = {}
+        # cv2.matchTemplate releases the GIL, so a multi-template scan runs its templates side by
+        # side (BoxDetectionConfig.match_threads). 1 = no pool and the old sequential loop. The pool
+        # starts its threads on first use and lives as long as the matcher (the whole process).
+        self._pool = (
+            ThreadPoolExecutor(threads, thread_name_prefix="match") if threads > 1 else None
+        )
 
     def load_template(self, template_path: Path) -> None:
         raw = cv2.imread(str(template_path), cv2.IMREAD_UNCHANGED)
@@ -331,14 +338,20 @@ class OpenCvTemplateMatcher:
         ROI to HSV."""
         frame_bgr = _as_bgr(frame, "frame")
         hsv_frame = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV) if hsv_gate is not None else None
-        all_candidates: list[MatchCandidate] = []
-        for name in template_names:
-            all_candidates.extend(
-                self.find_template_candidates(
-                    frame_bgr, name, threshold, min_distance, hsv_gate, hsv_frame=hsv_frame
-                )
+
+        def one(name: str) -> list[MatchCandidate]:
+            return self.find_template_candidates(
+                frame_bgr, name, threshold, min_distance, hsv_gate, hsv_frame=hsv_frame
             )
-        return all_candidates
+
+        # map() yields in template order and re-raises a worker's exception here, so the result and
+        # the failure behaviour are exactly those of the sequential loop.
+        per_template = (
+            list(self._pool.map(one, template_names))
+            if self._pool is not None and len(template_names) > 1
+            else [one(name) for name in template_names]
+        )
+        return [candidate for found in per_template for candidate in found]
 
     def find_candidates_across_templates(
         self,

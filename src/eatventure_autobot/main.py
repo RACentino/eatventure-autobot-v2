@@ -53,7 +53,7 @@ def build_bot(config: BotConfig) -> EatventureBot:
     capture = create_screen_capture(
         config.window.title, config.window.width, config.window.height, stop_event
     )
-    vision = GameVision(capture, create_template_matcher(), config)
+    vision = GameVision(capture, create_template_matcher(config.box.match_threads), config)
     failed = vision.load_templates()
     if failed:
         logger.warning("Templates that failed to load: %s", ", ".join(failed))

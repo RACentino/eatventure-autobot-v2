@@ -53,6 +53,13 @@ class ScrcpyRecoveryConfig:
     # was measured on 4.1 / h265 / 16M; the rig now runs 5.0.1 / h264 / 12M / --video-buffer=0).
     # One visible frame (35 ms). 0 turns it off and the settle is the plain blind sleep again.
     popup_probe_interval: float = 0.035
+    # Measured on that current pipeline (7,577 settles, 2026-10-23..26): 82% showed the popup, first
+    # seen p50 85-87 ms / p95 92-106 ms, none later than 264 ms; the other 18% never showed it
+    # (a locked station), so the 0.8 s is not needed once a popup that appeared AFTER the click has
+    # held still for two scans. True ends the settle there (EatventureBot._settle_and_watch); a
+    # popup already on screen at the first scan, or one still moving, keeps the full
+    # action_settle_delay. False is the log-only probe of 2026-10-23 again.
+    popup_early_exit: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,6 +138,13 @@ class BoxDetectionConfig:
     nms_iou_threshold: float = 0.144
     min_matches: int = 1
     min_distance: int = 12
+    # Threads for matching the box templates side by side (cv2.matchTemplate releases the GIL; the
+    # four templates took ~137 ms one after another and ~50 ms on four threads, with identical
+    # candidates, 2026-10-26). Scheduling only: thresholds, HSV, NMS and the frame are untouched.
+    # 1 = the old sequential scan. The pool belongs to the matcher, so the only other multi-template
+    # scan (red-icon normal mode, off by default: fast mode matches one template) is threaded too,
+    # with the same results.
+    match_threads: int = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,7 +206,7 @@ class UpgradeStationConfig:
     # visible frame (35 ms, faster only re-reads the same frame), never slower than the p95 gap.
     hold_check_interval_min: float = 0.035
     hold_check_interval_max: float = 0.100
-    click_hold_max_duration: float = 9.0
+    click_hold_max_duration: float = 15.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -302,6 +316,14 @@ class LevelTransitionConfig:
     unlock_search_attempts: int = 4
     unlock_search_interval: float = 0.075
     unlock_settle_delay: float = 0.800
+    # A greyed-out Unlock button (cash or a requirement is short) reads 0.85-0.90 against the 0.905
+    # gate: 83% of 6,454 misses, and the last misses before a completion read the same as the
+    # earliest, so retrying cannot turn it on within the ~4 s the retries last. With this on, the
+    # first try whose raw best match is at least greyed_unlock_min_conf ends the sequence, as if the
+    # attempts had run out; lower matches (0.70-0.85: the dialog still animating in) keep every
+    # retry. False is v1's plain unlock_search_attempts tries again.
+    greyed_unlock_early_out: bool = True
+    greyed_unlock_min_conf: float = 0.85
     # Restored from v1 (73f5db0/eccd810; removed in 12e397a as an incidental bundle alongside an
     # unrelated upgrade-station fix): one down-drag "verification scroll" performed before the
     # very first new-level red-icon rescan, forcing a fresh render before trusting a miss. Kept
@@ -376,10 +398,12 @@ class GameRecoveryConfig:
 class ResumeConfig:
     """Auto-resume after the bot stopped itself on a window or focus error. Over Sep 28-Oct 6,
     44.5 of 205 hours went to such stops followed by nothing until a person came back. Off by
-    default: until `enabled` is set the check only LOGS what it would do (shadow mode), so the
-    share of that downtime it could really recover is measured before the bot may act on it."""
+    default until 2026-10-27: the check only LOGGED what it would do (shadow mode). That log showed
+    that live resume alone recovers almost nothing: in 7 of 8 stops another app had the focus, and
+    start() never takes the focus. So it is on now, and `raise_window` lets it bring the game
+    window up once nobody has touched the PC for idle_seconds."""
 
-    enabled: bool = False
+    enabled: bool = True
     # Seconds between checks; also the first backoff step after a failed live attempt.
     check_seconds: float = 60.0
     # No key press and no cursor movement for this long before the bot may start itself: it never
@@ -387,6 +411,10 @@ class ResumeConfig:
     idle_seconds: float = 600.0
     # Failed live attempts in one stop before the bot gives up and waits for a person.
     max_attempts: int = 20
+    # Bring the game window to the front when the PC has been idle for idle_seconds and the window
+    # is not already ready (another app has the focus). Skipped while the session is locked.
+    # False keeps the old rule: only start a window that is already in front.
+    raise_window: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -435,7 +463,7 @@ class CloseButtonConfig:
 @dataclass(frozen=True, slots=True)
 class TelegramConfig:
     enabled: bool = False
-    bot_token: str = ""
+    bot_token: str = field(default="", repr=False)
     chat_id: str = ""
     queue_maxsize: int = 100
     # >= the 5 s HTTP timeout in TelegramNotifier._send, so an in-flight request is never abandoned.

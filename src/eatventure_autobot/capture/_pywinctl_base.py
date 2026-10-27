@@ -211,6 +211,20 @@ class PyWinCtlWindowCapture(ABC):
         except Exception:
             return False
 
+    def raise_window(self) -> bool:
+        """Brings the target window to the front: the one deliberate focus change the bot makes on
+        its own, used only by the auto-resume after nobody has touched the PC for
+        resume.idle_seconds (everything else leaves the focus to the person). True when the window
+        reports active afterwards. Best effort: any doubt, including a missing window, reads False
+        and nothing is raised."""
+        try:
+            with self._lock:
+                window = self._find()
+                window.activate(wait=True)
+                return self._is_active(window)
+        except Exception:
+            return False
+
     def _live_windows(self) -> list[Any]:
         return [
             window

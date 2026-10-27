@@ -9,23 +9,38 @@ from eatventure_autobot.domain.config import TelegramConfig
 logger = logging.getLogger(__name__)
 
 _MAX_MESSAGE_LENGTH = 4096
+_HTTP_TIMEOUT_SECONDS = 5.0
+_ENABLED_VARIABLE = "EATVENTURE_TELEGRAM_ENABLED"
+_TOKEN_VARIABLE = "EATVENTURE_TELEGRAM_BOT_TOKEN"
+_CHAT_ID_VARIABLE = "EATVENTURE_TELEGRAM_CHAT_ID"
 
 
 def load_telegram_config_from_env() -> TelegramConfig:
     """Builds TelegramConfig from EATVENTURE_TELEGRAM_* env vars. Credentials are deliberately
     env-var gated and never live in domain/config.py, so they can't end up in a config dump or
-    committed alongside it."""
-    enabled = os.environ.get("EATVENTURE_TELEGRAM_ENABLED", "").strip().casefold() in {
+    committed alongside it. Asking for Telegram without both credentials degrades to disabled (the
+    bot still has to run) but says so: an unattended run that silently lost its alert channel is
+    the failure this exists to make visible. Only variable names are logged, never their values."""
+    requested = os.environ.get(_ENABLED_VARIABLE, "").strip().casefold() in {
         "1",
         "true",
         "yes",
         "on",
     }
-    bot_token = os.environ.get("EATVENTURE_TELEGRAM_BOT_TOKEN", "").strip()
-    chat_id = os.environ.get("EATVENTURE_TELEGRAM_CHAT_ID", "").strip()
-    if enabled and not (bot_token and chat_id):
-        return TelegramConfig(enabled=False, bot_token=bot_token, chat_id=chat_id)
-    return TelegramConfig(enabled=enabled, bot_token=bot_token, chat_id=chat_id)
+    bot_token = os.environ.get(_TOKEN_VARIABLE, "").strip()
+    chat_id = os.environ.get(_CHAT_ID_VARIABLE, "").strip()
+    missing = [
+        name
+        for name, value in ((_TOKEN_VARIABLE, bot_token), (_CHAT_ID_VARIABLE, chat_id))
+        if not value
+    ]
+    if requested and missing:
+        logger.warning(
+            "Telegram requested by %s but disabled: %s not set",
+            _ENABLED_VARIABLE,
+            " and ".join(missing),
+        )
+    return TelegramConfig(enabled=requested and not missing, bot_token=bot_token, chat_id=chat_id)
 
 
 class _HttpSession(Protocol):
@@ -72,7 +87,9 @@ class TelegramNotifier:
             return
         try:
             response = self._session.post(
-                self._url, json={"chat_id": self._chat_id, "text": message}, timeout=5
+                self._url,
+                json={"chat_id": self._chat_id, "text": message},
+                timeout=_HTTP_TIMEOUT_SECONDS,
             )
             if not getattr(response, "ok", True):
                 status = getattr(response, "status_code", "?")

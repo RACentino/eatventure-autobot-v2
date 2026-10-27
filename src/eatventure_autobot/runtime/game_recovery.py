@@ -2,6 +2,7 @@
 one runs adb without a shell, with a timeout, and never raises."""
 
 import logging
+import re
 import subprocess
 from collections.abc import Callable, Sequence
 
@@ -10,6 +11,11 @@ from eatventure_autobot.domain.config import GameRecoveryConfig
 logger = logging.getLogger(__name__)
 
 Runner = Callable[[Sequence[str], float], tuple[int, str]]
+
+# `adb shell` joins its arguments and hands them to the device's own shell, so a package name read
+# back from the device has to be shell-inert before it is passed on. This is Android's own rule for
+# package names (letter-led dotted segments of letters, digits and underscores).
+_PACKAGE_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*")
 
 
 def run_adb(argv: Sequence[str], timeout: float) -> tuple[int, str]:
@@ -54,6 +60,9 @@ class GameLauncher:
                 self._config.package_hint,
                 ", ".join(found) or "none",
             )
+            return False
+        if not _PACKAGE_NAME.fullmatch(found[0]):
+            logger.error("Game relaunch disabled: %r is not a valid Android package name", found[0])
             return False
         self.package = found[0]
         logger.info("Game relaunch armed for package %s", self.package)

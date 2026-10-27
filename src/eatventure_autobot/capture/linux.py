@@ -76,6 +76,13 @@ class LinuxWindowCapture(PyWinCtlWindowCapture):
     def describe_environment(self) -> str:
         return f"{super().describe_environment()} {_session_facts(self._title)}"
 
+    def raise_window(self) -> bool:
+        # ponytail: reads the lock state out of _session_facts' text (it also runs pgrep, a few ms,
+        # and this runs once a minute at most); a typed helper only if a second caller appears.
+        if "locked=yes" in _session_facts(self._title):
+            return False  # a locked session cannot be driven; leave it for the person
+        return super().raise_window()
+
     def _resize_hint(self) -> str:
         if _SESSION_TYPE == "wayland":
             return " Ensure the target is a floating XWayland window."

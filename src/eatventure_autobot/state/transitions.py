@@ -24,6 +24,9 @@ Deliberate, user-confirmed exceptions to v1 parity -- do NOT "fix" these in a fu
     FIND_RED_ICONS (v1: FIND_RED_ICONS -> OPEN_BOXES -> SCROLL -> FIND_RED_ICONS): a stats-badge
     look on every no-icon pass, and a crate scan right after every landed scroll. After a completed
     hold, a stats miss still goes straight to SCROLL, as in v1.
+  * WAIT_FOR_UNLOCK stops retrying as soon as the Unlock button is on screen but greyed out (v1
+    always makes unlock_search_attempts tries): measured, 83% of its misses are that greyed button
+    and retrying for ~4 s never enabled it (LevelTransitionConfig.greyed_unlock_early_out).
 """
 
 from collections.abc import Iterable
@@ -121,9 +124,7 @@ def decide_click_red_icon(context: FlowContext, click_succeeded: bool) -> State:
 def decide_check_unlock(unlock_button_found: bool, click_succeeded: bool | None) -> State:
     # Verified v1 behavior: no attempt cap here — a stuck click-retry loop is bounded only by the
     # same-state watchdog, matching every other unbounded branch v1 relies on it for.
-    if not unlock_button_found:
-        return State.SEARCH_UPGRADE_STATION
-    if click_succeeded:
+    if not unlock_button_found or click_succeeded:
         return State.SEARCH_UPGRADE_STATION
     return State.CHECK_UNLOCK
 
@@ -357,11 +358,10 @@ def decide_check_new_level(context: FlowContext, obs: NewLevelVerificationObserv
     # new_level_red_icon_verified or the search cycle.
     if obs.scroll_succeeded is False:
         return State.CHECK_NEW_LEVEL
-    if obs.verified:
-        context.new_level_red_icon_verified = True
     if not obs.verified:
         context.reset_search_cycle()
         return State.FIND_RED_ICONS
+    context.new_level_red_icon_verified = True
     if obs.button_click_succeeded is False or obs.transition_click_succeeded is False:
         return State.CHECK_NEW_LEVEL
     return State.WAIT_FOR_UNLOCK
@@ -397,6 +397,10 @@ def decide_transition_level(
 class WaitForUnlockObservation:
     unlock_found: bool
     click_succeeded: bool | None
+    # The button is on screen but greyed out (a raw match just under the gate, see
+    # LevelTransitionConfig.greyed_unlock_early_out): more tries cannot enable it, so a miss that
+    # is greyed ends the sequence like the last allowed try.
+    unlock_greyed: bool = False
 
 
 def decide_wait_for_unlock(
@@ -412,7 +416,7 @@ def decide_wait_for_unlock(
         return State.FIND_RED_ICONS
 
     context.wait_for_unlock_attempts += 1
-    if context.wait_for_unlock_attempts >= config.unlock_search_attempts:
+    if obs.unlock_greyed or context.wait_for_unlock_attempts >= config.unlock_search_attempts:
         context.wait_for_unlock_attempts = 0
         context.reset_search_cycle()
         return State.FIND_RED_ICONS

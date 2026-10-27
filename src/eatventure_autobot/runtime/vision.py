@@ -19,6 +19,7 @@ from eatventure_autobot.domain.errors import DetectionError
 from eatventure_autobot.domain.protocols import InputController, ScreenCapture, TemplateMatcher
 from eatventure_autobot.domain.types import (
     BoundingBox,
+    HsvGate,
     MatchCandidate,
     MatchResult,
     Point,
@@ -141,6 +142,13 @@ class GameVision:
         """True when starting would not touch the window (see the capture layer). Never raises."""
         try:
             return self._capture.environment_ready()
+        except Exception:
+            return False
+
+    def raise_target(self) -> bool:
+        """Brings the game window to the front (see ScreenCapture.raise_window). Never raises."""
+        try:
+            return self._capture.raise_window()
         except Exception:
             return False
 
@@ -349,16 +357,12 @@ class GameVision:
         template_names: tuple[str, ...],
         threshold: float,
         min_distance: int,
-        hsv_gate: object,
+        hsv_gate: HsvGate | None,
         min_matches: int,
         iou_threshold: float,
     ) -> list[MatchCandidate]:
         raw = self._matcher.find_candidates_across_templates(
-            frame,
-            template_names,
-            threshold,
-            min_distance,
-            hsv_gate,  # type: ignore[arg-type]
+            frame, template_names, threshold, min_distance, hsv_gate
         )
         if min_matches > 1:
             return filter_by_template_consensus(raw, min_matches, iou_threshold)
