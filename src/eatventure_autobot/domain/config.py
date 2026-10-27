@@ -3,11 +3,14 @@ ported verbatim from v1's config.py by deliberate decision: this codebase's stat
 sequence follows v1's exactly. Detection-internal tuning (HSV ranges, NMS thresholds, template
 offsets) stays independently calibrated from live-frame empirical testing.
 
-Timing values are derived from the live scrcpy rig, not ported. Measured there: a new visible frame
-every 35 ms (p95 94 ms, worst 152 ms); a tapped popup is visible <= 0.94 s after release and gone
-<= 0.91 s after the dismissing tap; one click costs ~5 ms (12 ms p95) beyond its configured waits;
-one capture+match costs 22 ms (station) to 167 ms (boxes). Operator-fixed anchors: state_delay 0,
-hover/down/up bands, scroll 0.300 s x3, verify-settle band, hold max 9.0 s, stats 2.0 s/0.032 s."""
+TIMINGS ARE ALL ZERO (2026-10-28) pending recalculation: every time-valued field below is 0.0
+except three whose validators require > 0 (game_recovery.command_timeout / recovery_poll_seconds,
+resume.check_seconds). The numbers quoted in the per-field comments describe the values they
+replaced, not the current ones. Those values were derived from the live scrcpy rig, not ported.
+Measured there: a new visible frame every 35 ms (p95 94 ms, worst 152 ms); a tapped popup is
+visible <= 0.94 s after release and gone <= 0.91 s after the dismissing tap; one click costs ~5 ms
+(12 ms p95) beyond its configured waits; one capture+match costs 22 ms (station) to 167 ms
+(boxes)."""
 
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -41,18 +44,18 @@ class ScrcpyRecoveryConfig:
     enabled: bool = True
     # Re-scan delays after a first miss: (worst visible-frame gap) - (cheapest match of that scan),
     # so the second capture is guaranteed a fresh frame. Boxes' match already outlasts the gap.
-    red_icon_delay: float = 0.115
-    box_delay: float = 0.035
-    upgrade_delay: float = 0.140
+    red_icon_delay: float = 0.0
+    box_delay: float = 0.0
+    upgrade_delay: float = 0.0
     # Blind settle after a red-icon click, before the one-shot unlock check: popup visible <= 0.94 s
     # after release, minus the click's own 0.16 s post-release wait (0.78 s), plus a visible-frame
     # margin, rounded to 0.800; the SEARCH poll that follows absorbs any tail beyond it.
-    action_settle_delay: float = 0.800
+    action_settle_delay: float = 0.0
     # Log-only look during that settle (EatventureBot._settle_and_watch): how often to scan for the
     # popup the click opened, to learn its real latency on the CURRENT scrcpy pipeline (the 0.8 s
     # was measured on 4.1 / h265 / 16M; the rig now runs 5.0.1 / h264 / 12M / --video-buffer=0).
     # One visible frame (35 ms). 0 turns it off and the settle is the plain blind sleep again.
-    popup_probe_interval: float = 0.035
+    popup_probe_interval: float = 0.0
     # Measured on that current pipeline (7,577 settles, 2026-10-23..26): 82% showed the popup, first
     # seen p50 85-87 ms / p95 92-106 ms, none later than 264 ms; the other 18% never showed it
     # (a locked station), so the 0.8 s is not needed once a popup that appeared AFTER the click has
@@ -158,7 +161,7 @@ class UpgradeStationConfig:
     )
     # Poll gap for every retry loop: p95 visible-frame gap (94 ms) minus one capture+match (22 ms),
     # so consecutive attempts see distinct frames.
-    search_interval: float = 0.075
+    search_interval: float = 0.0
     search_attempts: int = 5
     failed_searches_before_scroll: int = 3
     # Dead-loop guard: after this many box-opening passes with no scroll and no completed upgrade
@@ -178,7 +181,7 @@ class UpgradeStationConfig:
     # counts on purpose — see the comments at each site — only the value is shared here.
     threshold_relaxation: float = 0.05
     verify_search_attempts: int = 4
-    verify_search_interval: float = 0.075
+    verify_search_interval: float = 0.0
     # Settle delay used before each of the two steps in the pre-hold verification pass: once
     # before the priming click on the stored position, and again before the single
     # verify_upgrade_station_round() check that follows it (see
@@ -186,7 +189,7 @@ class UpgradeStationConfig:
     # This field previously existed and was removed as unread/dead config before this gap was
     # found — it is genuinely read now, so keep it wired up. Above the worst visible-frame gap
     # (152 ms) so a fresh frame always separates observation from verification; inside 0.1-0.2 s.
-    verify_settle_delay: float = 0.160
+    verify_settle_delay: float = 0.0
     # Consecutive misses required before a hold treats the station as gone; debounces a single
     # flaky/transient miss so a real hold isn't cut short by one bad frame. Each tick now does a
     # single capture+check (see EatventureBot._station_disappeared), so this cross-tick count is
@@ -204,9 +207,9 @@ class UpgradeStationConfig:
     disappear_position_tolerance_px: int = 60
     # The hold's poll gap is verify_search_interval clamped into this band: never faster than one
     # visible frame (35 ms, faster only re-reads the same frame), never slower than the p95 gap.
-    hold_check_interval_min: float = 0.035
-    hold_check_interval_max: float = 0.100
-    click_hold_max_duration: float = 15.0
+    hold_check_interval_min: float = 0.0
+    hold_check_interval_max: float = 0.0
+    click_hold_max_duration: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,14 +218,14 @@ class InputTimingConfig:
     # game frame (17 ms) above the floor: the game itself registers taps down to a 0 ms press, so
     # the bands, not the game, set these. click_delay (one visible frame) + mouse_up_duration puts
     # a click's return 0.16 s after release; move_delay/retry_delay are one game frame (16.7 ms).
-    click_delay: float = 0.032
-    move_delay: float = 0.017
-    mouse_down_duration: float = 0.117
-    mouse_up_duration: float = 0.117
+    click_delay: float = 0.0
+    move_delay: float = 0.0
+    mouse_down_duration: float = 0.0
+    mouse_up_duration: float = 0.0
     retry_count: int = 3
-    retry_delay: float = 0.017
+    retry_delay: float = 0.0
     hover_enabled: bool = True
-    hover_duration: float = 0.117
+    hover_duration: float = 0.0
     # Default 0 preserves the exact-equality cursor-drift check every click/press/hold path uses
     # (PynputInputController._cursor_on_target). A nonzero value absorbs DPI-scaling/driver
     # rounding noise or transient compositor jitter without silently changing verified behavior
@@ -245,11 +248,11 @@ class FlowTimingConfig:
     # mechanism: an earlier greenfield-only "no progress across changing states" addition was
     # removed after live evidence showed it resetting the oscillating scroll search before it could
     # complete a widening sweep, actively preventing the progress it was meant to detect.
-    state_stall_timeout_seconds: float = 9.0
+    state_stall_timeout_seconds: float = 0.0
     # Idle-loop wake period (also the hotkey poll): 200 Hz, so an idle bot does not spin a core.
-    event_loop_interval: float = 0.005
+    event_loop_interval: float = 0.0
     # After the idle click, before capturing: a dismissed popup is gone <= 0.91 s after the tap.
-    focus_settle_delay: float = 0.800
+    focus_settle_delay: float = 0.0
     # v1's STATE_DELAY: the settle after a completed upgrade-station hold's idle click and after
     # the stats-panel button click. 0.0 in v1 (still stop-aware), separate from the settles above.
     state_delay: float = 0.0
@@ -257,11 +260,11 @@ class FlowTimingConfig:
     # relocate/resize query (a full window enumeration). A cheap liveness check still runs every
     # step; only the full relocate is throttled to this cadence instead of running unconditionally
     # on every single step. A relocate costs 5.6 ms (10.7 ms p95): 1.0 s keeps it near 1% overhead.
-    window_relocate_interval: float = 1.0
+    window_relocate_interval: float = 0.0
     # Period of the INFO "metrics" line (config fingerprint, per-state time share, levels, holds,
     # boxes) that makes levels/hour measurable from bot.log; 0 disables it, including the closing
     # line logged when the bot stops. 300 s keeps it to ~12 lines/hour.
-    metrics_log_interval: float = 300.0
+    metrics_log_interval: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -283,15 +286,15 @@ class ClickTargetConfig:
 
 @dataclass(frozen=True, slots=True)
 class StatsUpgradeConfig:
-    click_duration: float = 1.5
-    click_delay: float = 0.032
+    click_duration: float = 0.0
+    click_delay: float = 0.0
     # Independent of input_timing.mouse_down_duration/mouse_up_duration by design: this is the
     # only click path that needs to be fast enough to register many clicks inside click_duration,
     # and it must not affect every other click the bot makes. Starting point, not a measured
     # minimum. Single taps were live-verified to register down to a 0 ms press; one game frame
     # (17 ms) each keeps press and release in separate frames, so a tap cycle is ~4 frames.
-    mouse_down_duration: float = 0.017
-    mouse_up_duration: float = 0.017
+    mouse_down_duration: float = 0.0
+    mouse_up_duration: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -303,19 +306,19 @@ class RedIconZoneConfig:
 @dataclass(frozen=True, slots=True)
 class LevelTransitionConfig:
     search_attempts: int = 2
-    search_interval: float = 0.075
+    search_interval: float = 0.0
     # Every blind post-click settle in this flow is the same modal-transition constant as
     # action_settle_delay: nothing here can be observed (no template), so each waits out the
     # measured worst-case visible latency instead of polling for it.
-    settle_delay: float = 0.800
-    confirmation_delay: float = 0.800
-    secondary_settle_delay: float = 0.800
+    settle_delay: float = 0.0
+    confirmation_delay: float = 0.0
+    secondary_settle_delay: float = 0.0
     # v1's real, practical give-up point for WAIT_FOR_UNLOCK: reverted from the greenfield
     # redesign's 1000 (which relied on the 9s same-state watchdog as the sole backstop instead) per
     # the decision to follow v1's state-handler flow verbatim, including its pacing.
     unlock_search_attempts: int = 4
-    unlock_search_interval: float = 0.075
-    unlock_settle_delay: float = 0.800
+    unlock_search_interval: float = 0.0
+    unlock_settle_delay: float = 0.0
     # A greyed-out Unlock button (cash or a requirement is short) reads 0.85-0.90 against the 0.905
     # gate: 83% of 6,454 misses, and the last misses before a completion read the same as the
     # earliest, so retrying cannot turn it on within the ~4 s the retries last. With this on, the
@@ -334,9 +337,9 @@ class LevelTransitionConfig:
     verification_scroll_distance: int = 200
     # Gesture and pause mirror ScrollConfig (same physical drag); the settle is the modal constant
     # because the capture that follows must show the post-scroll frame (visible <= 0.94 s).
-    verification_scroll_duration: float = 0.300
-    verification_scroll_settle_delay: float = 0.800
-    verification_scroll_interval_pause: float = 0.300
+    verification_scroll_duration: float = 0.0
+    verification_scroll_settle_delay: float = 0.0
+    verification_scroll_interval_pause: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -346,9 +349,9 @@ class ScrollConfig:
     max_cycles: int = 6
     increment_step: int = 1
     max_idle_pass_attempts: int = 1
-    interval_pause: float = 0.300
-    post_scroll_settle: float = 0.300
-    duration: float = 0.300
+    interval_pause: float = 0.0
+    post_scroll_settle: float = 0.0
+    duration: float = 0.0
     # Stall alert: after this many completed scrolls in a row with no box opened, upgrade held,
     # stats upgrade or level completed, log a WARNING and probe box detection on the next scan.
     # 150 idle passes is ~10.5 min in the no-work loop (FIND, UPGRADE_STATS, OPEN, SCROLL, OPEN:
@@ -388,7 +391,7 @@ class GameRecoveryConfig:
     static_recent_delta: float = 3.0
     # Length of the recovery window after the launch command: the main flow stays suspended for
     # all of it, and only the red-X rule runs (cold start + any popups); see _recover_popups.
-    relaunch_settle_seconds: float = 60.0
+    relaunch_settle_seconds: float = 0.0
     # Pause between X scans inside the recovery window when no X is on screen.
     recovery_poll_seconds: float = 0.3
     command_timeout: float = 10.0
@@ -408,7 +411,7 @@ class ResumeConfig:
     check_seconds: float = 60.0
     # No key press and no cursor movement for this long before the bot may start itself: it never
     # takes the mouse from someone who is at the PC.
-    idle_seconds: float = 600.0
+    idle_seconds: float = 0.0
     # Failed live attempts in one stop before the bot gives up and waits for a person.
     max_attempts: int = 20
     # Bring the game window to the front when the PC has been idle for idle_seconds and the window
@@ -449,15 +452,15 @@ class CloseButtonConfig:
     block_window: int = 38
     block_min_fraction: float = 0.60
     # Blind wait after the tap: the same modal-settle constant as every other popup dismissal.
-    settle_delay: float = 0.800
+    settle_delay: float = 0.0
     # Guard for absolute priority: the same spot tapped this many times in a row means the tap is
     # not closing it (or it is not an X), so the rule stands down for suppress_seconds instead of
     # starving every other behaviour.
     max_consecutive_clicks: int = 6
-    suppress_seconds: float = 60.0
+    suppress_seconds: float = 0.0
     # Hard-lock layer 2: after any step in a New Level state, the X rule stays off this long, so
     # whatever dialog is still open runs exactly as it does without the rule.
-    new_level_lock_seconds: float = 10.0
+    new_level_lock_seconds: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -467,7 +470,7 @@ class TelegramConfig:
     chat_id: str = ""
     queue_maxsize: int = 100
     # >= the 5 s HTTP timeout in TelegramNotifier._send, so an in-flight request is never abandoned.
-    close_timeout: float = 5.0
+    close_timeout: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
