@@ -28,6 +28,11 @@ class LevelMark:
     unlock_miss: int = 0
 
 
+def _recent() -> deque[int]:
+    """A diagnostic tally that keeps its last 500 samples: older ones fall off as new ones land."""
+    return deque(maxlen=500)
+
+
 @dataclass
 class FlowContext:
     red_icons: list[MatchCandidate] = field(default_factory=list)
@@ -61,6 +66,7 @@ class FlowContext:
     # zone, or clicked and the click failed. Both used to be invisible in the logs.
     box_zone_skips: int = 0
     box_click_fails: int = 0
+    box_floods: int = 0  # scans skipped for matching more boxes than BoxDetectionConfig allows
     # No-work loop FIND -> UPGRADE_STATS -> OPEN -> SCROLL -> OPEN -> FIND. Both flags live for ONE
     # step: FIND sets stats_from_find (so a stats miss goes to OPEN, not SCROLL as after a hold),
     # a landed scroll sets scan_boxes_after_scroll (so that OPEN pass hands back to FIND instead of
@@ -76,7 +82,7 @@ class FlowContext:
     # Popup-latency probe (EatventureBot._settle_and_watch, diagnostics only): ms from the red-icon
     # click's return to the first scan that showed the station popup (the last 500), how many
     # settles saw it, and how many never did (a locked station shows `unlock` instead).
-    popup_ms: list[int] = field(default_factory=list)
+    popup_ms: deque[int] = field(default_factory=_recent)
     popup_seen: int = 0
     popup_never: int = 0
     # popup_early: settles that ended before the deadline because the popup had appeared after the
@@ -90,10 +96,10 @@ class FlowContext:
     # jump of each moving settle (the last 500): a 3 px jitter is a tolerance problem, 40 px is not.
     popup_stale: int = 0
     popup_moving: int = 0
-    popup_moving_px: list[int] = field(default_factory=list)
+    popup_moving_px: deque[int] = field(default_factory=_recent)
     # Milliseconds between consecutive OPEN_BOXES captures (the last 500): the time crates, which
     # last under 3 s, can come and go unseen. Diagnostics only.
-    box_gap_ms: list[int] = field(default_factory=list)
+    box_gap_ms: deque[int] = field(default_factory=_recent)
     # New Level attempts (diagnostics only, see EatventureBot._handle_wait_for_unlock): nl_route is
     # how the current WAIT_FOR_UNLOCK sequence was entered ("footer" badge or the "open" button),
     # nl_attempts / nl_done the finished sequences and the completions per route. unlock_ms is when
@@ -102,7 +108,7 @@ class FlowContext:
     nl_route: str | None = None
     nl_attempts: dict[str, int] = field(default_factory=dict)
     nl_done: dict[str, int] = field(default_factory=dict)
-    unlock_ms: list[int] = field(default_factory=list)
+    unlock_ms: deque[int] = field(default_factory=_recent)
     unlock_never: int = 0
     nl_greyed_exits: int = 0
     # Hold outcome tallies (diagnostics only): a hold that ran to click_hold_max_duration means cash

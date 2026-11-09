@@ -80,6 +80,8 @@ def validate_box_detection(config: BoxDetectionConfig) -> None:
         raise ConfigError(f"min_distance must be >= 1, got {config.min_distance}")
     if config.match_threads < 1:
         raise ConfigError(f"match_threads must be >= 1, got {config.match_threads}")
+    if config.max_clicks_per_pass < 0:
+        raise ConfigError(f"max_clicks_per_pass must be >= 0, got {config.max_clicks_per_pass}")
 
 
 def validate_upgrade_station(config: UpgradeStationConfig) -> None:

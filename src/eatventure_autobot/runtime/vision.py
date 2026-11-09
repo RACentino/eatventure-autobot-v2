@@ -5,7 +5,6 @@ threshold/HSV/region lookups out of the handlers, so a handler reads as flow, no
 
 import logging
 import time
-from pathlib import Path
 
 import cv2
 import numpy as np
@@ -393,6 +392,3 @@ class GameVision:
             elif candidate.center[1] < self._config.capture_regions.max_search_y:
                 actionable.append(candidate)
         return actionable, new_level_seen, stats_seen
-
-    def template_path(self, name: str) -> Path:
-        return self._config.paths.assets_dir / f"{name}.png"

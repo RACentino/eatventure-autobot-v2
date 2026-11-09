@@ -44,7 +44,7 @@ from eatventure_autobot.state.context import ROW_PROXIMITY_DISTANCE, FlowContext
 # --- FIND_RED_ICONS -----------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RedIconScanObservation:
     new_level_button_found: bool
     new_level_footer_icon_found: bool
@@ -132,7 +132,7 @@ def decide_check_unlock(unlock_button_found: bool, click_succeeded: bool | None)
 # --- SEARCH_UPGRADE_STATION ------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class UpgradeStationSearchObservation:
     found: bool
     position: Point | None
@@ -160,7 +160,7 @@ def decide_search_upgrade_station(
 # --- HOLD_UPGRADE_STATION ----------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class UpgradeHoldObservation:
     target_available: bool  # stored position exists and is not inside a forbidden zone
     verification_passed: bool  # the station was still visible on a fresh verification frame
@@ -221,7 +221,7 @@ def decide_hold_upgrade_station(
 # --- UPGRADE_STATS ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class StatsIconObservation:
     new_level_button_found: bool
     stats_icon_found: bool
@@ -252,7 +252,7 @@ def decide_upgrade_stats(context: FlowContext, obs: StatsIconObservation) -> Sta
 # --- OPEN_BOXES ------------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class BoxCycleObservation:
     new_level_button_found: bool
     boxes_opened: int = 0
@@ -339,7 +339,7 @@ def decide_scroll(context: FlowContext, scroll_succeeded: bool) -> State:
 # --- CHECK_NEW_LEVEL -----------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class NewLevelVerificationObservation:
     verified: bool
     button_click_succeeded: bool | None
@@ -370,7 +370,7 @@ def decide_check_new_level(context: FlowContext, obs: NewLevelVerificationObserv
 # --- TRANSITION_LEVEL ----------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class TransitionLevelObservation:
     found: bool
     attempt_number: int
@@ -393,7 +393,7 @@ def decide_transition_level(
 # --- WAIT_FOR_UNLOCK -----------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class WaitForUnlockObservation:
     unlock_found: bool
     click_succeeded: bool | None

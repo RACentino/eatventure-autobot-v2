@@ -36,7 +36,6 @@ memory/
 screenshots/
 *.log
 .gemini/
-tests/
 analytics/
 changelogs/
 test/
