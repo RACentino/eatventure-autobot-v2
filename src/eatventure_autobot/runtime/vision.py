@@ -15,7 +15,7 @@ from eatventure_autobot.detection.opencv_matcher import (
     filter_by_template_consensus,
     hsv_ranges_mask,
 )
-from eatventure_autobot.domain.config import BotConfig
+from eatventure_autobot.domain.config import BotConfig, StrategyConfig
 from eatventure_autobot.domain.errors import CaptureError, DetectionError
 from eatventure_autobot.domain.protocols import InputController, ScreenCapture, TemplateMatcher
 from eatventure_autobot.domain.state import BoostLevel, StationPanel
@@ -207,8 +207,10 @@ class GameVision:
         )
         self._loaded: set[str] = set()
         self._last_relocate_at = 0.0
+        self._panel_template_sizes: dict[str, tuple[int, int]] = {}
         self._panel_cache: tuple[
-            np.ndarray, BoundingBox | None, object, BoundingBox | None
+            np.ndarray, tuple[tuple[int, ...], BoundingBox | None, StrategyConfig],
+            BoundingBox | None,
         ] | None = None
 
     # --- template lifecycle -------------------------------------------------------------
@@ -216,11 +218,13 @@ class GameVision:
     def load_templates(self) -> list[str]:
         """Try configured assets and report load failures. Startup checks required templates."""
         self._panel_cache = None
+        self._panel_template_sizes.clear()
         baseline = self._required_template_names()
         strategy = self._config.strategy
+        panel_templates = (strategy.panel_template, strategy.unlock_panel_template)
         strategy_templates = (
-            *strategy.max_templates, strategy.locked_template, strategy.panel_template,
-            strategy.unlock_panel_template, *strategy.marker_templates,
+            *strategy.max_templates, strategy.locked_template, *panel_templates,
+            *strategy.marker_templates,
             strategy.restaurant_template, strategy.city_template, strategy.city_continue_template,
             *strategy.boost_templates,
         )
@@ -230,8 +234,10 @@ class GameVision:
             if name not in baseline and not path.exists():
                 continue
             try:
-                self._matcher.load_template(path)
+                size = self._matcher.load_template(path)
                 self._loaded.add(name)
+                if size is not None and name in panel_templates:
+                    self._panel_template_sizes[name] = size
             except DetectionError as exc:
                 logger.error("Template '%s' could not be loaded: %s", name, exc)
                 failed.append(name)
@@ -409,45 +415,68 @@ class GameVision:
 
     # --- multi-template reads ------------------------------------------------------------
 
+    def _panel_pixels(
+        self, frame: np.ndarray, centers: BoundingBox | None, names: tuple[str, str],
+    ) -> tuple[np.ndarray, int, int]:
+        first, second = (self._panel_template_sizes.get(name) for name in names)
+        if centers is None or first is None or second is None:
+            return frame, 0, 0
+        # Candidate centers need their whole template and a 1px halo for the 3x3 blur.
+        x_margin = (max(first[0], second[0]) + 1) // 2 + 1
+        y_margin = (max(first[1], second[1]) + 1) // 2 + 1
+        left = max(0, centers.x_min - x_margin)
+        right = min(frame.shape[1], centers.x_max + x_margin)
+        top = max(0, centers.y_min - y_margin)
+        bottom = min(frame.shape[0], centers.y_max + y_margin)
+        if right <= left or bottom <= top:
+            return frame, 0, 0
+        return frame[top:bottom, left:right], left, top
+
     def station_panel_bounds(
         self, frame: np.ndarray, *, near: BoundingBox | None = None,
     ) -> BoundingBox | None:
         config = self._config.strategy
+        names = (config.panel_template, config.unlock_panel_template)
+        # A panel containing the held point can have its center offset from that point.
+        centers = None if near is None else BoundingBox(
+            near.x_min - 75, near.y_min - 85, near.x_max + 75, near.y_max + 85,
+        )
+        pixels, crop_x, crop_y = self._panel_pixels(frame, centers, names)
+        cache_key = (frame.shape, near, config)
         cached = self._panel_cache
-        if (cached is not None and cached[1] == near and cached[2] is config
-                and cached[0].dtype == frame.dtype and np.array_equal(cached[0], frame)):
-            return cached[3]
+        if (cached is not None and cached[1] == cache_key
+                and cached[0].dtype == pixels.dtype and np.array_equal(cached[0], pixels)):
+            return cached[2]
         # Keep only one exact observation; a copy also detects reused capture buffers changing.
-        observed = frame.copy()
-        frame = cv2.GaussianBlur(frame, (3, 3), 0)
+        observed = pixels.copy()
         height, width = frame.shape[:2]
+        blurred = cv2.GaussianBlur(pixels, (3, 3), 0)
         # A visible masked header can fit while its transparent template border overhangs.
         for padding in (0, width):
-            image = (frame if not padding else cv2.copyMakeBorder(
-                frame, padding, padding, padding, padding, cv2.BORDER_CONSTANT
+            image = (blurred if not padding else cv2.copyMakeBorder(
+                blurred, padding, padding, padding, padding, cv2.BORDER_CONSTANT
             ))
+            origin_x, origin_y = crop_x - padding, crop_y - padding
             region = (None if not padding else BoundingBox(
                 padding, padding, padding + width, padding + height
             ))
-            if near is not None:
-                # ponytail: panels are at most149x169; enlarge this bound if assets grow.
-                # A panel containing a held point must have its center within these half-sizes.
+            if centers is not None:
                 region = BoundingBox(
-                    near.x_min - 75 + padding, near.y_min - 85 + padding,
-                    near.x_max + 75 + padding, near.y_max + 85 + padding,
+                    centers.x_min - origin_x, centers.y_min - origin_y,
+                    centers.x_max - origin_x, centers.y_max - origin_y,
                 )
-            for name in (config.panel_template, config.unlock_panel_template):
+            for name in names:
                 panel = self._find_one(image, name, config.panel_threshold, search_region=region)
                 if panel.best is not None:
                     box = panel.best.bounding_box
-                    left, top = max(0, box.x_min - padding), max(0, box.y_min - padding)
-                    right = min(width, box.x_max - padding)
-                    bottom = min(height, box.y_max - padding)
+                    left, top = max(0, box.x_min + origin_x), max(0, box.y_min + origin_y)
+                    right = min(width, box.x_max + origin_x)
+                    bottom = min(height, box.y_max + origin_y)
                     if left < right and top < bottom:
                         bounds = BoundingBox(left, top, right, bottom)
-                        self._panel_cache = (observed, near, config, bounds)
+                        self._panel_cache = (observed, cache_key, bounds)
                         return bounds
-        self._panel_cache = (observed, near, config, None)
+        self._panel_cache = (observed, cache_key, None)
         return None
 
     def station_panel(

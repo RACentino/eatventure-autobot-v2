@@ -96,7 +96,9 @@ class InputController(Protocol):
 
 
 class TemplateMatcher(Protocol):
-    def load_template(self, template_path: Path) -> None: ...
+    def load_template(self, template_path: Path) -> tuple[int, int] | None:
+        """Return (width, height) when the backend can report the loaded template size."""
+        ...
 
     def find_template(
         self,

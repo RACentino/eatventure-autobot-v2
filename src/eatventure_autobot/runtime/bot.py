@@ -57,7 +57,8 @@ FLOW_REVISION = (
     "scroll-pause-observation-v1; known-lock-stats-v1; narrow-terminal-row-v1; "
     "edge-gated-station-matching-v1; bounded-renovation-verification-v1; "
     "consistent-last-two-views-v1; economy-footer-preemption-v1; "
-    "open-upgrade-handoff-v1; repeat-hold-observation-v1; shared-renovation-frame-v1"
+    "open-upgrade-handoff-v1; repeat-hold-observation-v1; shared-renovation-frame-v1; "
+    "step-local-asset-frame-v1; bounded-panel-preprocessing-v1"
 )
 
 
@@ -165,6 +166,7 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
         self._close_suppressed_until = 0.0
         self._close_level_lock_until = 0.0
         self._close_check_seconds = 0.0
+        self._asset_frame: np.ndarray | None = None
         # Clock for the recovery window (a test advances it from a fake sleep); everything else
         # keeps using time.monotonic directly.
         self._clock: Callable[[], float] = time.monotonic
@@ -398,10 +400,11 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
                 self._arm_resume("target lost foreground")
                 return False
 
-            if self._dismiss_popup():
+            dismissed, observed = self._dismiss_popup()
+            if dismissed:
                 return True  # a popup was closed this step; the handler runs on the next one
 
-            return self._run_state_handler()
+            return self._run_state_handler(observed)
         except (ObservationError, CaptureError) as exc:
             if isinstance(exc, ObservationError):
                 logger.warning(
@@ -425,10 +428,14 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
         finally:
             self._step_lock.release()
 
-    def _run_state_handler(self) -> bool:
+    def _run_state_handler(self, observed: np.ndarray | None = None) -> bool:
         previous_state = self.state
         started = time.monotonic()
-        next_state = self._handlers[previous_state]()
+        self._asset_frame = observed if self._config.strategy.enabled else None
+        try:
+            next_state = self._handlers[previous_state]()
+        finally:
+            self._asset_frame = None
         self._state_seconds[previous_state] += time.monotonic() - started
         self._state_calls[previous_state] += 1
         self._last_handled_state = previous_state

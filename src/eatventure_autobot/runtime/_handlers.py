@@ -44,6 +44,7 @@ class _HandlersMixin:
     # the methods live in bot.py or another mixin.
     _clock: Callable[[], float]
     _config: BotConfig
+    _asset_frame: np.ndarray | None
     _early_probe_pending: bool
     _input: InputController
     _latest_thumb: np.ndarray | None
@@ -217,12 +218,18 @@ class _HandlersMixin:
             self.context.unlock_never += 1
         return True
 
+    def _capture_first_asset_frame(self, max_y: int) -> np.ndarray:
+        """Reuse the popup scan only on a handler's first read before input or a wait."""
+        frame = self._asset_frame
+        self._asset_frame = None
+        return self._vision.capture(max_y=max_y) if frame is None else frame[:max_y]
+
     def _handle_find_red_icons(self) -> State:
         monitoring = self._config.strategy.enabled and self.context.strategy_waiting_liveness
         if not self._config.strategy.enabled and not self._click_idle():
             return State.FIND_RED_ICONS
         regions = self._config.capture_regions
-        frame = self._vision.capture(max_y=regions.extended_search_y)
+        frame = self._capture_first_asset_frame(regions.extended_search_y)
         if self._progress is not None:
             self._progress.checkpoint(boost=self._vision.boost_level(frame))
         if monitoring:
@@ -328,7 +335,9 @@ class _HandlersMixin:
         threshold = self._config.thresholds.upgrade_station
         if attempt > 2:
             threshold -= station.threshold_relaxation
-        frame = self._vision.capture(max_y=self._config.capture_regions.upgrade_station_search_y)
+        frame = self._capture_first_asset_frame(
+            self._config.capture_regions.upgrade_station_search_y
+        )
         if self._config.strategy.enabled:
             panel = self._observe_strategy_panel(frame)
             if panel != StationPanel.AFFORDABLE:
@@ -553,7 +562,7 @@ class _HandlersMixin:
         # also the one state where an idle-click failure does NOT retry itself.
         if not self._click_idle():
             return State.OPEN_BOXES
-        frame = self._vision.capture(max_y=self._config.capture_regions.extended_search_y)
+        frame = self._capture_first_asset_frame(self._config.capture_regions.extended_search_y)
         if self._vision.find_new_level_button(
             frame[: self._config.capture_regions.max_search_y]
         ).found:
@@ -614,7 +623,7 @@ class _HandlersMixin:
         after_scroll = self.context.scan_boxes_after_scroll
         self.context.scan_boxes_after_scroll = False
         box_search_y = self._config.capture_regions.box_search_y
-        frame = self._vision.capture(max_y=box_search_y)
+        frame = self._capture_first_asset_frame(box_search_y)
         self._record_box_scan()
         self._update_box_scan_thumbnail(frame)
         new_level = self._vision.find_new_level_button(frame).found

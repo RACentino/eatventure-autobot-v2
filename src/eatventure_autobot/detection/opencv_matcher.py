@@ -262,7 +262,7 @@ class OpenCvTemplateMatcher:
             ThreadPoolExecutor(threads, thread_name_prefix="match") if threads > 1 else None
         )
 
-    def load_template(self, template_path: Path) -> None:
+    def load_template(self, template_path: Path) -> tuple[int, int]:
         raw = cv2.imread(str(template_path), cv2.IMREAD_UNCHANGED)
         if raw is None:
             raise DetectionError(f"Template not found: {template_path}")
@@ -274,6 +274,7 @@ class OpenCvTemplateMatcher:
             mask = np.zeros_like(alpha)
             mask[alpha > 0] = 255
         self._templates[template_path.stem] = (_as_bgr(raw, str(template_path)), mask)
+        return int(raw.shape[1]), int(raw.shape[0])
 
     def _lookup(self, template_name: str) -> tuple[np.ndarray, np.ndarray | None]:
         if template_name not in self._templates:

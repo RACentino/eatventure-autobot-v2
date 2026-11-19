@@ -70,9 +70,9 @@ class _RecoveryMixin:
 
         def _restart_mirror(self, cancelled: threading.Event) -> bool: ...
 
-    def _dismiss_popup(self) -> bool:
+    def _dismiss_popup(self) -> tuple[bool, np.ndarray | None]:
         """Red-X priority: runs before the state handler, so it outranks every handler and asset.
-        Returns True when it tapped an X (the step is then spent on that).
+        A tap consumes the step. A clean frame can serve the next read during this step.
 
         Hard lock for the New Level dialog (its X looks exactly like this one), two layers, either
         of which blocks the tap:
@@ -88,18 +88,18 @@ class _RecoveryMixin:
         flow."""
         config = self._config.close_button
         if self._config.strategy.enabled and self.context.strategy_waiting_liveness:
-            return False
+            return False, None
         if not config.enabled or self.state in X_LOCKED_STATES:
-            return False
+            return False, None
         now = time.monotonic()
         if now < self._close_level_lock_until or now < self._close_suppressed_until:
-            return False
+            return False, None
         frame = self._vision.capture()
         found = self._vision.find_close_buttons(frame)
         self._close_check_seconds += time.monotonic() - now
         if not found:
             self._close_last_pos, self._close_streak = None, 0
-            return False
+            return False, frame
         target = found[0]
         x, y = target.center
         last = self._close_last_pos
@@ -115,11 +115,11 @@ class _RecoveryMixin:
                 config.max_consecutive_clicks,
                 config.suppress_seconds,
             )
-            return False
+            return False, None
         self._close_streak = self._close_streak + 1 if same_spot else 1
         self._close_last_pos = (x, y)
         self._tap_close_button(target)
-        return True
+        return True, None
 
     def _tap_close_button(
         self, target: MatchCandidate, *, remaining: float | None = None, recovery: bool = False
