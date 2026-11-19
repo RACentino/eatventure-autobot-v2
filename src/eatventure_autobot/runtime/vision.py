@@ -12,8 +12,8 @@ import cv2
 import numpy as np
 
 from eatventure_autobot.detection.opencv_matcher import (
-    _hsv_range_mask,
     filter_by_template_consensus,
+    hsv_ranges_mask,
 )
 from eatventure_autobot.domain.config import BotConfig
 from eatventure_autobot.domain.errors import CaptureError, DetectionError
@@ -214,30 +214,27 @@ class GameVision:
     # --- template lifecycle -------------------------------------------------------------
 
     def load_templates(self) -> list[str]:
-        """Loads every template the configured flow can ask for. Returns the names that failed to
-        load; loading is best-effort so one bad asset degrades a single detection rather than
-        preventing startup outright. validate_required_templates() is the actual start gate."""
+        """Try configured assets and report load failures. Startup checks required templates."""
         self._panel_cache = None
+        baseline = self._required_template_names()
+        strategy = self._config.strategy
+        strategy_templates = (
+            *strategy.max_templates, strategy.locked_template, strategy.panel_template,
+            strategy.unlock_panel_template, *strategy.marker_templates,
+            strategy.restaurant_template, strategy.city_template, strategy.city_continue_template,
+            *strategy.boost_templates,
+        )
         failed: list[str] = []
-        for name in self._required_template_names():
+        for name in dict.fromkeys((*baseline, *strategy_templates)):
             path = self._config.paths.assets_dir / f"{name}.png"
+            if name not in baseline and not path.exists():
+                continue
             try:
                 self._matcher.load_template(path)
                 self._loaded.add(name)
             except DetectionError as exc:
                 logger.error("Template '%s' could not be loaded: %s", name, exc)
                 failed.append(name)
-        strategy = self._config.strategy
-        optional = (*strategy.max_templates, strategy.locked_template, strategy.panel_template,
-                    strategy.unlock_panel_template, *strategy.marker_templates,
-                    strategy.restaurant_template,
-                    strategy.city_template, strategy.city_continue_template,
-                    *strategy.boost_templates)
-        for name in optional:
-            path = self._config.paths.assets_dir / f"{name}.png"
-            if path.exists():
-                self._matcher.load_template(path)
-                self._loaded.add(name)
         return failed
 
     def _required_template_names(self) -> tuple[str, ...]:
@@ -488,9 +485,7 @@ class GameVision:
             ):
                 return StationPanel.UNKNOWN
             hsv = cv2.cvtColor(frame[box.y_min:box.y_max, box.x_min:box.x_max], cv2.COLOR_BGR2HSV)
-            red = np.zeros(hsv.shape[:2], dtype=np.uint8)
-            for color in config.locked_price_hsv.ranges:
-                red = cv2.bitwise_or(red, _hsv_range_mask(hsv, color.lower, color.upper))
+            red = hsv_ranges_mask(hsv, config.locked_price_hsv.ranges)
             if cv2.countNonZero(red) / red.size >= config.locked_price_hsv.min_match_ratio:
                 return StationPanel.LOCKED
         return StationPanel.UNKNOWN
@@ -613,9 +608,7 @@ class GameVision:
     def _positional_arrows(
         self, hsv: np.ndarray, bottom: int, row_tops: tuple[int, ...] = (),
     ) -> list[MatchCandidate]:
-        red = np.zeros(hsv.shape[:2], dtype=np.uint8)
-        for color in self._config.red_icon.hsv.ranges:
-            red |= _hsv_range_mask(hsv, color.lower, color.upper)
+        red = hsv_ranges_mask(hsv, self._config.red_icon.hsv.ranges)
         red[:_WORLD_SEARCH_TOP] = 0
         red[bottom:] = 0
         contours = _localized_arrow_contours(red, hsv)
@@ -887,9 +880,7 @@ class GameVision:
         button, or None when the frame has none: the ~4 ms gate in front of the ~85 ms match."""
         config = self._config.close_button
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        red: np.ndarray = np.zeros(frame.shape[:2], dtype=np.uint8)
-        for hsv_range in config.block_ranges:
-            red = cv2.bitwise_or(red, _hsv_range_mask(hsv, hsv_range.lower, hsv_range.upper))
+        red = hsv_ranges_mask(hsv, config.block_ranges)
         window = config.block_window
         share = cv2.boxFilter(
             (red > 0).astype(np.float32),

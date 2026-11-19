@@ -20,6 +20,7 @@ from eatventure_autobot.domain.errors import DetectionError
 from eatventure_autobot.domain.types import (
     BoundingBox,
     HsvGate,
+    HsvRange,
     MatchCandidate,
     MatchResult,
     Point,
@@ -146,6 +147,14 @@ def _hsv_range_mask(
     )
 
 
+def hsv_ranges_mask(hsv_region: np.ndarray, ranges: tuple[HsvRange, ...]) -> np.ndarray:
+    """Mark pixels covered by any of the configured HSV ranges."""
+    combined = np.zeros(hsv_region.shape[:2], dtype=np.uint8)
+    for hsv_range in ranges:
+        combined |= _hsv_range_mask(hsv_region, hsv_range.lower, hsv_range.upper)
+    return combined
+
+
 def _hsv_match_ratio(
     screenshot: np.ndarray,
     template: np.ndarray,
@@ -159,8 +168,7 @@ def _hsv_match_ratio(
     x, y = location
     height, width = template.shape[:2]
     if hsv_frame is not None:
-        # Caller already converted the whole frame to HSV once (see
-        # _find_candidates_across_templates) — slice instead of re-converting per candidate.
+        # The caller supplies a converted frame to avoid converting each candidate.
         hsv_region = hsv_frame[y : y + height, x : x + width]
         if hsv_region.shape[:2] != (height, width):
             return None
@@ -177,11 +185,7 @@ def _hsv_match_ratio(
     active_count = int(np.count_nonzero(active_mask))
     if active_count <= 0:
         return None
-    combined: np.ndarray = np.zeros((height, width), dtype=np.uint8)
-    for hsv_range in hsv_gate.ranges:
-        combined = cv2.bitwise_or(
-            combined, _hsv_range_mask(hsv_region, hsv_range.lower, hsv_range.upper)
-        )
+    combined = hsv_ranges_mask(hsv_region, hsv_gate.ranges)
     matched_count = int(np.count_nonzero((combined > 0) & active_mask))
     return matched_count / active_count
 
@@ -373,7 +377,7 @@ class OpenCvTemplateMatcher:
         candidates.sort(key=lambda candidate: candidate.confidence, reverse=True)
         return candidates
 
-    def _find_candidates_across_templates(
+    def find_candidates_across_templates(
         self,
         frame: np.ndarray,
         template_names: tuple[str, ...],
@@ -383,10 +387,7 @@ class OpenCvTemplateMatcher:
         *,
         search_region: BoundingBox | None = None,
     ) -> list[MatchCandidate]:
-        """Converts the frame to HSV at most once (only if hsv_gate is set) and reuses it across
-        every template. This optimization was previously only claimed in this module's docstring
-        and never actually built: each template independently re-converted its own per-candidate
-        ROI to HSV."""
+        """Convert the frame to HSV once when gating, and reuse it across templates."""
         frame_bgr = _as_bgr(frame, "frame")
         hsv_frame = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV) if hsv_gate is not None else None
 
@@ -404,20 +405,6 @@ class OpenCvTemplateMatcher:
             else [one(name) for name in template_names]
         )
         return [candidate for found in per_template for candidate in found]
-
-    def find_candidates_across_templates(
-        self,
-        frame: np.ndarray,
-        template_names: tuple[str, ...],
-        threshold: float,
-        min_distance: int,
-        hsv_gate: HsvGate | None,
-        *,
-        search_region: BoundingBox | None = None,
-    ) -> list[MatchCandidate]:
-        return self._find_candidates_across_templates(
-            frame, template_names, threshold, min_distance, hsv_gate, search_region=search_region
-        )
 
     def suppress_overlaps(
         self, candidates: list[MatchCandidate], iou_threshold: float = _DEFAULT_NMS_IOU_THRESHOLD

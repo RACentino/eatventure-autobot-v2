@@ -132,12 +132,11 @@ class PyWinCtlWindowCapture(ABC):
     def _locate_and_resize(self) -> Any:
         with self._lock:
             window = self._find()
-            self._window = window
             bounds = self._client_bounds(window)
             if (bounds.width, bounds.height) == (self._target_width, self._target_height):
                 return window
             try:
-                if getattr(window, "isMinimized", False) or getattr(window, "isMaximized", False):
+                if _flag(window, "isMinimized") or _flag(window, "isMaximized"):
                     window.restore(wait=False)
                 outer = window.box
                 frame_width = max(0, int(outer.width) - bounds.width)
@@ -165,7 +164,8 @@ class PyWinCtlWindowCapture(ABC):
     def ensure_window(self, resize: bool = False) -> None:
         with self._lock:
             if resize or self._window is None or not self._is_alive(self._window):
-                self._locate_and_resize()
+                self._window = None
+                self._window = self._locate_and_resize()
 
     def get_window_rect(self) -> WindowBounds:
         with self._lock:

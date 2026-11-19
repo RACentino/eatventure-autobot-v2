@@ -9,6 +9,7 @@ import signal
 import sys
 import threading
 import time
+from contextlib import ExitStack
 from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 from pathlib import Path
 from typing import Any
@@ -295,55 +296,56 @@ def _request_exit(_signum: int, _frame: Any) -> None:
     should_exit.set()
 
 
-def main() -> int:
+def _close_bot() -> None:
     global bot_instance
-    config = build_default_config(Path(__file__).resolve().parent.parent.parent)
-    listener = None
-    previous_handlers: dict[int, Any] = {}
-    print(
-        f"Eatventure Autobot — target: {config.window.title} "
-        f"({config.window.width}x{config.window.height})"
-    )
-    try:
-        setup_logging(config)
-        should_exit.clear()
-        toggle_requested.clear()
-        mode_toggle_requested.clear()
-        cursor_log_requested.clear()
-        with _pressed_keys_lock:
-            _pressed_keys.clear()
-        for signal_number in (signal.SIGINT, signal.SIGTERM):
-            previous_handlers[signal_number] = signal.getsignal(signal_number)
-            signal.signal(signal_number, _request_exit)
+    bot, bot_instance = bot_instance, None
+    if bot is not None:
+        bot.close()
 
+
+def _run_application(config: BotConfig) -> None:
+    global bot_instance
+    for event in (should_exit, toggle_requested, mode_toggle_requested, cursor_log_requested):
+        event.clear()
+    with _pressed_keys_lock:
+        _pressed_keys.clear()
+    with ExitStack() as cleanup:
+        for signal_number in (signal.SIGINT, signal.SIGTERM):
+            cleanup.callback(signal.signal, signal_number, signal.getsignal(signal_number))
+            signal.signal(signal_number, _request_exit)
         try:
             from pynput import keyboard
         except Exception as exc:
             raise RuntimeError(f"Cannot initialize keyboard listener: {exc}") from exc
 
         bot_instance = build_bot(config)
+        cleanup.callback(_close_bot)
         listener = keyboard.Listener(on_press=on_press, on_release=on_release)
-        listener.start()
-        logger.info("Z: prime/start/stop | M: Fast/Normal (stopped) | X: cursor | P: exit")
-        _run(config)
+        try:
+            listener.start()
+            cleanup.callback(listener.join, timeout=1)
+            logger.info("Z: prime/start/stop | M: Fast/Normal (stopped) | X: cursor | P: exit")
+            _run(config)
+        finally:
+            listener.stop()
+
+
+def main() -> int:
+    config = build_default_config(Path(__file__).resolve().parent.parent.parent)
+    print(
+        f"Eatventure Autobot — target: {config.window.title} "
+        f"({config.window.width}x{config.window.height})"
+    )
+    try:
+        setup_logging(config)
+        _run_application(config)
         return 0
     except KeyboardInterrupt:
         return 0
     except Exception:
-        logging.exception("Fatal error")
+        logger.exception("Fatal error")
         return 1
     finally:
-        for restored_signal, previous_handler in previous_handlers.items():
-            signal.signal(restored_signal, previous_handler)
-        if listener is not None:
-            listener.stop()
-            listener.join(timeout=1)
-        if bot_instance is not None:
-            try:
-                bot_instance.close()
-            except Exception:
-                logging.exception("Bot cleanup failed")
-            bot_instance = None
         shutdown_logging()
 
 

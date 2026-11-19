@@ -1,7 +1,4 @@
-"""The eleven state handlers and the helpers only they use.
-
-Moved out of bot.py unchanged; EatventureBot inherits it. What it reaches on self is declared
-at the top of the class."""
+"""Screen observations and guarded actions for each bot state."""
 
 import logging
 import math
@@ -593,17 +590,21 @@ class _HandlersMixin:
         box_search_y = self._config.capture_regions.box_search_y
         frame = self._vision.capture(max_y=box_search_y)
         self._record_box_scan()
-        thumb = _frame_thumbnail(frame)
-        previous = self._latest_thumb
-        self._scan_delta = None if previous is None else float(np.abs(thumb - previous).mean())
-        self._latest_thumb = thumb
-        # First scan after the first scroll of an idle streak. Armed once per streak, not keyed on
-        # idle_scrolls == 1: that stays 1 for the next cycle too, whose scan would overwrite it.
-        if self._streak_anchor_pending:
-            self._streak_anchor_pending = False
-            self._streak_thumb = thumb
-        if self._vision.find_new_level_button(frame).found:
+        self._update_box_scan_thumbnail(frame)
+        new_level = self._vision.find_new_level_button(frame).found
+        if new_level:
             logger.info("New level found while opening boxes")
+
+        # These crates come from purchases already made. Station spending is gated earlier.
+        boxes = [] if new_level else self._vision.find_boxes(frame)
+        if not new_level and not boxes and self._scrcpy_recovery(
+            self._config.scrcpy_recovery.box_delay
+        ):
+            frame = self._vision.capture(max_y=box_search_y)
+            new_level = self._vision.find_new_level_button(frame).found
+            if not new_level:
+                boxes = self._vision.find_boxes(frame)
+        if new_level:
             return flow.decide_open_boxes(
                 self.context,
                 self._config.upgrade_station,
@@ -611,69 +612,9 @@ class _HandlersMixin:
                 flow.BoxCycleObservation(True),
             )
 
-        # These are free crates from purchases already made. Station spending is gated earlier.
-        find_boxes = self._vision.find_boxes
-        boxes = find_boxes(frame)
-        if not boxes and self._scrcpy_recovery(self._config.scrcpy_recovery.box_delay):
-            frame = self._vision.capture(max_y=box_search_y)
-            if self._vision.find_new_level_button(frame).found:
-                return flow.decide_open_boxes(
-                    self.context,
-                    self._config.upgrade_station,
-                    self._config.scroll.max_idle_pass_attempts,
-                    flow.BoxCycleObservation(True),
-                )
-            boxes = find_boxes(frame)
-
-        if self._early_probe_pending:  # log-only: kept clear of the relaunch decision below
-            self._early_probe_pending = False
-            self._log_early_probe(frame, len(boxes))
-            # A picture to compare the alert's scan with; a store only, never a decision. Skipped
-            # when the alert is due on this very scan: it would be compared with itself.
-            if self.context.idle_scrolls > 0 and not self._stall_probe_pending:
-                self._recent_thumb = _frame_thumbnail(frame)
-
-        if self._stall_probe_pending:
-            self._stall_probe_pending = False
-            self._log_box_near_misses(frame, len(boxes))
-            alert_thumb = _frame_thumbnail(frame)
-            if self._game_looks_dead(alert_thumb):
-                return self._queue_game_recovery()
-            self._recent_thumb = alert_thumb  # the next alert compares with this scan
-
-        clickable = [box for box in boxes if self._is_clickable(box.center)]
-        self.context.box_zone_skips += len(boxes) - len(clickable)
-        cap = self._config.box.max_clicks_per_pass
-        if cap and len(clickable) > cap:
-            # See BoxDetectionConfig.max_clicks_per_pass: not a crate scene, so click nothing. The
-            # idle ladder below scrolls on, and idle_scrolls (left alone here) can arm the stall
-            # checks.
-            self.context.box_floods += 1
-            best = sorted(clickable, key=lambda box: -box.confidence)
-            logger.warning(
-                "Box flood: %d clickable matches > cap %d, none clicked (conf %.3f-%.3f; top: %s)",
-                len(clickable),
-                cap,
-                best[-1].confidence,
-                best[0].confidence,
-                [(*box.center, round(box.confidence, 3)) for box in best[:3]],
-            )
-            clickable = []
-        opened = 0
-        for index, box in enumerate(clickable):
-            if index:
-                fresh = find_boxes(self._vision.capture(max_y=box_search_y))
-                refreshed = next((item for item in fresh
-                                  if item.bounding_box.iou(box.bounding_box) > 0.2
-                                  and self._is_clickable(item.center)), None)
-                if refreshed is None:
-                    continue
-                box = refreshed
-            if self._input.click(*box.center):
-                opened += 1
-                self._recent_box_clicks.append((*box.center, box.confidence))
-            else:
-                self.context.box_click_fails += 1
+        if self._box_scan_needs_recovery(frame, len(boxes)):
+            return self._queue_game_recovery()
+        opened = self._open_visible_boxes(boxes, box_search_y)
         if opened:
             logger.info("Opened %s boxes", opened)
         trips = self.context.box_guard_trips
@@ -691,6 +632,69 @@ class _HandlersMixin:
                 [(x, y, round(conf, 3)) for x, y, conf in self._recent_box_clicks],
             )
         return next_state
+
+    def _update_box_scan_thumbnail(self, frame: np.ndarray) -> None:
+        thumb = _frame_thumbnail(frame)
+        previous = self._latest_thumb
+        self._scan_delta = None if previous is None else float(np.abs(thumb - previous).mean())
+        self._latest_thumb = thumb
+        if self._streak_anchor_pending:
+            self._streak_anchor_pending = False
+            self._streak_thumb = thumb
+
+    def _box_scan_needs_recovery(self, frame: np.ndarray, detected: int) -> bool:
+        if self._early_probe_pending:
+            self._early_probe_pending = False
+            self._log_early_probe(frame, detected)
+            # Keep an earlier comparison frame if this scan also triggers the stall probe.
+            if self.context.idle_scrolls > 0 and not self._stall_probe_pending:
+                self._recent_thumb = _frame_thumbnail(frame)
+
+        if not self._stall_probe_pending:
+            return False
+        self._stall_probe_pending = False
+        self._log_box_near_misses(frame, detected)
+        alert_thumb = _frame_thumbnail(frame)
+        if self._game_looks_dead(alert_thumb):
+            return True
+        self._recent_thumb = alert_thumb
+        return False
+
+    def _open_visible_boxes(self, boxes: list[MatchCandidate], box_search_y: int) -> int:
+        clickable = [box for box in boxes if self._is_clickable(box.center)]
+        self.context.box_zone_skips += len(boxes) - len(clickable)
+        cap = self._config.box.max_clicks_per_pass
+        if cap and len(clickable) > cap:
+            # See BoxDetectionConfig.max_clicks_per_pass: not a crate scene, so click nothing. The
+            # idle ladder below scrolls on, and idle_scrolls (left alone here) can arm the stall
+            # checks.
+            self.context.box_floods += 1
+            best = sorted(clickable, key=lambda box: -box.confidence)
+            logger.warning(
+                "Box flood: %d clickable matches > cap %d, none clicked (conf %.3f-%.3f; top: %s)",
+                len(clickable),
+                cap,
+                best[-1].confidence,
+                best[0].confidence,
+                [(*box.center, round(box.confidence, 3)) for box in best[:3]],
+            )
+            return 0
+        opened = 0
+        for index, box in enumerate(clickable):
+            if index:
+                fresh = self._vision.find_boxes(self._vision.capture(max_y=box_search_y))
+                refreshed = next((item for item in fresh
+                                  if item.bounding_box.iou(box.bounding_box) > 0.2
+                                  and self._is_clickable(item.center)), None)
+                if refreshed is None:
+                    continue
+                box = refreshed
+            if self._input.click(*box.center):
+                opened += 1
+                self._recent_box_clicks.append((*box.center, box.confidence))
+            else:
+                self.context.box_click_fails += 1
+        return opened
 
     def _handle_scroll(self) -> State:
         if self._config.strategy.enabled:
@@ -1038,82 +1042,81 @@ class _HandlersMixin:
                 targets.append(target)
         return targets
 
-    def _strategy_locate(self, frame: np.ndarray) -> State:
-        context = self.context
+    def _dismiss_station_panel(self, frame: np.ndarray) -> np.ndarray | None:
         previous_panel: BoundingBox | None = None
-        for dismissal_attempt in range(_VIEWPORT_MAX_PANEL_DISMISSALS):
+        for _ in range(_VIEWPORT_MAX_PANEL_DISMISSALS):
             if self._vision.station_panel(frame) == StationPanel.UNKNOWN:
-                break
+                return frame
             panel = self._vision.station_panel_bounds(frame)
             if panel is None:
                 raise ObservationError("Station panel bounds unavailable before localization")
             # An outside tap can select a different station instead of clearing the overlay.
-            persistent = bool(dismissal_attempt and (
-                previous_panel is None or panel is None
-                or previous_panel.iou(panel) >= _VIEWPORT_SAME_PANEL_IOU
-            ))
+            persistent = (
+                previous_panel is not None and previous_panel.iou(panel) >= _VIEWPORT_SAME_PANEL_IOU
+            )
             if not self._click_idle(panel, alternate=persistent):
-                if (context.state_attempt >= self._config.upgrade_station.search_attempts
+                if (self.context.state_attempt >= self._config.upgrade_station.search_attempts
                         and not self._stop_requested.is_set()
                         and self._input.is_target_foreground()):
                     raise ObservationError("No safe dismissal input before viewport localization")
-                return State.FIND_RED_ICONS
+                return None
             if not self._sleep(self._config.scrcpy_recovery.action_settle_delay):
-                return State.FIND_RED_ICONS
+                return None
             previous_panel = panel
             frame = self._vision.capture()
             if self._vision.station_panel(frame) == StationPanel.UNKNOWN:
                 if not self._sleep(self._config.scrcpy_recovery.action_settle_delay):
-                    return State.FIND_RED_ICONS
+                    return None
                 frame = self._vision.capture()
-        else:
-            if self._vision.station_panel(frame) != StationPanel.UNKNOWN:
-                raise _ViewportError("Station panel did not close before viewport localization")
-        if (context.strategy_anchor is not None and context.target_viewport == context.viewport
-                and context.red_icons):
-            reference = self._strategy_target_frame
-            still = (self._vision.viewport_still(reference, frame)
-                     if reference is not None else None)
-            safe_top = _MIN_STATION_TARGET_Y + self._config.red_icon.fast_min_distance
-            if (still is True and context.strategy_anchor[1] >= safe_top
-                    and self._is_clickable(context.strategy_anchor)):
-                context.current_red_icon_index = 0
-                return State.CLICK_RED_ICON
-            current_target = next((target for target in self._strategy_targets(frame)
-                if math.dist(target.center, context.strategy_anchor)
-                < self._config.red_icon.fast_min_distance), None)
-            if current_target is None:
-                if still is False:
-                    context.invalidate_viewport()
-                    context.strategy_seek = True
-                    context.strategy_scrolls = context.strategy_stationary_count = 0
-                elif still is True and self._is_clickable(context.strategy_anchor):
-                    context.current_red_icon_index = 0
-                    return State.CLICK_RED_ICON
-                elif context.state_attempt >= self._config.upgrade_station.search_attempts:
-                    raise _ViewportError(
-                        "Selected station remained unobservable; recalibrate localization"
-                    )
-                else:
-                    self._sleep(self._config.scroll.post_scroll_settle)
-                return State.FIND_RED_ICONS
-            if (current_target.center[1] < _MIN_STATION_TARGET_Y
-                    or not self._is_clickable(current_target.center)):
-                moved = self._strategy_scroll(-1)
-                return State.UPGRADE_STATS if moved is not None else State.FIND_RED_ICONS
-            self._strategy_target_frame = frame
-            context.strategy_anchor = current_target.center
-            context.red_icons = [current_target]
+        if self._vision.station_panel(frame) != StationPanel.UNKNOWN:
+            raise _ViewportError("Station panel did not close before viewport localization")
+        return frame
+
+    def _reuse_station_anchor(self, frame: np.ndarray, anchor: Point) -> State:
+        context = self.context
+        reference = self._strategy_target_frame
+        still = self._vision.viewport_still(reference, frame) if reference is not None else None
+        tolerance = self._config.red_icon.fast_min_distance
+        if (still is True and anchor[1] >= _MIN_STATION_TARGET_Y + tolerance
+                and self._is_clickable(anchor)):
             context.current_red_icon_index = 0
             return State.CLICK_RED_ICON
-        # ponytail: only confirmed arrivals reset the camera; manual resumes retain the sweep.
-        fresh_entry = (context.strategy_fresh_entry > 0
-                       and context.gameplay_phase == GameplayPhase.FIRST)
-        context.strategy_fresh_entry = context.strategy_fresh_entry - 1 if fresh_entry else 0
+        current_target = next(
+            (target for target in self._strategy_targets(frame)
+             if math.dist(target.center, anchor) < tolerance),
+            None,
+        )
+        if current_target is None:
+            if still is False:
+                context.invalidate_viewport()
+                context.strategy_seek = True
+                context.strategy_scrolls = context.strategy_stationary_count = 0
+            elif still is True and self._is_clickable(anchor):
+                context.current_red_icon_index = 0
+                return State.CLICK_RED_ICON
+            elif context.state_attempt >= self._config.upgrade_station.search_attempts:
+                raise _ViewportError(
+                    "Selected station remained unobservable; recalibrate localization"
+                )
+            else:
+                self._sleep(self._config.scroll.post_scroll_settle)
+            return State.FIND_RED_ICONS
+        if (current_target.center[1] < _MIN_STATION_TARGET_Y
+                or not self._is_clickable(current_target.center)):
+            moved = self._strategy_scroll(-1)
+            return State.UPGRADE_STATS if moved is not None else State.FIND_RED_ICONS
+        self._strategy_target_frame = frame
+        context.strategy_anchor = current_target.center
+        context.red_icons = [current_target]
+        context.current_red_icon_index = 0
+        return State.CLICK_RED_ICON
+
+    def _observe_station_targets(
+        self, frame: np.ndarray, *, fresh_entry: bool, prefer_visible: bool,
+    ) -> tuple[np.ndarray, list[MatchCandidate]] | None:
+        context = self.context
         observed_at = self._clock()
         views = [self._strategy_targets(frame)]
-        prefer_visible = (not self._config.strategy.camera_edge_checks_first
-                          and context.gameplay_phase == GameplayPhase.FIRST)
         # Two of three views reject transient effects while allowing one occluded observation.
         observe_target = (not context.strategy_seek or fresh_entry
                           or context.strategy_stationary_count >= 2
@@ -1123,28 +1126,41 @@ class _HandlersMixin:
             remaining = self._config.strategy.target_observation_interval - (
                 self._clock() - observed_at)
             if not self._sleep(max(0.0, remaining)):
-                return State.FIND_RED_ICONS
+                return None
             fresh = self._vision.capture()
             observed_at = self._clock()
             if self._vision.station_panel(fresh) != StationPanel.UNKNOWN:
-                return State.FIND_RED_ICONS
+                return None
             views.append(self._strategy_targets(fresh))
             # Identical full target sets already satisfy two observations; ambiguity uses all three.
             if len(views) == 2 and views[0] and sorted(
                 (candidate.template_name, candidate.center) for candidate in views[0]
             ) == sorted((candidate.template_name, candidate.center) for candidate in views[1]):
                 break
-        tolerance = self._config.red_icon.fast_min_distance
-        targets: list[MatchCandidate] = []
-        for index in reversed(range(len(views))):
-            for candidate in views[index]:
-                confirmed = any(other_index != index and any(
-                    math.dist(candidate.center, other.center) < tolerance for other in other_view
-                ) for other_index, other_view in enumerate(views))
-                if confirmed and not any(math.dist(candidate.center, other.center) < tolerance
-                                         for other in targets):
-                    targets.append(candidate)
-        target = flow.strategy_target(context, targets, viewport_width=frame.shape[1])
+        return fresh, flow.confirmed_station_targets(views, self._config.red_icon.fast_min_distance)
+
+    def _strategy_locate(self, frame: np.ndarray) -> State:
+        ready_frame = self._dismiss_station_panel(frame)
+        if ready_frame is None:
+            return State.FIND_RED_ICONS
+        context = self.context
+        if (context.strategy_anchor is not None and context.target_viewport == context.viewport
+                and context.red_icons):
+            return self._reuse_station_anchor(ready_frame, context.strategy_anchor)
+
+        # ponytail: only confirmed arrivals reset the camera; manual resumes retain the sweep.
+        fresh_entry = (context.strategy_fresh_entry > 0
+                       and context.gameplay_phase == GameplayPhase.FIRST)
+        context.strategy_fresh_entry = context.strategy_fresh_entry - 1 if fresh_entry else 0
+        prefer_visible = (not self._config.strategy.camera_edge_checks_first
+                          and context.gameplay_phase == GameplayPhase.FIRST)
+        observation = self._observe_station_targets(
+            ready_frame, fresh_entry=fresh_entry, prefer_visible=prefer_visible,
+        )
+        if observation is None:
+            return State.FIND_RED_ICONS
+        fresh, targets = observation
+        target = flow.strategy_target(context, targets, viewport_width=ready_frame.shape[1])
         if fresh_entry:
             if target is None:
                 context.stats_from_find = True
@@ -1153,45 +1169,16 @@ class _HandlersMixin:
             context.strategy_seek = False
             logger.info("Fresh FIRST verified across observations; skipping camera sweep")
         if (prefer_visible and context.strategy_seek and not fresh_entry and target is not None
-                and self._vision.viewport_still(frame, fresh) is not True):
+                and self._vision.viewport_still(ready_frame, fresh) is not True):
             target = None
             context.strategy_stationary_count = 0
             logger.info("Visible station camera not yet stable; continuing bounded sweep")
         if context.strategy_seek and not fresh_entry:
-            if prefer_visible and target is not None:
-                context.strategy_seek = False
-                logger.info("Stable visible %s station selected before camera sweep",
-                            context.gameplay_phase.value)
-            elif context.strategy_stationary_count >= 2:
-                context.strategy_seek = False
-                context.strategy_scrolls = 0
-                context.strategy_stationary_count = 0
-            else:
-                edge_direction = -1 if context.gameplay_phase == GameplayPhase.FIRST else 1
-                # Confirm a possible endpoint before the original sweep reverses away from it.
-                direction = (edge_direction if context.strategy_stationary_count == 1
-                             else self._strategy_sweep_direction())
-                moved = self._strategy_scroll(direction)
-                if moved is not None:
-                    context.strategy_stationary_count = (
-                        context.strategy_stationary_count + 1
-                        if not moved and direction == edge_direction else 0
-                    )
-                return State.UPGRADE_STATS if moved is not None else State.FIND_RED_ICONS
+            next_state = self._seek_station_edge(prefer_visible and target is not None)
+            if next_state is not None:
+                return next_state
         if target is None:
-            direction = 1 if context.gameplay_phase == GameplayPhase.FIRST else -1
-            moved = self._strategy_scroll(direction)
-            if moved is not None:
-                context.strategy_stationary_count = (
-                    0 if moved else context.strategy_stationary_count + 1
-                )
-                if (context.gameplay_phase == GameplayPhase.REVERSE_MIDDLE
-                        and context.strategy_stationary_count >= 2
-                        and not context.strategy_reanchored):
-                    context.strategy_reanchored = True
-                    context.strategy_seek = True
-                    context.strategy_scrolls = context.strategy_stationary_count = 0
-            return State.UPGRADE_STATS if moved is not None else State.FIND_RED_ICONS
+            return self._scroll_for_missing_station()
         if target.center[1] < _MIN_STATION_TARGET_Y or not self._is_clickable(target.center):
             # Leave room above the station for a complete Level/MAX panel below the HUD.
             moved = self._strategy_scroll(-1)
@@ -1207,6 +1194,44 @@ class _HandlersMixin:
             logger.info("Positional %s station fallback at %s; panel verification required",
                         context.gameplay_phase.value, target.center)
         return State.CLICK_RED_ICON
+
+    def _seek_station_edge(self, visible_target: bool) -> State | None:
+        context = self.context
+        if visible_target:
+            context.strategy_seek = False
+            logger.info("Stable visible %s station selected before camera sweep",
+                        context.gameplay_phase.value)
+            return None
+        if context.strategy_stationary_count >= 2:
+            context.strategy_seek = False
+            context.strategy_scrolls = context.strategy_stationary_count = 0
+            return None
+        edge_direction = -1 if context.gameplay_phase == GameplayPhase.FIRST else 1
+        # Verify a possible endpoint before the sweep reverses away from it.
+        direction = (edge_direction if context.strategy_stationary_count == 1
+                     else self._strategy_sweep_direction())
+        moved = self._strategy_scroll(direction)
+        if moved is not None:
+            context.strategy_stationary_count = (
+                context.strategy_stationary_count + 1 if not moved and direction == edge_direction
+                else 0
+            )
+        return State.UPGRADE_STATS if moved is not None else State.FIND_RED_ICONS
+
+    def _scroll_for_missing_station(self) -> State:
+        context = self.context
+        direction = 1 if context.gameplay_phase == GameplayPhase.FIRST else -1
+        moved = self._strategy_scroll(direction)
+        if moved is None:
+            return State.FIND_RED_ICONS
+        context.strategy_stationary_count = 0 if moved else context.strategy_stationary_count + 1
+        if (context.gameplay_phase == GameplayPhase.REVERSE_MIDDLE
+                and context.strategy_stationary_count >= 2
+                and not context.strategy_reanchored):
+            context.strategy_reanchored = True
+            context.strategy_seek = True
+            context.strategy_scrolls = context.strategy_stationary_count = 0
+        return State.UPGRADE_STATS
 
     def _end_unlock_sequence(self, *, completed: bool) -> None:
         """One New Level attempt is over, completed or given up: tally it against the way it was

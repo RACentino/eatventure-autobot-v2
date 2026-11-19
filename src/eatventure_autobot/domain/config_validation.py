@@ -18,6 +18,7 @@ from eatventure_autobot.domain.config import (
     ScrcpyRecoveryConfig,
     ScrollConfig,
     StatsUpgradeConfig,
+    StrategyConfig,
     TelegramConfig,
     ThresholdConfig,
     UpgradeStationConfig,
@@ -32,8 +33,8 @@ def _fraction(name: str, value: float) -> None:
 
 
 def _positive(name: str, value: float) -> None:
-    if value < 0:
-        raise ConfigError(f"{name} must be >= 0, got {value}")
+    if not isfinite(value) or value < 0:
+        raise ConfigError(f"{name} must be finite and >= 0, got {value}")
 
 
 def validate_window(config: WindowConfig) -> None:
@@ -246,6 +247,23 @@ def validate_telegram(config: TelegramConfig) -> None:
         raise ConfigError("Telegram is enabled but bot_token/chat_id are incomplete")
 
 
+def _validate_strategy(config: StrategyConfig) -> None:
+    _fraction("strategy.threshold", config.threshold)
+    _fraction("strategy.locked_threshold", config.locked_threshold)
+    _fraction("strategy.panel_threshold", config.panel_threshold)
+    _fraction("strategy.marker_threshold", config.marker_threshold)
+    _fraction("strategy.max_threshold", config.max_threshold)
+    interval = config.target_observation_interval
+    if not isfinite(interval) or interval <= 0:
+        raise ConfigError("strategy.target_observation_interval must be finite and > 0")
+    if not 0 < config.max_text_min_value < 255:
+        raise ConfigError("strategy.max_text_min_value must be between 1 and 254")
+    if config.viewport_limit < 1:
+        raise ConfigError("strategy.viewport_limit must be positive")
+    if config.enabled and not config.calibrated:
+        raise ConfigError("Strategy requires supervised MAX/non-MAX fixture calibration")
+
+
 def validate_bot_config(config: BotConfig) -> None:
     """Validates every section of config, then the cross-section checks a single section's own
     validator can't make: a config typo here wouldn't fail loudly at startup, it would just look
@@ -266,26 +284,26 @@ def validate_bot_config(config: BotConfig) -> None:
     validate_game_recovery(config.game_recovery)
     validate_resume(config.resume)
     validate_close_button(config.close_button, config.thresholds.close_button)
-    _fraction("strategy.threshold", config.strategy.threshold)
-    _fraction("strategy.locked_threshold", config.strategy.locked_threshold)
-    _fraction("strategy.panel_threshold", config.strategy.panel_threshold)
-    _fraction("strategy.marker_threshold", config.strategy.marker_threshold)
-    _fraction("strategy.max_threshold", config.strategy.max_threshold)
-    interval = config.strategy.target_observation_interval
-    if not isfinite(interval) or interval <= 0:
-        raise ConfigError("strategy.target_observation_interval must be finite and > 0")
-    if not 0 < config.strategy.max_text_min_value < 255:
-        raise ConfigError("strategy.max_text_min_value must be between 1 and 254")
-    if config.strategy.viewport_limit < 1:
-        raise ConfigError("strategy.viewport_limit must be positive")
-    if config.strategy.enabled and not config.strategy.calibrated:
-        raise ConfigError("Strategy requires supervised MAX/non-MAX fixture calibration")
+    _validate_strategy(config.strategy)
     if config.measurement.candidate and not config.strategy.enabled:
         raise ConfigError("Candidate milestones require the calibrated strategy")
     if not config.measurement.loadout.strip():
         raise ConfigError("measurement.loadout must describe the loadout or say unknown")
+    _validate_retry_budgets(config)
+    if config.capture_regions.max_search_y > config.capture_regions.extended_search_y:
+        raise ConfigError(
+            "capture_regions.max_search_y "
+            f"({config.capture_regions.max_search_y}) must be <= extended_search_y "
+            f"({config.capture_regions.extended_search_y}), or the red-icon scan area silently "
+            "shrinks"
+        )
 
+
+def _validate_retry_budgets(config: BotConfig) -> None:
     stall_timeout = config.flow_timing.state_stall_timeout_seconds
+    if stall_timeout == 0:
+        return
+    # WAIT_FOR_UNLOCK is intentionally bounded by the watchdog itself.
     bounded_retry_budgets = (
         (
             "upgrade_station.search_attempts/search_interval",
@@ -300,26 +318,11 @@ def validate_bot_config(config: BotConfig) -> None:
             "level_transition.search_attempts/search_interval",
             config.level_transition.search_attempts * config.level_transition.search_interval,
         ),
-        # level_transition.unlock_search_attempts/unlock_search_interval is deliberately excluded
-        # here: WAIT_FOR_UNLOCK's attempt cap is intentionally far larger than the stall timeout
-        # (see the field's own comment) — the watchdog, not this cap, is meant to be what ends a
-        # stuck wait, so this budget is allowed to exceed state_stall_timeout_seconds on purpose.
     )
     for name, worst_case in bounded_retry_budgets:
-        # The budget guard is meaningful only when there is a real stall budget to
-        # protect. In an all-zero timing regime (mandated zeroing), stall_timeout is 0
-        # and every worst_case is 0, so the comparison `0 >= 0` would falsely trip —
-        # the guard would forbid the very config it is supposed to sanity-check.
-        if stall_timeout > 0 and worst_case >= stall_timeout:
+        if worst_case >= stall_timeout:
             raise ConfigError(
                 f"{name}'s worst-case retry duration ({worst_case:.3f}s) must be less than "
                 f"flow_timing.state_stall_timeout_seconds ({stall_timeout}s), or the watchdog "
                 "can force-reset a state that is still legitimately retrying"
             )
-    if config.capture_regions.max_search_y > config.capture_regions.extended_search_y:
-        raise ConfigError(
-            "capture_regions.max_search_y "
-            f"({config.capture_regions.max_search_y}) must be <= extended_search_y "
-            f"({config.capture_regions.extended_search_y}), or the red-icon scan area silently "
-            "shrinks"
-        )

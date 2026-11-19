@@ -146,7 +146,7 @@ class PynputInputController:
             self._device.release(self._left_button)
         except Exception:
             logger.debug("Best-effort left-button release failed", exc_info=True)
-        finally:
+        else:
             self._left_pressed = False
 
     def release_left_button(self) -> bool:
@@ -155,6 +155,10 @@ class PynputInputController:
                 return True
             self._best_effort_left_up()
             return not self._left_pressed
+
+    def _release_before_pointer_move(self) -> None:
+        if self._left_pressed and not self.release_left_button():
+            raise InputError("Cannot move cursor after a failed left-button release")
 
     def _cursor_on_target(self, x: int, y: int) -> bool:
         tolerance = self._timing.cursor_drift_tolerance_px
@@ -167,9 +171,9 @@ class PynputInputController:
         if not self._cursor_on_target(x, y):
             logger.warning("Cursor moved before mouse press at (%s, %s)", x, y)
             return False
+        self._left_pressed = True  # A backend error can occur after sending the press.
         try:
             self._device.press(self._left_button)
-            self._left_pressed = True
         except Exception as exc:
             self._best_effort_left_up()
             raise InputError(f"Mouse press failed at ({x}, {y}): {exc}") from exc
@@ -218,6 +222,7 @@ class PynputInputController:
         check_forbidden: bool = True,
     ) -> bool:
         with self._lock:
+            self._release_before_pointer_move()
             position = self._resolve_screen_position(x, y, relative, check_forbidden)
             if position is None or not self._set_cursor_pos(*position, check_forbidden):
                 return False
@@ -231,6 +236,7 @@ class PynputInputController:
         self, x: int, y: int, relative: bool = True, delay: float | None = None
     ) -> bool:
         with self._lock:
+            self._release_before_pointer_move()
             position = self._resolve_screen_position(x, y, relative)
             if position is None or not self._set_cursor_pos(*position):
                 return False
@@ -259,6 +265,7 @@ class PynputInputController:
         check_forbidden: bool = True,
     ) -> bool:
         with self._lock:
+            self._release_before_pointer_move()
             position = self._resolve_screen_position(x, y, relative, check_forbidden)
             if position is None or not self._set_cursor_pos(*position, check_forbidden):
                 return False
@@ -296,6 +303,7 @@ class PynputInputController:
         drifts off-target or the target window loses foreground mid-hold — matches the
         upgrade-station hold behavior verified in both source repos' HOLD_UPGRADE_STATION."""
         with self._lock:
+            self._release_before_pointer_move()
             position = self._resolve_screen_position(x, y, relative)
             if position is None or not self._set_cursor_pos(*position):
                 return False
@@ -332,6 +340,7 @@ class PynputInputController:
         steps: int = 20,
     ) -> bool:
         with self._lock:
+            self._release_before_pointer_move()
             start = self._resolve_screen_position(from_x, from_y, relative)
             end = self._resolve_screen_position(to_x, to_y, relative)
             if start is None or end is None or not self._set_cursor_pos(*start):

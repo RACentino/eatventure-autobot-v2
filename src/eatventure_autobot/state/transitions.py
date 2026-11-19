@@ -424,13 +424,11 @@ def decide_wait_for_unlock(
     # Success is checked before the attempt cap below: the cap exists to bound consecutive
     # failures, not to discard a real success that happens to land on the last allowed attempt.
     if obs.unlock_found and obs.click_succeeded:
-        context.wait_for_unlock_attempts = 0
         context.reset_search_cycle()
         return State.FIND_RED_ICONS
 
     context.wait_for_unlock_attempts += 1
     if obs.unlock_greyed or context.wait_for_unlock_attempts >= config.unlock_search_attempts:
-        context.wait_for_unlock_attempts = 0
         context.reset_search_cycle()
         return State.FIND_RED_ICONS
     return State.WAIT_FOR_UNLOCK
@@ -456,6 +454,26 @@ def confirm_restaurant(context: FlowContext, start_visible: bool) -> bool:
     context.strategy_scrolls = context.strategy_stationary_count = 0
     context.strategy_reanchored = False
     return True
+
+
+def confirmed_station_targets(
+    views: list[list[MatchCandidate]], tolerance: float,
+) -> list[MatchCandidate]:
+    """Keep stations seen in multiple frames, preferring the newest coordinates."""
+    targets: list[MatchCandidate] = []
+    for index in reversed(range(len(views))):
+        for candidate in views[index]:
+            confirmed = any(
+                other_index != index and any(
+                    math.dist(candidate.center, other.center) < tolerance for other in other_view
+                )
+                for other_index, other_view in enumerate(views)
+            )
+            if confirmed and not any(
+                math.dist(candidate.center, target.center) < tolerance for target in targets
+            ):
+                targets.append(candidate)
+    return targets
 
 
 def strategy_target(

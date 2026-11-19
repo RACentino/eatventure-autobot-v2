@@ -1,8 +1,4 @@
-"""Orchestration: the assembly line. Every handler here does real I/O (capture, match, click,
-sleep), packages what it observed, and hands the decision to a pure function in state/transitions.
-No branching on flow state happens in this file that isn't delegated — if a handler starts deciding
-where to go next on its own, that logic belongs in state/transitions instead.
-"""
+"""Bot lifecycle, handler dispatch, and shared runtime guards."""
 
 import dataclasses
 import hashlib
@@ -12,6 +8,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable
+from contextlib import ExitStack
 
 import cv2
 import numpy as np
@@ -250,6 +247,44 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
         logger.error("Timed out waiting for the selected-device scrcpy window")
         return False
 
+    def _prepare_start(self, *, report: bool) -> bool:
+        if self._launcher is not None:
+            available = self._launcher.select_device() if report else self._launcher.connected()
+            if not available:
+                self._disconnect()
+                return False
+        missing = self._vision.validate_required_templates()
+        if missing:
+            logger.error("Cannot start, missing required templates: %s", ", ".join(missing))
+            return False
+        self._stop_requested.clear()
+        try:
+            if not self._prepare_mirror(report=report):
+                self._stop_requested.set()
+                return False
+            self._vision.ensure_target_ready(force=True)
+        except CaptureError as exc:
+            logger.error("Cannot start bot: %s", exc)
+            if report:
+                self._report_self_stop(f"cannot start: {exc}")
+            self._stop_requested.set()
+            return False
+        if self._launcher is not None and not self._launcher.mirror_bound():
+            logger.error("Selected-device scrcpy binding was lost before startup")
+            self._stop_requested.set()
+            return False
+        if not self._input.is_target_foreground():
+            logger.error("Cannot start: '%s' is not foreground", self._config.window.title)
+            if report:
+                self._report_self_stop("cannot start: target window is not foreground")
+            self._stop_requested.set()
+            return False
+        if (self._launcher is not None and self._config.game_recovery.enabled
+                and not self._package_probed):
+            self._package_probed = True  # package discovery is once per process
+            self._launcher.detect_package()
+        return True
+
     def start(self, *, report: bool = True) -> bool:
         """report=False is for the auto-resume retries, which must not alert on every failed try."""
         with self._step_lock:
@@ -262,42 +297,8 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
             if report:
                 self._manual_stop_requested.clear()
                 self._game_recovery_pending = False
-            if self._launcher is not None:
-                available = self._launcher.select_device() if report else self._launcher.connected()
-                if not available:
-                    self._disconnect()
-                    return False
-            missing = self._vision.validate_required_templates()
-            if missing:
-                # v1's start gate, which v2 dropped: refuse rather than run half-blind.
-                logger.error("Cannot start, missing required templates: %s", ", ".join(missing))
+            if not self._prepare_start(report=report):
                 return False
-            self._stop_requested.clear()
-            try:
-                if not self._prepare_mirror(report=report):
-                    self._stop_requested.set()
-                    return False
-                self._vision.ensure_target_ready(force=True)
-            except CaptureError as exc:
-                logger.error("Cannot start bot: %s", exc)
-                if report:
-                    self._report_self_stop(f"cannot start: {exc}")
-                self._stop_requested.set()
-                return False
-            if self._launcher is not None and not self._launcher.mirror_bound():
-                logger.error("Selected-device scrcpy binding was lost before startup")
-                self._stop_requested.set()
-                return False
-            if not self._input.is_target_foreground():
-                logger.error("Cannot start: '%s' is not foreground", self._config.window.title)
-                if report:
-                    self._report_self_stop("cannot start: target window is not foreground")
-                self._stop_requested.set()
-                return False
-            if (self._launcher is not None and self._config.game_recovery.enabled
-                    and not self._package_probed):
-                self._package_probed = True  # package discovery is once per process
-                self._launcher.detect_package()
             phase = GameplayPhase.FIRST if report else self.context.gameplay_phase
             if self._manual_stop_requested.is_set() or self._stop_requested.is_set():
                 return False
@@ -353,13 +354,14 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
             self._notifier.notify_bot_stopped()
 
     def close(self) -> None:
-        self.stop()
-        if self._progress is not None:
-            self._progress.close()
-        self._notifier.close()
-        self._vision.close()
-        if self._launcher is not None:
-            self._launcher.close()
+        with ExitStack() as cleanup:
+            if self._launcher is not None:
+                cleanup.callback(self._launcher.close)
+            cleanup.callback(self._vision.close)
+            cleanup.callback(self._notifier.close)
+            if self._progress is not None:
+                cleanup.callback(self._progress.close)
+            self.stop()
 
     def set_event_forbidden_zone(self, zone: Zone) -> None:
         self._input.set_event_forbidden_zone(zone)
@@ -396,38 +398,8 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
             if self._dismiss_popup():
                 return True  # a popup was closed this step; the handler runs on the next one
 
-            previous_state = self.state
-            started = time.monotonic()
-            next_state = self._handlers[previous_state]()
-            self._state_seconds[previous_state] += time.monotonic() - started
-            self._state_calls[previous_state] += 1
-            self._last_handled_state = previous_state
-            if previous_state in X_LOCKED_STATES:
-                # Hard-lock layer 2: any New Level step (attempt, miss or completion) keeps the X
-                # rule off afterwards, so a dialog still open when control returns is left to it.
-                self._close_level_lock_until = max(
-                    self._close_level_lock_until,
-                    time.monotonic() + self._config.close_button.new_level_lock_seconds,
-                )
-            # v1's StateMachine.update() contract: a handler must return a State, and anything
-            # else fails loudly (caught below -> stop) instead of being committed as flow state.
-            if not isinstance(next_state, State):
-                raise RuntimeError(f"{previous_state.name} handler returned {next_state!r}")
-            if not self.running:
-                return False
-            if next_state != previous_state:
-                logger.debug("State %s -> %s", previous_state.name, next_state.name)
-
-            self.context.state_attempt = (
-                self.context.state_attempt + 1 if next_state == previous_state else 1
-            )
-            self.state = next_state
-            self._apply_watchdog(next_state)
-            self._maybe_log_metrics()
-            if self._progress is not None:
-                self._progress.checkpoint()
-            return True
-        except (ObservationError, WindowNotAvailableError, CaptureError) as exc:
+            return self._run_state_handler()
+        except (ObservationError, CaptureError) as exc:
             if isinstance(exc, ObservationError):
                 logger.warning(
                     "Screen observation unavailable; scheduling localization retry: %s", exc
@@ -449,6 +421,35 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
             return False
         finally:
             self._step_lock.release()
+
+    def _run_state_handler(self) -> bool:
+        previous_state = self.state
+        started = time.monotonic()
+        next_state = self._handlers[previous_state]()
+        self._state_seconds[previous_state] += time.monotonic() - started
+        self._state_calls[previous_state] += 1
+        self._last_handled_state = previous_state
+        if previous_state in X_LOCKED_STATES:
+            # Avoid dismissing a restaurant dialog that still owns the next UI action.
+            self._close_level_lock_until = max(
+                self._close_level_lock_until,
+                time.monotonic() + self._config.close_button.new_level_lock_seconds,
+            )
+        if not isinstance(next_state, State):
+            raise RuntimeError(f"{previous_state.name} handler returned {next_state!r}")
+        if not self.running:
+            return False
+        if next_state != previous_state:
+            logger.debug("State %s -> %s", previous_state.name, next_state.name)
+        self.context.state_attempt = (
+            self.context.state_attempt + 1 if next_state == previous_state else 1
+        )
+        self.state = next_state
+        self._apply_watchdog(next_state)
+        self._maybe_log_metrics()
+        if self._progress is not None:
+            self._progress.checkpoint()
+        return True
 
     # --- shared helpers -------------------------------------------------------------------
 

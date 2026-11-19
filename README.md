@@ -110,8 +110,8 @@ not confirmed. These results do not establish a complete-city average or 48/72-h
 
 `BotConfig` (`src/eatventure_autobot/domain/config.py`) holds all calibration as validated, frozen
 dataclasses: thresholds, HSV gates, timings, click targets, capture regions, scroll behaviour and
-forbidden zones. Values are validated on construction, so a bad threshold fails loudly at startup
-rather than silently degrading detection.
+forbidden zones. The application validates these settings in its configuration factory at startup.
+Call `validate_bot_config` after constructing a custom configuration.
 
 Telegram notifications (start/stop/level-complete) are optional and credentials come only from the
 environment — never commit a token:
@@ -135,9 +135,9 @@ Built bottom-up, each layer depending only on the one beneath it:
 | Modules | `capture/`, `input/`, `detection/`, `notifier/`, `resilience/`, `state/` | Isolated engines: per-platform capture, `pynput` input, the OpenCV matcher, Telegram, the stall watchdog, and the pure per-state decision functions |
 | Orchestration | `runtime/`, `main.py` | `GameVision` (semantic screen reads), `EatventureBot` (handlers and step loop), and the composition root |
 
-The state machine's decision logic is deliberately pure: handlers in `runtime/bot.py` perform all
-I/O, then hand an observation to a function in `state/transitions.py` that decides the next state
-and updates flow counters. That split is what makes the FSM testable without a screen or a mouse.
+`runtime/bot.py` manages the bot lifecycle and dispatches states. Handlers in
+`runtime/_handlers.py` perform capture and input work. The decision functions in
+`state/transitions.py` accept observations and update flow state without hardware.
 
 Ordinary state stalls reset the search flow; restaurant-arrival confirmation has its own loading
 deadline. Known screen-observation failures (including persistent UNKNOWN station panels)
