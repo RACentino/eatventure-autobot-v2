@@ -238,10 +238,8 @@ class _HandlersMixin:
             )
 
         if self._config.strategy.enabled:
-            if self._vision.new_level_icon_seen(frame):
-                return flow.decide_find_red_icons(
-                    self.context, flow.RedIconScanObservation(False, True, ())
-                )
+            if (renovation := self._candidate_renovation_footer(frame)) is not None:
+                return renovation
             return self._handle_strategy_find(frame)
 
         candidates = self._vision.find_red_icons(frame)
@@ -272,6 +270,13 @@ class _HandlersMixin:
             self.context, flow.RedIconScanObservation(False, new_level_seen, clickable)
         )
 
+    def _candidate_renovation_footer(self, frame: np.ndarray) -> State | None:
+        if self._config.strategy.enabled and self._vision.new_level_icon_seen(frame):
+            return flow.decide_find_red_icons(
+                self.context, flow.RedIconScanObservation(False, True, ())
+            )
+        return None
+
     def _handle_click_red_icon(self) -> State:
         target = flow.current_red_icon_target(self.context)
         if target is None:
@@ -301,6 +306,14 @@ class _HandlersMixin:
             region = self._vision.station_panel_bounds(frame)
         result = (self._vision.find_unlock_button(frame, search_region=region)
                   if self._config.strategy.enabled else self._vision.find_unlock_button(frame))
+        if result.best is None and region is not None:
+            position = self._clickable_upgrade(frame, self._config.thresholds.upgrade_station)
+            if position is not None:
+                return flow.decide_search_upgrade_station(
+                    self.context,
+                    self._config.upgrade_station,
+                    flow.UpgradeStationSearchObservation(True, position, 1),
+                )
         if result.best is None or not self._is_clickable(result.best.center):
             return flow.decide_check_unlock(False, None)
         clicked = self._input.click(*result.best.center)
@@ -321,10 +334,7 @@ class _HandlersMixin:
             if panel != StationPanel.AFFORDABLE:
                 self.context.stats_from_find = True
                 return State.UPGRADE_STATS
-        candidates = self._vision.find_upgrade_station_candidates(frame, threshold)
-        # v1 picks the first candidate that isn't in a forbidden zone, not necessarily the
-        # highest-confidence one — so a blocked best match doesn't hide a usable second one.
-        position = next((c.center for c in candidates if self._is_clickable(c.center)), None)
+        position = self._clickable_upgrade(frame, threshold)
         found = position is not None
         # Verified v1: no scrcpy-recovery delay in the search itself (only the hold monitor has
         # one), and no sleep before giving up on the last attempt.
@@ -335,6 +345,10 @@ class _HandlersMixin:
             station,
             flow.UpgradeStationSearchObservation(found, position, attempt),
         )
+
+    def _clickable_upgrade(self, frame: np.ndarray, threshold: float) -> Point | None:
+        candidates = self._vision.find_upgrade_station_candidates(frame, threshold)
+        return next((c.center for c in candidates if self._is_clickable(c.center)), None)
 
     def _handle_hold_upgrade_station(self) -> State:
         station = self._config.upgrade_station
@@ -455,20 +469,10 @@ class _HandlersMixin:
             return None
         return second
 
-    def _station_disappeared(self, threshold: float, position: Point) -> bool:
-        """One poll tick's verdict. Verified v1 (_find_current_upgrade_hold_match): a first miss
-        is only believed after one delayed scrcpy-recovery re-check, so a single dropped frame
-        doesn't end the hold. Recovery disabled or its sleep interrupted means gone, as in v1.
-        Debouncing across consecutive ticks is the caller's job (_make_disappearance_check)."""
-        if self._station_seen_near(threshold, position):
-            return False
-        if not self._scrcpy_recovery(self._config.scrcpy_recovery.upgrade_delay):
-            return True
-        return not self._station_seen_near(threshold, position)
-
-    def _station_seen_near(self, threshold: float, position: Point) -> bool:
-        """Single capture+check at the relaxed threshold (the same leniency used for later
-        verification attempts).
+    def _station_seen_near(
+        self, frame: np.ndarray, threshold: float, position: Point,
+    ) -> bool:
+        """Check the current frame at the relaxed verification threshold.
 
         A match is only accepted if it's near `position` (the position we're actually holding).
         Live-verified this matters: at the relaxed threshold, once the real station's popup
@@ -479,7 +483,6 @@ class _HandlersMixin:
         position catches this regardless of where the false positive happens to appear, without
         assuming the real popup is confined to any particular screen region."""
         station = self._config.upgrade_station
-        frame = self._vision.capture(max_y=self._config.capture_regions.upgrade_station_search_y)
         tolerance = station.disappear_position_tolerance_px
         region = BoundingBox(
             position[0] - tolerance, position[1] - tolerance,
@@ -510,12 +513,33 @@ class _HandlersMixin:
         """Requires `required_misses` CONSECUTIVE misses before treating the station as gone —
         debounces a single flaky/transient miss so a real hold isn't cut short by one bad frame."""
         misses = 0
+        visible_view: tuple[np.ndarray, bool] | None = None
+
+        def station_seen() -> bool:
+            nonlocal visible_view
+            frame = self._vision.capture(
+                max_y=self._config.capture_regions.upgrade_station_search_y,
+            )
+            if not self._config.strategy.enabled:
+                return self._station_seen_near(frame, threshold, position)
+            fast_mode = self._vision.fast_red_icon_mode
+            if (visible_view is not None and visible_view[1] == fast_mode
+                    and visible_view[0].dtype == frame.dtype
+                    and np.array_equal(visible_view[0], frame)):
+                return True
+            found = self._station_seen_near(frame, threshold, position)
+            # Keep one verified view per hold. Copy it because captures can reuse their buffer.
+            visible_view = (frame.copy(), fast_mode) if found else None
+            return found
 
         def check() -> bool:
             nonlocal misses
             if not self._device_available():
                 return True
-            gone = self._station_disappeared(threshold, position)
+            gone = not station_seen() and (
+                not self._scrcpy_recovery(self._config.scrcpy_recovery.upgrade_delay)
+                or not station_seen()
+            )
             misses = misses + 1 if gone else 0
             return misses >= max(1, required_misses)
 
@@ -536,6 +560,8 @@ class _HandlersMixin:
             return flow.decide_upgrade_stats(
                 self.context, flow.StatsIconObservation(True, False, from_find)
             )
+        if (renovation := self._candidate_renovation_footer(frame)) is not None:
+            return renovation
 
         stats_seen = self._vision.stats_icon_seen(frame)
         if not stats_seen:
@@ -594,6 +620,8 @@ class _HandlersMixin:
         new_level = self._vision.find_new_level_button(frame).found
         if new_level:
             logger.info("New level found while opening boxes")
+        elif (renovation := self._candidate_renovation_footer(frame)) is not None:
+            return renovation
 
         # These crates come from purchases already made. Station spending is gated earlier.
         boxes = [] if new_level else self._vision.find_boxes(frame)
@@ -603,6 +631,8 @@ class _HandlersMixin:
             frame = self._vision.capture(max_y=box_search_y)
             new_level = self._vision.find_new_level_button(frame).found
             if not new_level:
+                if (renovation := self._candidate_renovation_footer(frame)) is not None:
+                    return renovation
                 boxes = self._vision.find_boxes(frame)
         if new_level:
             return flow.decide_open_boxes(
@@ -614,7 +644,7 @@ class _HandlersMixin:
 
         if self._box_scan_needs_recovery(frame, len(boxes)):
             return self._queue_game_recovery()
-        opened = self._open_visible_boxes(boxes, box_search_y)
+        opened, renovation = self._open_visible_boxes(boxes, box_search_y)
         if opened:
             logger.info("Opened %s boxes", opened)
         trips = self.context.box_guard_trips
@@ -624,6 +654,8 @@ class _HandlersMixin:
             self._config.scroll.max_idle_pass_attempts,
             flow.BoxCycleObservation(False, opened, after_scroll),
         )
+        if renovation is not None:
+            return renovation
         if self.context.box_guard_trips != trips:
             logger.warning(
                 "Box loop guard: %s box passes without a scroll or upgrade; forcing a scroll. "
@@ -660,7 +692,9 @@ class _HandlersMixin:
         self._recent_thumb = alert_thumb
         return False
 
-    def _open_visible_boxes(self, boxes: list[MatchCandidate], box_search_y: int) -> int:
+    def _open_visible_boxes(
+        self, boxes: list[MatchCandidate], box_search_y: int,
+    ) -> tuple[int, State | None]:
         clickable = [box for box in boxes if self._is_clickable(box.center)]
         self.context.box_zone_skips += len(boxes) - len(clickable)
         cap = self._config.box.max_clicks_per_pass
@@ -678,11 +712,14 @@ class _HandlersMixin:
                 best[0].confidence,
                 [(*box.center, round(box.confidence, 3)) for box in best[:3]],
             )
-            return 0
+            return 0, None
         opened = 0
         for index, box in enumerate(clickable):
             if index:
-                fresh = self._vision.find_boxes(self._vision.capture(max_y=box_search_y))
+                frame = self._vision.capture(max_y=box_search_y)
+                if (renovation := self._candidate_renovation_footer(frame)) is not None:
+                    return opened, renovation
+                fresh = self._vision.find_boxes(frame)
                 refreshed = next((item for item in fresh
                                   if item.bounding_box.iou(box.bounding_box) > 0.2
                                   and self._is_clickable(item.center)), None)
@@ -694,7 +731,7 @@ class _HandlersMixin:
                 self._recent_box_clicks.append((*box.center, box.confidence))
             else:
                 self.context.box_click_fails += 1
-        return opened
+        return opened, None
 
     def _handle_scroll(self) -> State:
         if self._config.strategy.enabled:
@@ -751,6 +788,7 @@ class _HandlersMixin:
         if not self._sleep(self._config.flow_timing.focus_settle_delay):
             return State.CHECK_NEW_LEVEL
 
+        candidate_checked_open = False
         if not self.context.new_level_red_icon_verified:
             if not self._perform_new_level_verification_scroll():
                 logger.warning("Failed to perform verification scroll for new level red icon")
@@ -758,9 +796,17 @@ class _HandlersMixin:
                     self.context,
                     flow.NewLevelVerificationObservation(False, None, None, scroll_succeeded=False),
                 )
-            frame = self._vision.capture(max_y=self._config.capture_regions.extended_search_y)
-            candidates = self._vision.find_red_icons(frame)
-            _, verified, _ = self._vision.split_red_icons(candidates)
+            if self._config.strategy.enabled:
+                frame = self._vision.capture()
+                if self._vision.restaurant_start(frame):
+                    return State.TRANSITION_LEVEL
+                candidate_checked_open = True
+                verified = self._vision.new_level_icon_seen(
+                    frame[: self._config.capture_regions.extended_search_y]
+                )
+            else:
+                frame = self._vision.capture(max_y=self._config.capture_regions.extended_search_y)
+                _, verified, _ = self._vision.split_red_icons(self._vision.find_red_icons(frame))
             if not verified:
                 return flow.decide_check_new_level(
                     self.context, flow.NewLevelVerificationObservation(False, None, None)
@@ -769,7 +815,7 @@ class _HandlersMixin:
         targets = self._config.click_targets
         level = self._config.level_transition
         # An Open dialog belongs to a restaurant already reached, including at startup.
-        if self._vision.restaurant_start(self._vision.capture()):
+        if not candidate_checked_open and self._vision.restaurant_start(self._vision.capture()):
             return State.TRANSITION_LEVEL
         button_ok = self._input.click(*targets.new_level_button_pos)
         if button_ok and not self._sleep(level.confirmation_delay):
@@ -1113,36 +1159,62 @@ class _HandlersMixin:
 
     def _observe_station_targets(
         self, frame: np.ndarray, *, fresh_entry: bool, prefer_visible: bool,
-    ) -> tuple[np.ndarray, list[MatchCandidate]] | None:
+    ) -> tuple[np.ndarray, list[MatchCandidate]] | State | None:
         context = self.context
+        can_confirm = (
+            not context.strategy_seek or fresh_entry or context.strategy_stationary_count >= 2
+        )
+        if not can_confirm and not prefer_visible:
+            return frame, []
+
         observed_at = self._clock()
         views = [self._strategy_targets(frame)]
+        if not can_confirm and not views[0]:
+            return frame, []
+
         # Two of three views reject transient effects while allowing one occluded observation.
-        observe_target = (not context.strategy_seek or fresh_entry
-                          or context.strategy_stationary_count >= 2
-                          or (prefer_visible and bool(views[0])))
         fresh = frame
-        for _ in range(2 if observe_target else 0):
+        for _ in range(2):
             remaining = self._config.strategy.target_observation_interval - (
                 self._clock() - observed_at)
             if not self._sleep(max(0.0, remaining)):
                 return None
             fresh = self._vision.capture()
             observed_at = self._clock()
+            if (renovation := self._candidate_renovation_footer(fresh)) is not None:
+                return renovation
             if self._vision.station_panel(fresh) != StationPanel.UNKNOWN:
                 return None
             views.append(self._strategy_targets(fresh))
-            # Identical full target sets already satisfy two observations; ambiguity uses all three.
-            if len(views) == 2 and views[0] and sorted(
+            if len(views) != 2 or not views[0]:
+                continue
+            if sorted(
                 (candidate.template_name, candidate.center) for candidate in views[0]
             ) == sorted((candidate.template_name, candidate.center) for candidate in views[1]):
                 break
+            if context.gameplay_phase == GameplayPhase.LAST:
+                # Changes in other stations need no extra scan if LAST itself agrees in both.
+                width = frame.shape[1]
+                earlier, latest = (
+                    flow.strategy_target(context, view, viewport_width=width) for view in views
+                )
+                if (earlier is not None and latest is not None
+                        and (earlier.center, earlier.template_name)
+                        == (latest.center, latest.template_name)):
+                    confirmed = flow.confirmed_station_targets(
+                        views, self._config.red_icon.fast_min_distance,
+                    )
+                    if flow.strategy_target(context, confirmed, viewport_width=width) == latest:
+                        return fresh, confirmed
         return fresh, flow.confirmed_station_targets(views, self._config.red_icon.fast_min_distance)
 
     def _strategy_locate(self, frame: np.ndarray) -> State:
         ready_frame = self._dismiss_station_panel(frame)
         if ready_frame is None:
             return State.FIND_RED_ICONS
+        if (ready_frame is not frame
+                and (renovation := self._candidate_renovation_footer(ready_frame)) is not None):
+            return renovation
         context = self.context
         if (context.strategy_anchor is not None and context.target_viewport == context.viewport
                 and context.red_icons):
@@ -1159,6 +1231,8 @@ class _HandlersMixin:
         )
         if observation is None:
             return State.FIND_RED_ICONS
+        if isinstance(observation, State):
+            return observation
         fresh, targets = observation
         target = flow.strategy_target(context, targets, viewport_width=ready_frame.shape[1])
         if fresh_entry:

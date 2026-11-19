@@ -54,7 +54,10 @@ FLOW_REVISION = (
     "neutral-idle-v1; two-frame-targets-v1; viewport-mirror-first-v1; phone-progress-proof-v1; "
     "visual-manual-reconstruction-v1; rightmost-column-last-v2; protected-station-reframe-v1; "
     "observation-recovery-v1; footer-only-find-v1; candidate-no-drag-handoff-v1; "
-    "scroll-pause-observation-v1; known-lock-stats-v1; narrow-terminal-row-v1"
+    "scroll-pause-observation-v1; known-lock-stats-v1; narrow-terminal-row-v1; "
+    "edge-gated-station-matching-v1; bounded-renovation-verification-v1; "
+    "consistent-last-two-views-v1; economy-footer-preemption-v1; "
+    "open-upgrade-handoff-v1; repeat-hold-observation-v1; shared-renovation-frame-v1"
 )
 
 
