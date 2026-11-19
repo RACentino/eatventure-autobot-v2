@@ -2,6 +2,8 @@
 that used to live in a dataclass __post_init__ lives here instead, called explicitly by whoever
 constructs a config (see runtime/config_factory.py for the app's own construction path)."""
 
+from math import isfinite
+
 from eatventure_autobot.domain.config import (
     BotConfig,
     BoxDetectionConfig,
@@ -159,9 +161,12 @@ def validate_stats_upgrade(config: StatsUpgradeConfig) -> None:
     _positive("click_delay", config.click_delay)
     _positive("mouse_down_duration", config.mouse_down_duration)
     _positive("mouse_up_duration", config.mouse_up_duration)
+    _positive("panel_ready_timeout", config.panel_ready_timeout)
 
 
 def validate_level_transition(config: LevelTransitionConfig, unlock_threshold: float) -> None:
+    if config.confirmation_timeout <= 0:
+        raise ConfigError("level_transition.confirmation_timeout must be positive")
     for name in ("search_attempts", "unlock_search_attempts"):
         if getattr(config, name) < 1:
             raise ConfigError(f"{name} must be >= 1, got {getattr(config, name)}")
@@ -207,6 +212,8 @@ def validate_close_button(config: CloseButtonConfig, threshold: float) -> None:
 
 
 def validate_game_recovery(config: GameRecoveryConfig) -> None:
+    if config.stale_after_seconds <= 0:
+        raise ConfigError("game_recovery.stale_after_seconds must be positive")
     if config.static_frame_delta <= 0:
         raise ConfigError(f"static_frame_delta must be > 0, got {config.static_frame_delta}")
     if config.static_recent_delta <= 0:
@@ -230,8 +237,8 @@ def validate_resume(config: ResumeConfig) -> None:
         raise ConfigError(f"resume.check_seconds must be > 0, got {config.check_seconds}")
     if config.idle_seconds < 0:
         raise ConfigError(f"resume.idle_seconds must be >= 0, got {config.idle_seconds}")
-    if config.max_attempts < 1:
-        raise ConfigError(f"resume.max_attempts must be >= 1, got {config.max_attempts}")
+    if config.max_attempts < 0:
+        raise ConfigError(f"resume.max_attempts must be >= 0, got {config.max_attempts}")
 
 
 def validate_telegram(config: TelegramConfig) -> None:
@@ -259,6 +266,24 @@ def validate_bot_config(config: BotConfig) -> None:
     validate_game_recovery(config.game_recovery)
     validate_resume(config.resume)
     validate_close_button(config.close_button, config.thresholds.close_button)
+    _fraction("strategy.threshold", config.strategy.threshold)
+    _fraction("strategy.locked_threshold", config.strategy.locked_threshold)
+    _fraction("strategy.panel_threshold", config.strategy.panel_threshold)
+    _fraction("strategy.marker_threshold", config.strategy.marker_threshold)
+    _fraction("strategy.max_threshold", config.strategy.max_threshold)
+    interval = config.strategy.target_observation_interval
+    if not isfinite(interval) or interval <= 0:
+        raise ConfigError("strategy.target_observation_interval must be finite and > 0")
+    if not 0 < config.strategy.max_text_min_value < 255:
+        raise ConfigError("strategy.max_text_min_value must be between 1 and 254")
+    if config.strategy.viewport_limit < 1:
+        raise ConfigError("strategy.viewport_limit must be positive")
+    if config.strategy.enabled and not config.strategy.calibrated:
+        raise ConfigError("Strategy requires supervised MAX/non-MAX fixture calibration")
+    if config.measurement.candidate and not config.strategy.enabled:
+        raise ConfigError("Candidate milestones require the calibrated strategy")
+    if not config.measurement.loadout.strip():
+        raise ConfigError("measurement.loadout must describe the loadout or say unknown")
 
     stall_timeout = config.flow_timing.state_stall_timeout_seconds
     bounded_retry_budgets = (

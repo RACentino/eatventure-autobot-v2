@@ -5,7 +5,7 @@ from collections.abc import Callable
 from typing import Any, Protocol
 
 from eatventure_autobot.domain.config import InputTimingConfig
-from eatventure_autobot.domain.errors import InputError
+from eatventure_autobot.domain.errors import CaptureError, InputError
 from eatventure_autobot.domain.protocols import ScreenCapture
 from eatventure_autobot.domain.types import Point, WindowBounds, Zone
 
@@ -70,6 +70,9 @@ class PynputInputController:
     def _window_bounds(self) -> WindowBounds:
         try:
             return self._capture.get_window_rect()
+        except CaptureError:
+            self.release_left_button()
+            raise
         except Exception as exc:
             raise InputError(f"Cannot read target window bounds: {exc}") from exc
 
@@ -262,13 +265,21 @@ class PynputInputController:
             if not self._wait(self._timing.move_delay):
                 return False
             end_time = time.monotonic() + max(0.0, duration)
+            tap_duration = (_clamped_duration(down_duration, self._timing.mouse_down_duration)
+                            + _clamped_duration(up_duration, self._timing.mouse_up_duration))
             click_count = 0
-            while time.monotonic() < end_time:
+            while (remaining := end_time - time.monotonic()) > 0 and remaining >= tap_duration:
                 if not self._left_click_at(*position, down_duration, up_duration):
                     return False
                 click_count += 1
-                if not self._wait(max(0.001, click_delay)):
+                remaining = end_time - time.monotonic()
+                if remaining <= 0:
+                    break
+                if not self._wait(min(max(0.001, click_delay), remaining)):
                     return False
+            remaining = end_time - time.monotonic()
+            if click_count and remaining > 0 and not self._wait(remaining):
+                return False
             return click_count > 0 and self._wait(self._timing.click_delay)
 
     def hold_at(

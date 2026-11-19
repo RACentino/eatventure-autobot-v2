@@ -5,6 +5,7 @@ from typing import Protocol
 import numpy as np
 
 from eatventure_autobot.domain.types import (
+    BoundingBox,
     HsvGate,
     MatchCandidate,
     MatchResult,
@@ -16,6 +17,10 @@ from eatventure_autobot.domain.types import (
 
 
 class ScreenCapture(Protocol):
+    def mirror_windows(self) -> list[tuple[int, bool]]: ...
+
+    def bind_mirror(self, process_id: int) -> None: ...
+
     def ensure_window(self, resize: bool = False) -> None: ...
 
     def get_window_rect(self) -> WindowBounds: ...
@@ -99,6 +104,7 @@ class TemplateMatcher(Protocol):
         template_name: str,
         threshold: float,
         hsv_gate: HsvGate | None = None,
+        search_region: BoundingBox | None = None,
     ) -> MatchResult: ...
 
     def explain_template(
@@ -112,6 +118,8 @@ class TemplateMatcher(Protocol):
         threshold: float,
         min_distance: int = 15,
         hsv_gate: HsvGate | None = None,
+        *,
+        search_region: BoundingBox | None = None,
     ) -> list[MatchCandidate]: ...
 
     def find_candidates_across_templates(
@@ -121,6 +129,8 @@ class TemplateMatcher(Protocol):
         threshold: float,
         min_distance: int,
         hsv_gate: HsvGate | None,
+        *,
+        search_region: BoundingBox | None = None,
     ) -> list[MatchCandidate]: ...
 
     def suppress_overlaps(

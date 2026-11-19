@@ -7,6 +7,7 @@ via reset_run)."""
 from collections import deque
 from dataclasses import dataclass, field
 
+from eatventure_autobot.domain.state import GameplayPhase
 from eatventure_autobot.domain.types import MatchCandidate, Point
 
 # Verified from both repos' red-icon priority bookkeeping: remember at most 24 productive rows,
@@ -35,6 +36,23 @@ def _recent() -> deque[int]:
 
 @dataclass
 class FlowContext:
+    gameplay_phase: GameplayPhase = GameplayPhase.FIRST
+    viewport: int = 0
+    target_viewport: int | None = None
+    strategy_seek: bool = True
+    strategy_fresh_entry: int = 0  # remaining localization probes at a confirmed arrival
+    strategy_scrolls: int = 0
+    strategy_stationary_count: int = 0
+    strategy_reanchored: bool = False
+    strategy_waiting_liveness: bool = False
+    strategy_unknown_panels: int = 0
+    strategy_anchor: Point | None = None
+    maxed_positions: set[Point] = field(default_factory=set)
+    transition_pending: bool = False
+    transition_departed: bool = False
+    transition_confirmations: int = 0
+    transition_started: float = 0.0
+    city_seen: bool = False
     red_icons: list[MatchCandidate] = field(default_factory=list)
     current_red_icon_index: int = 0
     successful_red_icon_rows: deque[int] = field(
@@ -100,8 +118,8 @@ class FlowContext:
     # Milliseconds between consecutive OPEN_BOXES captures (the last 500): the time crates, which
     # last under 3 s, can come and go unseen. Diagnostics only.
     box_gap_ms: deque[int] = field(default_factory=_recent)
-    # New Level attempts (diagnostics only, see EatventureBot._handle_wait_for_unlock): nl_route is
-    # how the current WAIT_FOR_UNLOCK sequence was entered ("footer" badge or the "open" button),
+    # New Level attempts (diagnostics only): nl_route identifies renovation confirmation
+    # ("footer") or the new restaurant's initial Open/Unlock sequence ("open").
     # nl_attempts / nl_done the finished sequences and the completions per route. unlock_ms is when
     # the Unlock dialog first showed during the first try's settle (the last 500), unlock_never how
     # many first tries never showed it; nl_greyed_exits the sequences cut short on a greyed button.
@@ -150,6 +168,15 @@ class FlowContext:
             return
         self.successful_red_icon_rows.append(y)
 
+    def invalidate_viewport(self) -> None:
+        self.viewport += 1
+        self.target_viewport = None
+        self.strategy_anchor = None
+        self.red_icons.clear()
+        self.maxed_positions.clear()
+        self.upgrade_station_pos = None
+        self.successful_red_icon_rows.clear()
+
     def reset_search_cycle(self) -> None:
         """Verified transcription of _reset_search_cycle(): the search-flow reset only. It
         deliberately leaves work_done, red_icons and the upgrade flags alone — upgrade_station_pos
@@ -186,6 +213,9 @@ class FlowContext:
         self.upgrade_found_in_cycle = False
         self.work_done = False
         self.consecutive_failed_upgrade_searches = 0
+        self.strategy_unknown_panels = 0
+        self.strategy_reanchored = False
+        self.strategy_fresh_entry = 0
         self.idle_scrolls = 0
         self.state_attempt = 1
 

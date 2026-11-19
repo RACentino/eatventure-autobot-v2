@@ -7,18 +7,26 @@ where to go next on its own, that logic belongs in state/transitions instead.
 import dataclasses
 import hashlib
 import logging
+import math
 import threading
 import time
 from collections import deque
 from collections.abc import Callable
 
+import cv2
 import numpy as np
 
 from eatventure_autobot.domain.config import BotConfig
-from eatventure_autobot.domain.errors import CaptureError, WindowNotAvailableError
+from eatventure_autobot.domain.errors import CaptureError, ObservationError, WindowNotAvailableError
 from eatventure_autobot.domain.protocols import InputController, Notifier
-from eatventure_autobot.domain.state import X_LOCKED_STATES, State
-from eatventure_autobot.domain.types import Point, Zone
+from eatventure_autobot.domain.state import (
+    X_LOCKED_STATES,
+    GameplayPhase,
+    PauseReason,
+    State,
+    StationPanel,
+)
+from eatventure_autobot.domain.types import BoundingBox, Point, Zone
 from eatventure_autobot.resilience.watchdog import StallWatchdog
 from eatventure_autobot.runtime._handlers import _HandlersMixin
 from eatventure_autobot.runtime._recovery import _RecoveryMixin
@@ -32,17 +40,23 @@ from eatventure_autobot.runtime._telemetry import (  # noqa: F401  (re-exported:
     _top_close_position,
 )
 from eatventure_autobot.runtime.game_recovery import GameLauncher
+from eatventure_autobot.runtime.progress import ProgressLedger
 from eatventure_autobot.runtime.vision import GameVision
 from eatventure_autobot.state.context import FlowContext
 
 logger = logging.getLogger(__name__)
+# The calibrated panel touch area extends beyond its visible/template bounds.
+_IDLE_PANEL_PADDING_PX = 30
 
 
 # Names the state flow in effect. Bump it when the flow changes without a config change: the
 # fingerprint below hashes config only, so metrics lines from before and after would otherwise
 # carry the same cfg= id and could not be told apart.
 FLOW_REVISION = (
-    "no-work: FIND>STATS>OPEN>SCROLL>OPEN>FIND; unlock: greyed early-out; box flood cap"
+    "confirmed-transitions; device-latched-resume; bounded-hold; first-last-reverse-v1; "
+    "neutral-idle-v1; two-frame-targets-v1; viewport-mirror-first-v1; phone-progress-proof-v1; "
+    "visual-manual-reconstruction-v1; rightmost-column-last-v2; protected-station-reframe-v1; "
+    "observation-recovery-v1"
 )
 
 
@@ -68,8 +82,18 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
         stop_event: threading.Event | None = None,
         game_launcher: GameLauncher | None = None,
         desktop_notifier: Callable[[str, str], None] | None = None,
+        progress: ProgressLedger | None = None,
     ) -> None:
         self._config = config
+        self._progress = progress
+        self.pause_reason: PauseReason | None = PauseReason.MANUAL
+        self._manual_stop_requested = threading.Event()
+        self._device_check_at = 0.0
+        self._game_recovery_pending = False
+        self._phone_game_foreground: bool | None = None
+        self._strategy_health_thumb: np.ndarray | None = None
+        self._strategy_target_frame: np.ndarray | None = None
+        self._strategy_alive_at = 0.0
         self._vision = vision
         self._input = input_controller
         self._notifier = notifier
@@ -85,6 +109,8 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
 
         self.state = State.FIND_RED_ICONS
         self.context = FlowContext()
+        if progress is not None:
+            self.context.total_levels_completed = int(progress.record["completions"])
         self._watchdog = StallWatchdog(config=config.flow_timing)
         # ponytail: cumulative since process start, no rolling window; subtract consecutive
         # metrics lines for a per-period rate. Upgrade path: a windowed deque if that gets tedious.
@@ -153,6 +179,7 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
             State.CHECK_NEW_LEVEL: self._handle_check_new_level,
             State.TRANSITION_LEVEL: self._handle_transition_level,
             State.WAIT_FOR_UNLOCK: self._handle_wait_for_unlock,
+            State.CONFIRM_RESTAURANT: self._handle_confirm_restaurant,
         }
         missing = set(State) - self._handlers.keys()
         if missing:
@@ -164,11 +191,81 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
     def running(self) -> bool:
         return self._running.is_set()
 
+    @property
+    def recovering(self) -> bool:
+        return self._resume is not None
+
+    @property
+    def manual_stop_pending(self) -> bool:
+        return self._manual_stop_requested.is_set()
+
+    def acknowledge_manual_stop(self) -> None:
+        self._manual_stop_requested.clear()
+
+    def _restart_mirror(self, cancelled: threading.Event) -> bool:
+        if self._launcher is None:
+            return False
+        window = self._config.window
+        if not self._launcher.restart_mirror(window.title, window.width, window.height, cancelled):
+            return False
+        if self._launcher.mirror_pid is not None:
+            self._vision.bind_mirror(self._launcher.mirror_pid)
+        return True
+
+    def _bind_existing_mirror(self) -> bool:
+        if self._launcher is None:
+            return False
+        process_id = self._launcher.bind_existing_mirror(self._vision.mirror_windows())
+        if process_id is None:
+            return False
+        self._vision.bind_mirror(process_id)
+        return True
+
+    def _prepare_mirror(self, *, report: bool) -> bool:
+        launcher = self._launcher
+        if launcher is None:
+            return True
+        missing_window = False
+        if report or not launcher.mirror_bound():
+            missing_window = not self._bind_existing_mirror() and launcher.mirror_pid is not None
+        if launcher.mirror_bound() and not missing_window:
+            return True
+        recovery = self._config.game_recovery
+        if recovery.command_timeout <= 0 or recovery.recovery_poll_seconds <= 0:
+            logger.error("scrcpy startup needs a positive timeout and polling interval")
+            return False
+        if not self._restart_mirror(self._manual_stop_requested):
+            return False
+        attempts = math.ceil(recovery.command_timeout / recovery.recovery_poll_seconds)
+        for _ in range(attempts):
+            if self._stop_requested.is_set() or not launcher.connected():
+                return False
+            try:
+                self._vision.ensure_target_ready(force=True)
+                return True
+            except WindowNotAvailableError:
+                if not self._sleep(recovery.recovery_poll_seconds):
+                    return False
+        logger.error("Timed out waiting for the selected-device scrcpy window")
+        return False
+
     def start(self, *, report: bool = True) -> bool:
         """report=False is for the auto-resume retries, which must not alert on every failed try."""
         with self._step_lock:
             if self.running:
                 return True
+            if not report and (self._manual_stop_requested.is_set() or self.pause_reason in (
+                PauseReason.MANUAL, PauseReason.DISCONNECTED, PauseReason.ERROR
+            )):
+                return False
+            if report:
+                self._manual_stop_requested.clear()
+                self._game_recovery_pending = False
+            if self._launcher is not None:
+                available = self._launcher.select_device() if report else self._launcher.connected()
+                if not available:
+                    self._disconnect()
+                    return False
             missing = self._vision.validate_required_templates()
             if missing:
                 # v1's start gate, which v2 dropped: refuse rather than run half-blind.
@@ -176,11 +273,18 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
                 return False
             self._stop_requested.clear()
             try:
-                self._vision.ensure_target_ready()
+                if not self._prepare_mirror(report=report):
+                    self._stop_requested.set()
+                    return False
+                self._vision.ensure_target_ready(force=True)
             except CaptureError as exc:
                 logger.error("Cannot start bot: %s", exc)
                 if report:
                     self._report_self_stop(f"cannot start: {exc}")
+                self._stop_requested.set()
+                return False
+            if self._launcher is not None and not self._launcher.mirror_bound():
+                logger.error("Selected-device scrcpy binding was lost before startup")
                 self._stop_requested.set()
                 return False
             if not self._input.is_target_foreground():
@@ -189,10 +293,23 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
                     self._report_self_stop("cannot start: target window is not foreground")
                 self._stop_requested.set()
                 return False
-            if self._launcher is not None and not self._package_probed:
-                self._package_probed = True  # once per process: adb is only touched at start
+            if (self._launcher is not None and self._config.game_recovery.enabled
+                    and not self._package_probed):
+                self._package_probed = True  # package discovery is once per process
                 self._launcher.detect_package()
+            phase = GameplayPhase.FIRST if report else self.context.gameplay_phase
+            if self._manual_stop_requested.is_set() or self._stop_requested.is_set():
+                return False
             self._running.set()
+            self.pause_reason = None
+            self.context.invalidate_viewport()
+            self.context.gameplay_phase = phase
+            self.context.strategy_seek = True
+            self.context.strategy_waiting_liveness = False
+            self.context.strategy_scrolls = self.context.strategy_stationary_count = 0
+            self._strategy_health_thumb = None
+            if self._progress is not None:
+                self._progress.checkpoint("active")
             self._resume = None  # running again, by a person or by poll_resume
             self._watchdog.reset()
             self._last_box_scan_at = None  # a gap that spans a stop is not a scan cadence
@@ -203,17 +320,28 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
             self._notifier.notify_bot_started()
             return True
 
-    def request_stop(self) -> None:
+    def request_stop(self, *, manual: bool = False) -> None:
+        if manual:
+            self._manual_stop_requested.set()
+            self.pause_reason = PauseReason.MANUAL
+            self._resume = None
+            self._game_recovery_pending = False
         self._stop_requested.set()
 
     def stop(self, *, manual: bool = False) -> None:
-        self.request_stop()
+        self.request_stop(manual=manual or self._manual_stop_requested.is_set())
         with self._step_lock:
             was_running = self.running
             self._running.clear()
             self._input.release_left_button()
             self.state = State.FIND_RED_ICONS
             self.context.reset_run()
+            self.context.invalidate_viewport()
+            self.context.transition_pending = False
+            if self._progress is not None:
+                reason = self.pause_reason or PauseReason.ERROR
+                self._progress.checkpoint(reason.value)
+                self._progress.cancel_transition()
             self._watchdog.reset()
             if was_running and self._config.flow_timing.metrics_log_interval > 0:
                 self._log_metrics()
@@ -225,8 +353,12 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
 
     def close(self) -> None:
         self.stop()
+        if self._progress is not None:
+            self._progress.close()
         self._notifier.close()
         self._vision.close()
+        if self._launcher is not None:
+            self._launcher.close()
 
     def set_event_forbidden_zone(self, zone: Zone) -> None:
         self._input.set_event_forbidden_zone(zone)
@@ -249,10 +381,13 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
             if self._stop_requested.is_set():
                 self.stop()
                 return False
+            if not self._device_available():
+                return False
             self._vision.ensure_target_ready()
             if not self._input.is_target_foreground():
                 logger.error("Target lost foreground; stopping bot")
                 self._report_self_stop("target lost foreground")
+                self.pause_reason = PauseReason.RECOVERY
                 self.stop()
                 self._arm_resume("target lost foreground")
                 return False
@@ -288,16 +423,27 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
             self.state = next_state
             self._apply_watchdog(next_state)
             self._maybe_log_metrics()
+            if self._progress is not None:
+                self._progress.checkpoint()
             return True
-        except (WindowNotAvailableError, CaptureError) as exc:
-            logger.error("Stopping bot: %s", exc)
+        except (ObservationError, WindowNotAvailableError, CaptureError) as exc:
+            if isinstance(exc, ObservationError):
+                logger.warning(
+                    "Screen observation unavailable; scheduling localization retry: %s", exc
+                )
+            else:
+                logger.error("Stopping bot: %s", exc)
             self._report_self_stop(str(exc))
+            if (not self._manual_stop_requested.is_set()
+                    and self.pause_reason != PauseReason.DISCONNECTED):
+                self.pause_reason = PauseReason.RECOVERY
             self.stop()
             self._arm_resume(str(exc))
             return False
         except Exception:
             logger.exception("Stopping bot after an unexpected handler failure")
             self._report_self_stop("unexpected handler failure")
+            self.pause_reason = PauseReason.ERROR
             self.stop()
             return False
         finally:
@@ -305,13 +451,129 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
 
     # --- shared helpers -------------------------------------------------------------------
 
+    def _disconnect(self) -> None:
+        self.pause_reason = PauseReason.DISCONNECTED
+        self._game_recovery_pending = False
+        self._resume = None
+        self.stop()
+        logger.warning("Device disconnected; manual resume required")
+
+    def _recover_stalled_mirror(self) -> bool:
+        """Only failed UI observations pay for an independent phone-progress check."""
+        if self._launcher is None or not self._config.game_recovery.enabled:
+            return False
+        if not self._device_available(force=True) or self._stop_requested.is_set():
+            return True
+        before = self._vision.capture().copy()
+        phone_before = None
+        for _ in range(3):
+            encoded = self._launcher.capture_device_png()
+            if self._stop_requested.is_set():
+                return True
+            if encoded is None:
+                return not self._device_available(force=True)
+            try:
+                phone = cv2.imdecode(np.frombuffer(encoded, np.uint8), cv2.IMREAD_COLOR)
+            except cv2.error:
+                return False
+            if phone is None:
+                return False
+            if phone_before is not None and not np.array_equal(phone_before, phone):
+                break
+            phone_before = phone
+        else:
+            return False
+        if not np.array_equal(before, self._vision.capture()):
+            return False
+        if not self._device_available(force=True) or self._stop_requested.is_set():
+            return True
+        logger.warning("Phone is changing but scrcpy is frozen; suspending input for mirror repair")
+        self.pause_reason = PauseReason.RECOVERY
+        self.stop()
+        self._game_recovery_pending = False
+        self._arm_resume("phone progresses while scrcpy display is frozen")
+        if self._resume is not None:
+            self._resume.restart_mirror = True
+        return True
+
+    def _device_available(self, *, force: bool = False) -> bool:
+        if self._launcher is None:
+            return True
+        now = self._clock()
+        if not force and now < self._device_check_at:
+            return self.pause_reason != PauseReason.DISCONNECTED
+        self._device_check_at = now + 1.0
+        if self._launcher.connected():
+            self._phone_game_foreground = (
+                self._launcher.game_foreground() if self._launcher.package is not None else None
+            )
+            if self.running and self._phone_game_foreground is False:
+                logger.warning("Selected game left Android foreground; releasing input")
+                if self._config.game_recovery.enabled:
+                    self._queue_game_recovery()
+                else:
+                    self.pause_reason = PauseReason.ERROR
+                    self.stop()
+                return False
+            return True
+        self._disconnect()
+        return False
+
     def _sleep(self, duration: float) -> bool:
         if duration <= 0:
             return not self._stop_requested.is_set()
         return not self._stop_requested.wait(duration)
 
-    def _click_idle(self) -> bool:
-        return self._input.click(*self._config.click_targets.idle_click_pos)
+    def _click_idle(
+        self, exclude: BoundingBox | None = None, *, alternate: bool = False,
+    ) -> bool:
+        if self._stop_requested.is_set():
+            return False
+        targets = self._config.click_targets
+        anchor = self.context.strategy_anchor
+        if self._config.strategy.enabled:
+            if not self._input.is_target_foreground():
+                return False
+            if exclude is None:
+                return True
+            padding = _IDLE_PANEL_PADDING_PX
+            blocked = BoundingBox(exclude.x_min - padding, exclude.y_min - padding,
+                                  exclude.x_max + padding, exclude.y_max + padding)
+            occupied = tuple(self.context.maxed_positions) + (() if anchor is None else (anchor,))
+            frame = self._vision.capture()
+            point = (None if alternate
+                     else self._vision.empty_world_point(frame, blocked, occupied))
+            if point is None or not self._is_clickable(point):
+                panel = self._vision.station_panel_bounds(frame)
+                if panel is None or self._vision.station_panel(frame) == StationPanel.UNKNOWN:
+                    return False
+                x, y = targets.scroll_start_pos
+                positions: tuple[Point, ...] = (
+                    (x, y), (panel.x_max + padding + 1, y),
+                    (panel.x_min - padding - 1, y),
+                )
+                for candidate in positions:
+                    x, y = candidate
+                    if (not (0 <= x < self._config.window.width
+                             and 0 <= y < self._config.window.height)
+                            or not self._is_clickable(candidate)
+                            or (panel.x_min - padding <= x <= panel.x_max + padding
+                                and panel.y_min - padding <= y <= panel.y_max + padding)):
+                        continue
+                    return self._input.click(*candidate)
+                return False
+            return self._is_clickable(point) and self._input.click(*point)
+        positions = (targets.idle_click_pos, targets.scroll_start_pos)
+        for position in positions:
+            if exclude is not None and (
+                exclude.x_min - _IDLE_PANEL_PADDING_PX <= position[0]
+                <= exclude.x_max + _IDLE_PANEL_PADDING_PX
+                and exclude.y_min - _IDLE_PANEL_PADDING_PX <= position[1]
+                <= exclude.y_max + _IDLE_PANEL_PADDING_PX
+            ):
+                continue
+            return self._input.click(*position)
+        return False
 
     def _scrcpy_recovery(self, delay: float) -> bool:
         if not self._config.scrcpy_recovery.enabled:

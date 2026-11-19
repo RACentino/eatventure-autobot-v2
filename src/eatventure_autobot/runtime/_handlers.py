@@ -8,15 +8,18 @@ import math
 import time
 from collections import deque
 from collections.abc import Callable
+from threading import Event
 from typing import TYPE_CHECKING
 
 import numpy as np
 
 from eatventure_autobot.domain.config import BotConfig
+from eatventure_autobot.domain.errors import ObservationError
 from eatventure_autobot.domain.protocols import InputController
-from eatventure_autobot.domain.state import State
-from eatventure_autobot.domain.types import Point, TemplateExplanation
+from eatventure_autobot.domain.state import GameplayPhase, State, StationPanel
+from eatventure_autobot.domain.types import BoundingBox, MatchCandidate, Point, TemplateExplanation
 from eatventure_autobot.runtime._telemetry import _frame_thumbnail
+from eatventure_autobot.runtime.progress import ProgressLedger
 from eatventure_autobot.runtime.vision import GameVision
 from eatventure_autobot.state import transitions as flow
 from eatventure_autobot.state.context import FlowContext, LevelMark
@@ -27,6 +30,16 @@ logger = logging.getLogger("eatventure_autobot.runtime.bot")
 # (ScrcpyRecoveryConfig.popup_early_exit). The matcher reports whole-pixel positions, so a settled
 # panel reads 0; 2 only absorbs a single sub-pixel rounding flip.
 _POPUP_STILL_PX = 2.0
+_VIEWPORT_MAX_SETTLE_SAMPLES = 12
+_VIEWPORT_REQUIRED_STILL_SAMPLES = 2
+_VIEWPORT_MAX_PANEL_DISMISSALS = 2
+_VIEWPORT_FRESH_ENTRY_PROBES = 3
+_VIEWPORT_SAME_PANEL_IOU = 0.5
+_MIN_STATION_TARGET_Y = 300
+
+
+class _ViewportError(ObservationError):
+    """Bounded viewport readiness failure, separate from unrelated detector failures."""
 
 
 class _HandlersMixin:
@@ -45,6 +58,11 @@ class _HandlersMixin:
     _streak_thumb: np.ndarray | None
     _vision: GameVision
     context: FlowContext
+    _progress: ProgressLedger | None
+    _strategy_health_thumb: np.ndarray | None
+    _strategy_target_frame: np.ndarray | None
+    _strategy_alive_at: float
+    _stop_requested: Event
 
     if TYPE_CHECKING:  # annotation only: nothing here exists at runtime
 
@@ -60,7 +78,9 @@ class _HandlersMixin:
         def _sleep(self, duration: float) -> bool:
             ...
 
-        def _click_idle(self) -> bool:
+        def _click_idle(
+            self, exclude: BoundingBox | None = None, *, alternate: bool = False,
+        ) -> bool:
             ...
 
         def _scrcpy_recovery(self, delay: float) -> bool:
@@ -84,11 +104,21 @@ class _HandlersMixin:
         def _relaunch_game(self) -> State:
             ...
 
+        def _queue_game_recovery(self) -> State: ...
+
+        def _arm_resume(self, reason: str) -> None: ...
+
+        def stop(self, *, manual: bool = False) -> None: ...
+
         def _level_mark(self) -> LevelMark:
             ...
 
         def _report_level_completion(self) -> None:
             ...
+
+        def _device_available(self, *, force: bool = False) -> bool: ...
+
+        def _recover_stalled_mirror(self) -> bool: ...
 
     def _settle_and_watch(self, duration: float) -> bool:
         """_sleep(duration) that also notes when the popup the last click opened first shows (tally
@@ -191,10 +221,17 @@ class _HandlersMixin:
         return True
 
     def _handle_find_red_icons(self) -> State:
-        if not self._click_idle():
+        monitoring = self._config.strategy.enabled and self.context.strategy_waiting_liveness
+        if not self._config.strategy.enabled and not self._click_idle():
             return State.FIND_RED_ICONS
         regions = self._config.capture_regions
         frame = self._vision.capture(max_y=regions.extended_search_y)
+        if self._progress is not None:
+            self._progress.checkpoint(boost=self._vision.boost_level(frame))
+        if monitoring:
+            return self._handle_strategy_find(frame)
+        if self._handle_city_arrival(frame):
+            return State.FIND_RED_ICONS
         # v1 checks the newLevel button against a frame limited to max_search_y, distinct from the
         # full extended_search_y frame used for the red-icon scan below.
         if self._vision.find_new_level_button(frame[: regions.max_search_y]).found:
@@ -205,6 +242,8 @@ class _HandlersMixin:
 
         candidates = self._vision.find_red_icons(frame)
         actionable, new_level_seen, _ = self._vision.split_red_icons(candidates)
+        if self._config.strategy.enabled and not new_level_seen:
+            return self._handle_strategy_find(frame)
         # Verified v1 gate: retry only when neither an ordinary icon nor the footer new-level icon
         # was seen. A lone stats badge (classified out by split_red_icons) must not suppress it,
         # but a new-level badge does: that goes straight to CHECK_NEW_LEVEL.
@@ -235,7 +274,11 @@ class _HandlersMixin:
         target = flow.current_red_icon_target(self.context)
         if target is None:
             return State.OPEN_BOXES
-        offset_x, offset_y = self._config.red_icon.offset
+        if self._config.strategy.enabled and self.context.target_viewport != self.context.viewport:
+            return State.FIND_RED_ICONS
+        offset_x, offset_y = (
+            (0, 0) if self._config.strategy.enabled else self._config.red_icon.offset
+        )
         x, y = target.center[0] + offset_x, target.center[1] + offset_y
         # Verified v1 behavior: a plain click() (with its post-click delay), not precise_click();
         # CHECK_UNLOCK already does the scrcpy settle when it opens.
@@ -245,7 +288,14 @@ class _HandlersMixin:
         if not self._settle_and_watch(self._config.scrcpy_recovery.action_settle_delay):
             return State.CHECK_UNLOCK
         frame = self._vision.capture(max_y=self._config.capture_regions.max_search_y)
-        result = self._vision.find_unlock_button(frame)
+        region = None
+        if self._config.strategy.enabled:
+            panel = self._observe_strategy_panel(frame)
+            if panel in (StationPanel.MAX, StationPanel.UNKNOWN):
+                return State.UPGRADE_STATS
+            region = self._vision.station_panel_bounds(frame)
+        result = (self._vision.find_unlock_button(frame, search_region=region)
+                  if self._config.strategy.enabled else self._vision.find_unlock_button(frame))
         if result.best is None or not self._is_clickable(result.best.center):
             return flow.decide_check_unlock(False, None)
         clicked = self._input.click(*result.best.center)
@@ -261,6 +311,11 @@ class _HandlersMixin:
         if attempt > 2:
             threshold -= station.threshold_relaxation
         frame = self._vision.capture(max_y=self._config.capture_regions.upgrade_station_search_y)
+        if self._config.strategy.enabled:
+            panel = self._observe_strategy_panel(frame)
+            if panel != StationPanel.AFFORDABLE:
+                self.context.stats_from_find = True
+                return State.UPGRADE_STATS
         candidates = self._vision.find_upgrade_station_candidates(frame, threshold)
         # v1 picks the first candidate that isn't in a forbidden zone, not necessarily the
         # highest-confidence one — so a blocked best match doesn't hide a usable second one.
@@ -311,11 +366,16 @@ class _HandlersMixin:
                 station.disappear_confirmation_count,
             ),
         )
+        panel_region = None
         if held:
             self._record_hold(time.monotonic() - hold_started)
+            if self._config.strategy.enabled:
+                frame = self._vision.capture()
+                self._observe_strategy_panel(frame)
+                panel_region = self._vision.station_panel_bounds(frame)
         post_ok = (
             held
-            and self._click_idle()
+            and self._click_idle(panel_region)
             and self._sleep(self._config.flow_timing.state_delay)
         )
         return flow.decide_hold_upgrade_station(
@@ -323,6 +383,20 @@ class _HandlersMixin:
             self._config.flow_timing,
             flow.UpgradeHoldObservation(True, True, held, post_ok, verified_position=target),
         )
+
+    def _observe_strategy_panel(self, frame: np.ndarray) -> StationPanel:
+        panel = self._vision.station_panel(frame)
+        context = self.context
+        context.strategy_unknown_panels = (
+            context.strategy_unknown_panels + 1 if panel == StationPanel.UNKNOWN else 0
+        )
+        if context.strategy_unknown_panels >= self._config.upgrade_station.search_attempts:
+            if self._recover_stalled_mirror():
+                return StationPanel.UNKNOWN
+            context.invalidate_viewport()
+            raise ObservationError("Station panel remained UNKNOWN; retry localization")
+        flow.observe_station(context, panel)
+        return panel
 
     def _verify_upgrade_station_round(self) -> tuple[Point, float] | None:
         """One full verify_search_attempts retry loop: base threshold on the first attempt,
@@ -346,11 +420,8 @@ class _HandlersMixin:
         return None
 
     def _verify_upgrade_station(self) -> tuple[Point, float] | None:
-        """Two-round pre-hold verification, matching v1's _verify_upgrade_station_hold_target
-        exactly: a settle delay, then round 1 verifies the current on-screen state with no click
-        at all; only if the station is still there does a priming click fire on the
-        freshly-verified position (not the stale stored one), followed by another settle delay
-        and a second round that must also confirm it before committing to a hold."""
+        """Two fresh checks before holding. Candidate checks cannot spend the available cash;
+        legacy mode retains its priming click between rounds."""
         station = self._config.upgrade_station
         if not self._sleep(station.verify_settle_delay):
             return None
@@ -361,15 +432,21 @@ class _HandlersMixin:
             return None
 
         target, _ = first
-        if not self._input.precise_click(*target):
+        candidate = self._config.strategy.enabled
+        if not candidate and not self._input.precise_click(*target):
             logger.info("Upgrade station verification click failed at (%s, %s)", *target)
             return None
-        if not self._sleep(station.verify_settle_delay):
+        interval = (self._config.strategy.target_observation_interval if candidate
+                    else station.verify_settle_delay)
+        if not self._sleep(interval):
             return None
 
         second = self._verify_upgrade_station_round()
         if second is None:
             logger.info("Upgrade station was not visible during verification")
+            return None
+        if candidate and math.dist(target, second[0]) > _POPUP_STILL_PX:
+            logger.info("Upgrade control moved between verification frames; retrying")
             return None
         return second
 
@@ -398,13 +475,29 @@ class _HandlersMixin:
         assuming the real popup is confined to any particular screen region."""
         station = self._config.upgrade_station
         frame = self._vision.capture(max_y=self._config.capture_regions.upgrade_station_search_y)
-        result = self._vision.find_upgrade_station(frame, threshold)
-        if not result.found or result.best is None:
-            return False
         tolerance = station.disappear_position_tolerance_px
-        dx = abs(result.best.center[0] - position[0])
-        dy = abs(result.best.center[1] - position[1])
-        return dx <= tolerance and dy <= tolerance
+        region = BoundingBox(
+            position[0] - tolerance, position[1] - tolerance,
+            position[0] + tolerance + 1, position[1] + tolerance + 1,
+        )
+        result = self._vision.find_upgrade_station(frame, threshold, search_region=region)
+        if result.found and result.best is not None:
+            dx = abs(result.best.center[0] - position[0])
+            dy = abs(result.best.center[1] - position[1])
+            box = result.best.bounding_box
+            return (dx <= tolerance and dy <= tolerance and (
+                not self._config.strategy.enabled or (
+                    box.x_min <= position[0] < box.x_max and box.y_min <= position[1] < box.y_max
+                )
+            ))
+        # A held upgrade resumes when income arrives; grey is not a vanished control.
+        if (
+            not self._config.strategy.enabled
+            or self._vision.station_panel(frame, held_position=position) != StationPanel.LOCKED
+        ):
+            return False
+        # Release before the next stats action; the existing flow opens free worker crates too.
+        return not self._vision.stats_icon_seen(frame)
 
     def _make_disappearance_check(
         self, threshold: float, position: Point, required_misses: int
@@ -415,6 +508,8 @@ class _HandlersMixin:
 
         def check() -> bool:
             nonlocal misses
+            if not self._device_available():
+                return True
             gone = self._station_disappeared(threshold, position)
             misses = misses + 1 if gone else 0
             return misses >= max(1, required_misses)
@@ -437,9 +532,7 @@ class _HandlersMixin:
                 self.context, flow.StatsIconObservation(True, False, from_find)
             )
 
-        # Reuses the shared red-icon scan; split_red_icons applies the stats-icon threshold.
-        candidates = self._vision.find_red_icons(frame)
-        _, _, stats_seen = self._vision.split_red_icons(candidates)
+        stats_seen = self._vision.stats_icon_seen(frame)
         if not stats_seen:
             return flow.decide_upgrade_stats(
                 self.context, flow.StatsIconObservation(False, False, from_find)
@@ -447,7 +540,8 @@ class _HandlersMixin:
 
         targets = self._config.click_targets
         button_clicked = self._input.click(*targets.stats_upgrade_button_pos)
-        if button_clicked and self._sleep(self._config.flow_timing.state_delay):
+        if (button_clicked and self._sleep(self._config.flow_timing.state_delay)
+                and self._wait_for_stats_panel()):
             # stats_upgrade_pos (290, 310) sits inside the 2-/3-event forbidden zones
             # (ForbiddenZoneConfig.event_zone_options) meant to protect the event banner from
             # stray clicks elsewhere in the flow. By the time we click here the stats panel is
@@ -468,6 +562,19 @@ class _HandlersMixin:
         return flow.decide_upgrade_stats(
             self.context, flow.StatsIconObservation(False, True, from_find)
         )
+
+    def _wait_for_stats_panel(self) -> bool:
+        deadline = self._clock() + self._config.stats_upgrade.panel_ready_timeout
+        while (remaining := deadline - self._clock()) > 0:
+            if self._stop_requested.is_set():
+                return False
+            if self._vision.stats_panel_ready(self._vision.capture()):
+                return not self._stop_requested.is_set()
+            interval = max(0.001, self._config.flow_timing.event_loop_interval)
+            if not self._sleep(min(interval, remaining)):
+                return False
+        logger.warning("Stats panel did not reach its ready position; skipping burst")
+        return False
 
     def _handle_open_boxes(self) -> State:
         if not self._click_idle():
@@ -496,7 +603,9 @@ class _HandlersMixin:
                 flow.BoxCycleObservation(True),
             )
 
-        boxes = self._vision.find_boxes(frame)
+        # These are free crates from purchases already made. Station spending is gated earlier.
+        find_boxes = self._vision.find_boxes
+        boxes = find_boxes(frame)
         if not boxes and self._scrcpy_recovery(self._config.scrcpy_recovery.box_delay):
             frame = self._vision.capture(max_y=box_search_y)
             if self._vision.find_new_level_button(frame).found:
@@ -506,7 +615,7 @@ class _HandlersMixin:
                     self._config.scroll.max_idle_pass_attempts,
                     flow.BoxCycleObservation(True),
                 )
-            boxes = self._vision.find_boxes(frame)
+            boxes = find_boxes(frame)
 
         if self._early_probe_pending:  # log-only: kept clear of the relaunch decision below
             self._early_probe_pending = False
@@ -521,7 +630,7 @@ class _HandlersMixin:
             self._log_box_near_misses(frame, len(boxes))
             alert_thumb = _frame_thumbnail(frame)
             if self._game_looks_dead(alert_thumb):
-                return self._relaunch_game()
+                return self._queue_game_recovery()
             self._recent_thumb = alert_thumb  # the next alert compares with this scan
 
         clickable = [box for box in boxes if self._is_clickable(box.center)]
@@ -543,7 +652,15 @@ class _HandlersMixin:
             )
             clickable = []
         opened = 0
-        for box in clickable:
+        for index, box in enumerate(clickable):
+            if index:
+                fresh = find_boxes(self._vision.capture(max_y=box_search_y))
+                refreshed = next((item for item in fresh
+                                  if item.bounding_box.iou(box.bounding_box) > 0.2
+                                  and self._is_clickable(item.center)), None)
+                if refreshed is None:
+                    continue
+                box = refreshed
             if self._input.click(*box.center):
                 opened += 1
                 self._recent_box_clicks.append((*box.center, box.confidence))
@@ -568,6 +685,10 @@ class _HandlersMixin:
         return next_state
 
     def _handle_scroll(self) -> State:
+        if self._config.strategy.enabled:
+            self.context.scan_boxes_after_scroll = True
+            self._sleep(self._config.scroll.post_scroll_settle)
+            return State.OPEN_BOXES
         if not self._click_idle():
             return State.SCROLL
         scroll = self._config.scroll
@@ -582,6 +703,7 @@ class _HandlersMixin:
         )
         moved = self._input.drag(start_x, start_y, start_x, target_y, duration=scroll.duration)
         if moved:
+            self.context.invalidate_viewport()
             self.context.advance_oscillation(scroll.increment_step, scroll.max_cycles)
             moved = self._sleep(scroll.post_scroll_settle) and self._sleep(scroll.interval_pause)
         next_state = flow.decide_scroll(self.context, moved)
@@ -603,6 +725,7 @@ class _HandlersMixin:
             start_x, start_y, start_x, target_y, duration=level.verification_scroll_duration
         ):
             return False
+        self.context.invalidate_viewport()
         if not self._sleep(level.verification_scroll_settle_delay):
             return False
         return self._sleep(level.verification_scroll_interval_pause)
@@ -634,6 +757,9 @@ class _HandlersMixin:
 
         targets = self._config.click_targets
         level = self._config.level_transition
+        # An Open dialog belongs to a restaurant already reached, including at startup.
+        if self._vision.restaurant_start(self._vision.capture()):
+            return State.TRANSITION_LEVEL
         button_ok = self._input.click(*targets.new_level_button_pos)
         if button_ok and not self._sleep(level.confirmation_delay):
             return State.CHECK_NEW_LEVEL
@@ -646,18 +772,21 @@ class _HandlersMixin:
             self.context,
             flow.NewLevelVerificationObservation(True, button_ok, transition_ok),
         )
-        if next_state == State.WAIT_FOR_UNLOCK:
-            self.context.nl_route = "footer"  # the badge route; see _end_unlock_sequence
+        if next_state == State.CONFIRM_RESTAURANT:
+            self.context.nl_route = "footer"
+            self.context.transition_pending = True
+            self.context.transition_departed = True  # footer verified; Open absent before action
+            self.context.transition_confirmations = 0
+            self.context.transition_started = self._clock()
+            if self._progress is not None:
+                self._progress.transition_attempt()
+            logger.info("Restaurant transition attempted; awaiting visual confirmation")
         return next_state
 
     def _handle_transition_level(self) -> State:
         level = self._config.level_transition
         attempt = self.context.state_attempt
-        # Verified v1: one idle click ahead of the whole search (not one per capture), and a failed
-        # idle click retries without consuming a search attempt.
-        if attempt == 1 and not self._click_idle():
-            self.context.refund_attempt()
-            return State.TRANSITION_LEVEL
+        # Preserve the visible dialog. Focus and forbidden-zone checks remain in the input layer.
         # v1 captures at max_search_y for this state's search loop, not extended_search_y.
         frame = self._vision.capture(max_y=self._config.capture_regions.max_search_y)
         result = self._vision.find_new_level_button(frame)
@@ -678,8 +807,11 @@ class _HandlersMixin:
             result.best.confidence,
             attempt,
         )
+        fresh_restaurant = self._config.strategy.enabled and self._vision.restaurant_start(frame)
         clicked = self._input.click(*result.best.center)
         if clicked:
+            if fresh_restaurant:
+                self.context.strategy_fresh_entry = _VIEWPORT_FRESH_ENTRY_PROBES
             self._sleep(level.settle_delay)
         next_state = flow.decide_transition_level(
             self.context, level, flow.TransitionLevelObservation(True, attempt, clicked)
@@ -689,8 +821,6 @@ class _HandlersMixin:
         return next_state
 
     def _handle_wait_for_unlock(self) -> State:
-        if not self._click_idle():
-            return State.WAIT_FOR_UNLOCK
         level = self._config.level_transition
         # Only the first try of a sequence is timed: the dialog is already up on the retries.
         settle = (
@@ -724,25 +854,347 @@ class _HandlersMixin:
                 self.context.nl_greyed_exits += cut_short
                 self._note_unlock_miss(frame, seen)
                 self._end_unlock_sequence(completed=False)
-            return missed
+            return (State.OPEN_BOXES
+                    if missed == State.FIND_RED_ICONS and self.context.strategy_fresh_entry
+                    else missed)
 
         clicked = self._input.click(*result.best.center)
-        previous_total = self.context.total_levels_completed
         next_state = flow.decide_wait_for_unlock(
             self.context, level, flow.WaitForUnlockObservation(True, clicked)
         )
-        if (
-            self.context.total_levels_completed == previous_total
-            and next_state != State.WAIT_FOR_UNLOCK
-        ):
-            self._note_unlock_miss(frame)
+        if clicked:
+            self._sleep(level.unlock_settle_delay)
+        if next_state != State.WAIT_FOR_UNLOCK:
+            if not clicked:
+                self._note_unlock_miss(frame)
             self._end_unlock_sequence(completed=False)
-        if self.context.total_levels_completed > previous_total:
+        return (State.OPEN_BOXES
+                if next_state == State.FIND_RED_ICONS and self.context.strategy_fresh_entry
+                else next_state)
+
+    def _handle_city_arrival(self, frame: np.ndarray) -> bool:
+        city = self._vision.city_arrival(frame)
+        if city:
+            if self._progress is not None and not self.context.city_seen:
+                self._progress.city_boundary()
+            result = self._vision.find_city_continue(frame)
+            if result.best is not None and self._input.click(*result.best.center):
+                self.context.strategy_fresh_entry = (
+                    _VIEWPORT_FRESH_ENTRY_PROBES if self._config.strategy.enabled else 0
+                )
+                self._sleep(self._config.level_transition.settle_delay)
+        self.context.city_seen = city
+        return city
+
+    def _handle_confirm_restaurant(self) -> State:
+        frame = self._vision.capture()
+        if self._progress is not None:
+            self._progress.checkpoint(boost=self._vision.boost_level(frame))
+        city = self._handle_city_arrival(frame)
+        if flow.confirm_restaurant(self.context, not city and self._vision.restaurant_start(frame)):
+            self.context.strategy_fresh_entry = (
+                _VIEWPORT_FRESH_ENTRY_PROBES if self._config.strategy.enabled else 0
+            )
+            if self._progress is not None:
+                self._progress.confirm_transition()
             self._report_level_completion()
             self._end_unlock_sequence(completed=True)
-            # v1 sleeps here regardless of outcome before returning to FIND_RED_ICONS.
-            self._sleep(level.unlock_settle_delay)
-        return next_state
+            return State.FIND_RED_ICONS
+        if self._clock() - self.context.transition_started >= (
+            self._config.level_transition.confirmation_timeout
+        ):
+            logger.warning("Restaurant transition unconfirmed; no completion credited")
+            self.context.transition_pending = False
+            if self._progress is not None:
+                self._progress.cancel_transition()
+            self._end_unlock_sequence(completed=False)
+            return State.FIND_RED_ICONS
+        self._sleep(self._config.level_transition.unlock_search_interval)
+        return State.CONFIRM_RESTAURANT
+
+    def _strategy_scroll(self, direction: int) -> bool | None:
+        """False means unchanged views; True means changed/uncertain; None cancels the attempt."""
+        if self.context.strategy_scrolls >= self._config.strategy.viewport_limit:
+            raise _ViewportError("Station viewport search limit reached; recalibrate localization")
+        self.context.strategy_scrolls += 1
+        before = self._vision.capture()
+        scroll = self._config.scroll
+        x, y = self._config.click_targets.scroll_start_pos
+        distance = round(scroll.pixel_step * scroll.distance_ratio)
+        destination = y - direction * distance
+        moved = self._input.drag(x, y, x, destination, duration=scroll.duration)
+        if not moved:
+            return None
+        logger.info("Station scroll %s (mouse drag %s): %s/%s gestures",
+                    "down" if direction > 0 else "up", "up" if direction > 0 else "down",
+                    self.context.strategy_scrolls, self._config.strategy.viewport_limit)
+        self.context.invalidate_viewport()
+        if not (self._sleep(scroll.post_scroll_settle) and self._sleep(scroll.interval_pause)):
+            return None
+        previous = self._vision.capture()
+        still_samples = 0
+        interval = self._config.strategy.target_observation_interval
+        samples = max(
+            _VIEWPORT_MAX_SETTLE_SAMPLES,
+            math.ceil(_VIEWPORT_MAX_SETTLE_SAMPLES * scroll.post_scroll_settle / interval),
+        )
+        for _ in range(samples):
+            if not self._sleep(interval):
+                return None
+            current = self._vision.capture()
+            still_samples = (still_samples + 1
+                             if self._vision.viewport_still(previous, current) is True else 0)
+            if still_samples >= _VIEWPORT_REQUIRED_STILL_SAMPLES:
+                # Finish the ordinary asset cycle before another camera gesture.
+                self.context.stats_from_find = True
+                self.context.scan_boxes_after_scroll = True
+                return self._vision.viewport_still(before, current) is not True
+            previous = current
+        raise _ViewportError("Station viewport did not settle; recalibrate scroll pauses")
+
+    def _handle_strategy_find(self, frame: np.ndarray) -> State:
+        context = self.context
+        thumb = _frame_thumbnail(frame)
+        previous = self._strategy_health_thumb
+        now = self._clock()
+        changed = previous is None or float(np.abs(thumb - previous).mean()) >= (
+            self._config.game_recovery.static_recent_delta
+        )
+        if changed:
+            self._strategy_alive_at = now
+            self._strategy_health_thumb = thumb
+        elif (now - self._strategy_alive_at >= self._config.game_recovery.stale_after_seconds
+                and self._config.game_recovery.enabled):
+            return self._queue_game_recovery()
+        if context.strategy_waiting_liveness:
+            if changed:
+                self._arm_resume("viewport activity returned; retry localization")
+                self.stop()
+            else:
+                self._sleep(self._config.scroll.post_scroll_settle)
+            return State.FIND_RED_ICONS
+        try:
+            return self._strategy_locate(frame)
+        except _ViewportError as exc:
+            if not self._config.game_recovery.enabled:
+                raise
+            if self._recover_stalled_mirror():
+                return State.FIND_RED_ICONS
+            fresh = _frame_thumbnail(self._vision.capture())
+            if float(np.abs(fresh - thumb).mean()) >= (
+                self._config.game_recovery.static_recent_delta
+            ):
+                raise
+            context.strategy_waiting_liveness = True
+            context.invalidate_viewport()
+            if self._progress is not None:
+                self._progress.checkpoint("recovery")
+            logger.warning("%s; suspending input while checking screen liveness", exc)
+            return State.FIND_RED_ICONS
+
+    def _strategy_sweep_direction(self) -> int:
+        context = self.context
+        if context.gameplay_phase == GameplayPhase.REVERSE_MIDDLE:
+            return 1 if context.strategy_seek else -1
+        remaining = context.strategy_scrolls
+        scroll = self._config.scroll
+        for cycle in range(1, scroll.max_cycles + 1):
+            for direction in (1, -1):
+                leg_length = cycle * scroll.increment_step
+                if remaining < leg_length:
+                    return direction
+                remaining -= leg_length
+        # A final moving gesture can reach an edge without proving it stationary. Preserve
+        # both original cycles, then allow one largest-leg approach plus two edge checks.
+        if remaining < scroll.max_cycles * scroll.increment_step + 2:
+            return -1 if context.gameplay_phase == GameplayPhase.FIRST else 1
+        raise _ViewportError("Station search exhausted the configured down/up sweep")
+
+    def _strategy_targets(self, frame: np.ndarray) -> list[MatchCandidate]:
+        targets = [target for target in self._vision.station_targets(frame)
+                   if self._is_clickable(target.center)]
+        if self.context.gameplay_phase not in (GameplayPhase.FIRST, GameplayPhase.LAST):
+            return targets
+        for target in self._vision.positional_station_targets(frame):
+            protected_last = (self.context.gameplay_phase == GameplayPhase.LAST
+                              and any(zone.contains(*target.center) for zone in
+                                      self._config.forbidden_zones.event_zone_options.values()))
+            if (self._is_clickable(target.center) or protected_last) and not any(
+                math.dist(target.center, known.center) < self._config.red_icon.fast_min_distance
+                for known in targets
+            ):
+                targets.append(target)
+        return targets
+
+    def _strategy_locate(self, frame: np.ndarray) -> State:
+        context = self.context
+        previous_panel: BoundingBox | None = None
+        for dismissal_attempt in range(_VIEWPORT_MAX_PANEL_DISMISSALS):
+            if self._vision.station_panel(frame) == StationPanel.UNKNOWN:
+                break
+            panel = self._vision.station_panel_bounds(frame)
+            if panel is None:
+                raise ObservationError("Station panel bounds unavailable before localization")
+            # An outside tap can select a different station instead of clearing the overlay.
+            persistent = bool(dismissal_attempt and (
+                previous_panel is None or panel is None
+                or previous_panel.iou(panel) >= _VIEWPORT_SAME_PANEL_IOU
+            ))
+            if not self._click_idle(panel, alternate=persistent):
+                if (context.state_attempt >= self._config.upgrade_station.search_attempts
+                        and not self._stop_requested.is_set()
+                        and self._input.is_target_foreground()):
+                    raise ObservationError("No safe dismissal input before viewport localization")
+                return State.FIND_RED_ICONS
+            if not self._sleep(self._config.scrcpy_recovery.action_settle_delay):
+                return State.FIND_RED_ICONS
+            previous_panel = panel
+            frame = self._vision.capture()
+            if self._vision.station_panel(frame) == StationPanel.UNKNOWN:
+                if not self._sleep(self._config.scrcpy_recovery.action_settle_delay):
+                    return State.FIND_RED_ICONS
+                frame = self._vision.capture()
+        else:
+            if self._vision.station_panel(frame) != StationPanel.UNKNOWN:
+                raise _ViewportError("Station panel did not close before viewport localization")
+        if (context.strategy_anchor is not None and context.target_viewport == context.viewport
+                and context.red_icons):
+            reference = self._strategy_target_frame
+            still = (self._vision.viewport_still(reference, frame)
+                     if reference is not None else None)
+            safe_top = _MIN_STATION_TARGET_Y + self._config.red_icon.fast_min_distance
+            if (still is True and context.strategy_anchor[1] >= safe_top
+                    and self._is_clickable(context.strategy_anchor)):
+                context.current_red_icon_index = 0
+                return State.CLICK_RED_ICON
+            current_target = next((target for target in self._strategy_targets(frame)
+                if math.dist(target.center, context.strategy_anchor)
+                < self._config.red_icon.fast_min_distance), None)
+            if current_target is None:
+                if still is False:
+                    context.invalidate_viewport()
+                    context.strategy_seek = True
+                    context.strategy_scrolls = context.strategy_stationary_count = 0
+                elif still is True and self._is_clickable(context.strategy_anchor):
+                    context.current_red_icon_index = 0
+                    return State.CLICK_RED_ICON
+                elif context.state_attempt >= self._config.upgrade_station.search_attempts:
+                    raise _ViewportError(
+                        "Selected station remained unobservable; recalibrate localization"
+                    )
+                else:
+                    self._sleep(self._config.scroll.post_scroll_settle)
+                return State.FIND_RED_ICONS
+            if (current_target.center[1] < _MIN_STATION_TARGET_Y
+                    or not self._is_clickable(current_target.center)):
+                moved = self._strategy_scroll(-1)
+                return State.UPGRADE_STATS if moved is not None else State.FIND_RED_ICONS
+            self._strategy_target_frame = frame
+            context.strategy_anchor = current_target.center
+            context.red_icons = [current_target]
+            context.current_red_icon_index = 0
+            return State.CLICK_RED_ICON
+        # ponytail: only confirmed arrivals reset the camera; manual resumes retain the sweep.
+        fresh_entry = (context.strategy_fresh_entry > 0
+                       and context.gameplay_phase == GameplayPhase.FIRST)
+        context.strategy_fresh_entry = context.strategy_fresh_entry - 1 if fresh_entry else 0
+        observed_at = self._clock()
+        views = [self._strategy_targets(frame)]
+        prefer_visible = (not self._config.strategy.camera_edge_checks_first
+                          and context.gameplay_phase == GameplayPhase.FIRST)
+        # Two of three views reject transient effects while allowing one occluded observation.
+        observe_target = (not context.strategy_seek or fresh_entry
+                          or context.strategy_stationary_count >= 2
+                          or (prefer_visible and bool(views[0])))
+        fresh = frame
+        for _ in range(2 if observe_target else 0):
+            remaining = self._config.strategy.target_observation_interval - (
+                self._clock() - observed_at)
+            if not self._sleep(max(0.0, remaining)):
+                return State.FIND_RED_ICONS
+            fresh = self._vision.capture()
+            observed_at = self._clock()
+            if self._vision.station_panel(fresh) != StationPanel.UNKNOWN:
+                return State.FIND_RED_ICONS
+            views.append(self._strategy_targets(fresh))
+            # Identical full target sets already satisfy two observations; ambiguity uses all three.
+            if len(views) == 2 and views[0] and sorted(
+                (candidate.template_name, candidate.center) for candidate in views[0]
+            ) == sorted((candidate.template_name, candidate.center) for candidate in views[1]):
+                break
+        tolerance = self._config.red_icon.fast_min_distance
+        targets: list[MatchCandidate] = []
+        for index in reversed(range(len(views))):
+            for candidate in views[index]:
+                confirmed = any(other_index != index and any(
+                    math.dist(candidate.center, other.center) < tolerance for other in other_view
+                ) for other_index, other_view in enumerate(views))
+                if confirmed and not any(math.dist(candidate.center, other.center) < tolerance
+                                         for other in targets):
+                    targets.append(candidate)
+        target = flow.strategy_target(context, targets)
+        if fresh_entry:
+            if target is None:
+                context.stats_from_find = True
+                return State.UPGRADE_STATS  # Recheck starter crates before the next bounded probe.
+            context.strategy_fresh_entry = 0
+            context.strategy_seek = False
+            logger.info("Fresh FIRST verified across observations; skipping camera sweep")
+        if (prefer_visible and context.strategy_seek and not fresh_entry and target is not None
+                and self._vision.viewport_still(frame, fresh) is not True):
+            target = None
+            context.strategy_stationary_count = 0
+            logger.info("Visible station camera not yet stable; continuing bounded sweep")
+        if context.strategy_seek and not fresh_entry:
+            if prefer_visible and target is not None:
+                context.strategy_seek = False
+                logger.info("Stable visible %s station selected before camera sweep",
+                            context.gameplay_phase.value)
+            elif context.strategy_stationary_count >= 2:
+                context.strategy_seek = False
+                context.strategy_scrolls = 0
+                context.strategy_stationary_count = 0
+            else:
+                edge_direction = -1 if context.gameplay_phase == GameplayPhase.FIRST else 1
+                # Confirm a possible endpoint before the original sweep reverses away from it.
+                direction = (edge_direction if context.strategy_stationary_count == 1
+                             else self._strategy_sweep_direction())
+                moved = self._strategy_scroll(direction)
+                if moved is not None:
+                    context.strategy_stationary_count = (
+                        context.strategy_stationary_count + 1
+                        if not moved and direction == edge_direction else 0
+                    )
+                return State.UPGRADE_STATS if moved is not None else State.FIND_RED_ICONS
+        if target is None:
+            direction = 1 if context.gameplay_phase == GameplayPhase.FIRST else -1
+            moved = self._strategy_scroll(direction)
+            if moved is not None:
+                context.strategy_stationary_count = (
+                    0 if moved else context.strategy_stationary_count + 1
+                )
+                if (context.gameplay_phase == GameplayPhase.REVERSE_MIDDLE
+                        and context.strategy_stationary_count >= 2
+                        and not context.strategy_reanchored):
+                    context.strategy_reanchored = True
+                    context.strategy_seek = True
+                    context.strategy_scrolls = context.strategy_stationary_count = 0
+            return State.UPGRADE_STATS if moved is not None else State.FIND_RED_ICONS
+        if target.center[1] < _MIN_STATION_TARGET_Y or not self._is_clickable(target.center):
+            # Leave room above the station for a complete Level/MAX panel below the HUD.
+            moved = self._strategy_scroll(-1)
+            return State.UPGRADE_STATS if moved is not None else State.FIND_RED_ICONS
+        context.strategy_scrolls = 0
+        context.strategy_stationary_count = 0
+        context.strategy_anchor = target.center
+        context.target_viewport = context.viewport
+        context.red_icons = [target]
+        self._strategy_target_frame = fresh
+        context.current_red_icon_index = 0
+        if target.template_name == "stationPosition":
+            logger.info("Positional %s station fallback at %s; panel verification required",
+                        context.gameplay_phase.value, target.center)
+        return State.CLICK_RED_ICON
 
     def _end_unlock_sequence(self, *, completed: bool) -> None:
         """One New Level attempt is over, completed or given up: tally it against the way it was

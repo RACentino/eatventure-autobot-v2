@@ -12,6 +12,9 @@ match — those states are unbounded self-loops or single-shot misses in v1, rel
 same-state watchdog (resilience/watchdog.py) as the backstop.
 
 Deliberate, user-confirmed exceptions to v1 parity -- do NOT "fix" these in a future parity pass:
+  * The approved throughput plan counts only visually confirmed restaurant arrivals. A footer
+    renovation action enters CONFIRM_RESTAURANT; opening a new restaurant's first station never
+    counts a completion. Strategy mode adds MAX-confirmed first/last/reverse-middle ordering.
   * CHECK_NEW_LEVEL keeps its verification scroll (v1 dropped it in 12e397a; restored in v2 by
     choice, see runtime/bot.py:_perform_new_level_verification_scroll).
   * HOLD_UPGRADE_STATION failures count toward consecutive_failed_upgrade_searches, and that
@@ -29,6 +32,7 @@ Deliberate, user-confirmed exceptions to v1 parity -- do NOT "fix" these in a fu
     and retrying for ~4 s never enabled it (LevelTransitionConfig.greyed_unlock_early_out).
 """
 
+import math
 from collections.abc import Iterable
 from dataclasses import dataclass
 
@@ -37,9 +41,13 @@ from eatventure_autobot.domain.config import (
     LevelTransitionConfig,
     UpgradeStationConfig,
 )
-from eatventure_autobot.domain.state import State
+from eatventure_autobot.domain.state import GameplayPhase, State, StationPanel
 from eatventure_autobot.domain.types import MatchCandidate, Point
-from eatventure_autobot.state.context import ROW_PROXIMITY_DISTANCE, FlowContext
+from eatventure_autobot.state.context import (
+    ROW_DEDUPE_DISTANCE,
+    ROW_PROXIMITY_DISTANCE,
+    FlowContext,
+)
 
 # --- FIND_RED_ICONS -----------------------------------------------------------------------
 
@@ -236,7 +244,9 @@ def decide_upgrade_stats(context: FlowContext, obs: StatsIconObservation) -> Sta
         return State.TRANSITION_LEVEL
     context.stats_checks += 1
     if not obs.stats_icon_found:
-        return State.OPEN_BOXES if obs.from_find else State.SCROLL
+        tracked = (context.strategy_anchor is not None
+                   and context.target_viewport == context.viewport)
+        return State.OPEN_BOXES if obs.from_find or tracked else State.SCROLL
     context.stats_hits += 1
     # Verified v1: the idle-pass counter clears the moment the stats icon is confirmed, before
     # any of the panel clicks below it (which then always end at OPEN_BOXES regardless).
@@ -311,6 +321,11 @@ def decide_open_boxes(
     if context.work_done:
         context.cycle_counter = 0
         return State.FIND_RED_ICONS
+    if context.strategy_anchor is not None and context.target_viewport == context.viewport:
+        # Keep the selected station during an income wait. FIND still verifies its camera;
+        # the failed-search and repeated-box escape guards above retain priority.
+        context.cycle_counter = 0
+        return State.FIND_RED_ICONS
     context.cycle_counter += 1
     if context.cycle_counter >= max(1, max_idle_pass_attempts):
         context.cycle_counter = 0
@@ -364,7 +379,7 @@ def decide_check_new_level(context: FlowContext, obs: NewLevelVerificationObserv
     context.new_level_red_icon_verified = True
     if obs.button_click_succeeded is False or obs.transition_click_succeeded is False:
         return State.CHECK_NEW_LEVEL
-    return State.WAIT_FOR_UNLOCK
+    return State.CONFIRM_RESTAURANT
 
 
 # --- TRANSITION_LEVEL ----------------------------------------------------------------------
@@ -409,8 +424,6 @@ def decide_wait_for_unlock(
     # Success is checked before the attempt cap below: the cap exists to bound consecutive
     # failures, not to discard a real success that happens to land on the last allowed attempt.
     if obs.unlock_found and obs.click_succeeded:
-        context.total_levels_completed += 1
-        context.idle_scrolls = 0
         context.wait_for_unlock_attempts = 0
         context.reset_search_cycle()
         return State.FIND_RED_ICONS
@@ -421,3 +434,64 @@ def decide_wait_for_unlock(
         context.reset_search_cycle()
         return State.FIND_RED_ICONS
     return State.WAIT_FOR_UNLOCK
+
+
+def confirm_restaurant(context: FlowContext, start_visible: bool) -> bool:
+    if not context.transition_pending:
+        return False
+    if not start_visible:
+        context.transition_departed = True
+    context.transition_confirmations = (
+        context.transition_confirmations + 1 if start_visible and context.transition_departed else 0
+    )
+    if context.transition_confirmations < 2:
+        return False
+    context.transition_pending = False
+    context.total_levels_completed += 1
+    context.idle_scrolls = 0
+    context.reset_search_cycle()
+    context.invalidate_viewport()
+    context.gameplay_phase = GameplayPhase.FIRST
+    context.strategy_seek = True
+    context.strategy_scrolls = context.strategy_stationary_count = 0
+    context.strategy_reanchored = False
+    return True
+
+
+def strategy_target(
+    context: FlowContext, candidates: Iterable[MatchCandidate]
+) -> MatchCandidate | None:
+    remaining = [c for c in candidates if not any(
+        math.dist(c.center, point) < ROW_DEDUPE_DISTANCE for point in context.maxed_positions
+    )]
+    if not remaining:
+        return None
+    if context.gameplay_phase == GameplayPhase.LAST:
+        unbuilt = [c for c in remaining if not c.template_name.startswith("stationBuilt")]
+        last = unbuilt or remaining
+        right = max(c.center[0] for c in last)
+        column = [c for c in last if right - c.center[0] < ROW_DEDUPE_DISTANCE]
+        return max(column, key=lambda c: (c.center[1], c.center[0]))
+    reverse = context.gameplay_phase != GameplayPhase.FIRST
+    edge_y = (max if reverse else min)(c.center[1] for c in remaining)
+    edge = next(c for c in remaining if c.center[1] == edge_y)
+    row = [c for c in remaining if abs(c.center[1] - edge_y) < ROW_PROXIMITY_DISTANCE
+           and (c.template_name.startswith("stationBuilt")
+                == edge.template_name.startswith("stationBuilt")
+                or max(c.bounding_box.y_min, edge.bounding_box.y_min)
+                < min(c.bounding_box.y_max, edge.bounding_box.y_max))]
+    return (max if reverse else min)(row, key=lambda c: (c.center[0], c.center[1]))
+
+
+def observe_station(context: FlowContext, panel: StationPanel) -> None:
+    if (panel != StationPanel.MAX or context.target_viewport != context.viewport
+            or context.strategy_anchor is None):
+        return
+    context.maxed_positions.add(context.strategy_anchor)
+    if context.gameplay_phase == GameplayPhase.FIRST:
+        context.gameplay_phase = GameplayPhase.LAST
+        context.strategy_seek = True
+        context.strategy_scrolls = context.strategy_stationary_count = 0
+    elif context.gameplay_phase == GameplayPhase.LAST:
+        context.gameplay_phase = GameplayPhase.REVERSE_MIDDLE
+    context.strategy_anchor = None

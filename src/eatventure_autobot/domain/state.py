@@ -1,6 +1,32 @@
 from enum import Enum, auto
 
 
+class PauseReason(Enum):
+    MANUAL = "manual"
+    DISCONNECTED = "disconnected"
+    RECOVERY = "recovery"
+    ERROR = "error"
+
+
+class GameplayPhase(Enum):
+    FIRST = "first"
+    LAST = "last"
+    REVERSE_MIDDLE = "reverse_middle"
+
+
+class StationPanel(Enum):
+    MAX = "max"
+    AFFORDABLE = "affordable"
+    LOCKED = "locked_unaffordable"
+    UNKNOWN = "unknown"
+
+
+class BoostLevel(Enum):
+    X48 = "x48"
+    X480 = "x480"
+    UNKNOWN = "unknown"
+
+
 class State(Enum):
     FIND_RED_ICONS = auto()
     CLICK_RED_ICON = auto()
@@ -13,10 +39,12 @@ class State(Enum):
     CHECK_NEW_LEVEL = auto()
     TRANSITION_LEVEL = auto()
     WAIT_FOR_UNLOCK = auto()
+    CONFIRM_RESTAURANT = auto()
 
 
 # The New Level dialog has a red X of its own, and it looks exactly like the boot popup's. While one
 # of these states owns the screen the popup-closing rule is hard-locked: no capture, no click.
 X_LOCKED_STATES = frozenset(
-    {State.CHECK_NEW_LEVEL, State.TRANSITION_LEVEL, State.WAIT_FOR_UNLOCK}
+    {State.CHECK_NEW_LEVEL, State.TRANSITION_LEVEL, State.WAIT_FOR_UNLOCK,
+     State.CONFIRM_RESTAURANT}
 )

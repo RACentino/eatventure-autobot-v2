@@ -14,11 +14,12 @@ import numpy as np
 from eatventure_autobot.domain.config import BotConfig
 from eatventure_autobot.domain.errors import CaptureError
 from eatventure_autobot.domain.protocols import InputController, Notifier
-from eatventure_autobot.domain.state import X_LOCKED_STATES, State
+from eatventure_autobot.domain.state import X_LOCKED_STATES, GameplayPhase, PauseReason, State
 from eatventure_autobot.domain.types import MatchCandidate, Point
 from eatventure_autobot.resilience.watchdog import StallWatchdog, WatchdogVerdict
 from eatventure_autobot.runtime._telemetry import _frame_thumbnail
 from eatventure_autobot.runtime.game_recovery import GameLauncher
+from eatventure_autobot.runtime.progress import ProgressLedger
 from eatventure_autobot.runtime.vision import GameVision
 from eatventure_autobot.state.context import FlowContext
 
@@ -48,15 +49,26 @@ class _RecoveryMixin:
     _relaunch_progress: tuple[int, int] | None
     _stop_requested: threading.Event
     _streak_thumb: np.ndarray | None
+    _strategy_alive_at: float
     _vision: GameVision
     _watchdog: StallWatchdog
     context: FlowContext
     state: State
+    pause_reason: PauseReason | None
+    _progress: ProgressLedger | None
+    _game_recovery_pending: bool
+    _phone_game_foreground: bool | None
 
     if TYPE_CHECKING:  # annotation only: nothing here exists at runtime
 
         def _sleep(self, duration: float) -> bool:
             ...
+
+        def _device_available(self, *, force: bool = False) -> bool: ...
+        def stop(self, *, manual: bool = False) -> None: ...
+        def _arm_resume(self, reason: str) -> None: ...
+
+        def _restart_mirror(self, cancelled: threading.Event) -> bool: ...
 
     def _dismiss_popup(self) -> bool:
         """Red-X priority: runs before the state handler, so it outranks every handler and asset.
@@ -75,6 +87,8 @@ class _RecoveryMixin:
         is not closing anything, so the rule pauses for suppress_seconds instead of starving the
         flow."""
         config = self._config.close_button
+        if self._config.strategy.enabled and self.context.strategy_waiting_liveness:
+            return False
         if not config.enabled or self.state in X_LOCKED_STATES:
             return False
         now = time.monotonic()
@@ -136,7 +150,7 @@ class _RecoveryMixin:
         self._sleep(settle if remaining is None else max(0.0, min(settle, remaining)))
         return clicked
 
-    def _recover_popups(self) -> None:
+    def _recover_popups(self) -> bool:
         """The recovery window after an adb relaunch: for the whole `relaunch_settle_seconds`
         ONLY the red-X rule runs. No handler, no other asset (red icons, boxes, unlock, scroll, idle
         click), no New Level lock and no stand-down guard (nothing is in flight in a freshly
@@ -147,51 +161,69 @@ class _RecoveryMixin:
         started = self._clock()
         deadline = started + config.relaunch_settle_seconds
         tail_from = deadline - _RECOVERY_TAIL_SECONDS
-        tail: np.ndarray | None = None
-        last: np.ndarray | None = None
+        tail_min: np.ndarray | None = None
+        tail_max: np.ndarray | None = None
         taps = capture_errors = 0
+        prepared = False
         while self._clock() < deadline and not self._stop_requested.is_set():
+            if self._progress is not None:
+                self._progress.checkpoint()
+            if not self._device_available():
+                return False
             remaining = deadline - self._clock()
+            if self._phone_game_foreground is False:
+                self._sleep(min(config.recovery_poll_seconds, remaining))
+                continue
             try:
+                self._vision.ensure_target_ready(force=not prepared)
+                prepared = True
                 frame = self._vision.capture()
                 found = self._vision.find_close_buttons(frame)
             except CaptureError as exc:
+                prepared = False
                 capture_errors += 1
                 if capture_errors == 1:
                     logger.warning("Recovery: capture failed (%s); retrying until it ends", exc)
                 self._sleep(min(config.recovery_poll_seconds, remaining))
                 continue
             last = _frame_thumbnail(frame)
-            if tail is None and self._clock() >= tail_from:
-                tail = last
+            if self._clock() >= tail_from:
+                # Periodic animation can return to its first pose; retain the whole tail's motion.
+                tail_min = last if tail_min is None else np.minimum(tail_min, last)
+                tail_max = last if tail_max is None else np.maximum(tail_max, last)
             if found:
                 taps += 1
                 self._tap_close_button(found[0], remaining=remaining, recovery=True)
             else:
                 self._sleep(min(config.recovery_poll_seconds, remaining))
         elapsed = self._clock() - started
-        if tail is None or last is None:  # stopped early or never captured: no verdict to give
+        if tail_min is None or tail_max is None:  # stopped early or never captured: no verdict
             logger.info("Recovery window ended after %.0f s: %d X tapped", elapsed, taps)
-            return
-        delta = float(np.abs(last - tail).mean())
+            return False
+        delta = float((tail_max - tail_min).mean())
         changing = delta >= self._config.game_recovery.static_frame_delta
         (logger.info if changing else logger.warning)(
             "Recovery window ended after %.0f s: %d X tapped, screen %s "
-            "(frame delta %.2f over the last %.0f s)%s",
+            "(frame span %.2f over the last %.0f s)%s",
             elapsed,
             taps,
             "changing" if changing else "still static",
             delta,
             _RECOVERY_TAIL_SECONDS,
-            "" if changing else "; the next stall alert will relaunch again",
+            "" if changing else "; remaining in recovery with capped backoff",
         )
+        return changing
 
     def _apply_watchdog(self, current_state: State) -> None:
+        if current_state == State.CONFIRM_RESTAURANT:
+            self._watchdog.reset()  # this observation has its own longer loading deadline
+            return
         verdict = self._watchdog.tick(current_state)
         if verdict is WatchdogVerdict.OK:
             return
         logger.warning("Resetting search flow (%s)", self._watchdog.last_reset_reason)
         self.context.reset_search_cycle()
+        self.context.invalidate_viewport()
         self.state = State.FIND_RED_ICONS
         self.context.state_attempt = 1
 
@@ -234,15 +266,35 @@ class _RecoveryMixin:
             return False
         return static
 
+    def _queue_game_recovery(self) -> State:
+        if self._config.strategy.enabled:
+            self._idle_started_at = self._strategy_alive_at
+        self._game_recovery_pending = True
+        self.pause_reason = PauseReason.RECOVERY
+        self.stop()
+        self._arm_resume("game appears frozen")
+        return State.FIND_RED_ICONS
+
     def _relaunch_game(self) -> State:
         """adb force-stop + launch, wait out the cold start, and restart the search from scratch.
         No cap on repeats (by choice): the next chance is another full stall alert, ~8 min away."""
         launcher, context = self._launcher, self.context
         assert launcher is not None  # _game_looks_dead only says yes when a launcher is armed
+        if not self._device_available(force=True) or self._stop_requested.is_set():
+            return State.FIND_RED_ICONS
+        self._input.release_left_button()
+        context.invalidate_viewport()
+        if self._progress is not None:
+            self._progress.checkpoint("recovery")
         progress = (context.holds_completed, context.boxes_opened_total)
         again = ""
-        if progress == self._relaunch_progress:
-            again = " (still static after the previous relaunch; the scrcpy window may be frozen)"
+        viewport_frozen = context.strategy_waiting_liveness
+        if viewport_frozen or progress == self._relaunch_progress:
+            again = (" (viewport frozen; restarting owned scrcpy)" if viewport_frozen else
+                     " (still static after the previous relaunch; the scrcpy window may be frozen)")
+            restarted = self._restart_mirror(self._stop_requested)
+            if viewport_frozen and not restarted or self._stop_requested.is_set():
+                return State.FIND_RED_ICONS
         logger.warning(
             "Game appears dead: frame unchanged for %.0f min%s; relaunching %s",
             (time.monotonic() - self._idle_started_at) / 60,
@@ -251,10 +303,14 @@ class _RecoveryMixin:
         )
         self._relaunch_progress = progress
         minutes = (time.monotonic() - self._idle_started_at) / 60
-        if launcher.relaunch():
+        self._game_recovery_pending = True
+        if launcher.relaunch(self._stop_requested):
+            context.gameplay_phase = GameplayPhase.FIRST
             context.relaunches += 1
             self._notifier.notify_game_relaunch(True, minutes)
-            self._recover_popups()  # exclusive X-only window; the main flow resumes after it
+            self._game_recovery_pending = (
+                not self._recover_popups() and not self._stop_requested.is_set()
+            )
         else:
             # Nothing restarted, so there is nothing to wait for: log (done by the launcher) and
             # carry on with the main flow as before.

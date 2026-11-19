@@ -49,10 +49,7 @@ class PyWinCtlWindowCapture(ABC):
         self._stop_event = stop_event
         self._lock = threading.RLock()
         self._window: Any = None
-        try:
-            self._locate_and_resize()
-        except CaptureError as exc:
-            logger.warning("%s", exc)
+        self._window_pid: int | None = None
 
     def _wait(self, duration: float) -> bool:
         if self._stop_event is None:
@@ -63,11 +60,7 @@ class PyWinCtlWindowCapture(ABC):
     def _find(self) -> Any:
         assert pywinctl is not None
         try:
-            matches = [
-                window
-                for window in pywinctl.getWindowsWithTitle(self._title) or []
-                if self._is_alive(window) and self._window_title(window) == self._title
-            ]
+            matches = self._live_windows()
         except Exception as exc:
             raise CaptureError(f"Cannot search for window '{self._title}': {exc}") from exc
         if len(matches) > 1:
@@ -98,6 +91,29 @@ class PyWinCtlWindowCapture(ABC):
             return str(window.title)
         except Exception:
             return ""
+
+    @staticmethod
+    def _process_id(window: Any) -> int | None:
+        try:
+            process_id = window.getPID()
+            return int(process_id) if process_id is not None and int(process_id) > 0 else None
+        except Exception:
+            return None
+
+    def mirror_windows(self) -> list[tuple[int, bool]]:
+        try:
+            return [(process_id, self._is_active(window))
+                    for window in pywinctl.getAllWindows() or []
+                    if self._is_alive(window) and (process_id := self._process_id(window))]
+        except Exception as exc:
+            raise CaptureError(f"Cannot discover scrcpy windows: {exc}") from exc
+
+    def bind_mirror(self, process_id: int) -> None:
+        if process_id <= 0:
+            raise CaptureError("Invalid scrcpy process ID")
+        with self._lock:
+            self._window_pid = process_id
+            self._window = None
 
     def _resize_hint(self) -> str:
         return ""
@@ -162,7 +178,10 @@ class PyWinCtlWindowCapture(ABC):
                 self.ensure_window()
             except CaptureError:
                 return False
-            return self._window_title(self._window) == self._title and self._is_active(self._window)
+            matches = (self._process_id(self._window) == self._window_pid
+                       if self._window_pid is not None
+                       else self._window_title(self._window) == self._title)
+            return matches and self._is_active(self._window)
 
     def describe_environment(self) -> str:
         """One line of facts for a self-stop log: is the window there, at what size and state, and
@@ -226,10 +245,15 @@ class PyWinCtlWindowCapture(ABC):
             return False
 
     def _live_windows(self) -> list[Any]:
+        windows = (pywinctl.getAllWindows() if self._window_pid is not None
+                   else pywinctl.getWindowsWithTitle(self._title))
         return [
             window
-            for window in pywinctl.getWindowsWithTitle(self._title) or []
-            if self._is_alive(window) and self._window_title(window) == self._title
+            for window in windows or []
+            if self._is_alive(window) and (
+                self._process_id(window) == self._window_pid if self._window_pid is not None
+                else self._window_title(window) == self._title
+            )
         ]
 
     @abstractmethod

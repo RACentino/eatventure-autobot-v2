@@ -341,13 +341,13 @@ class _TelemetryMixin:
 
     def _report_level_completion(self) -> None:
         now = time.monotonic()
-        started = self.context.current_level_start_time
-        elapsed = now - started if started is not None else 0.0
+        elapsed = self._level_mark().run_s - self.context.level_start_mark.run_s
         self.context.current_level_start_time = now
         logger.info(
-            "Restaurant %s completed in %.1fs", self.context.total_levels_completed, elapsed
+            "Restaurant %s completed in %.1f active handler seconds confirmed=true",
+            self.context.total_levels_completed, elapsed
         )
-        # Breakdown in RUNNING seconds (the line above is wall-clock and includes stopped time).
+        # Breakdown in active handler seconds, matching the completion message above.
         # "before" = up to the first New Level sighting, "after" = from it to the completion; a
         # level with no recorded sighting counts wholly as "before". The running time of the handler
         # that is completing the level is not in _state_seconds yet (a few seconds at most).

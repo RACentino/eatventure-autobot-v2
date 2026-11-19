@@ -81,6 +81,24 @@ class LinuxWindowCapture(PyWinCtlWindowCapture):
         # and this runs once a minute at most); a typed helper only if a second caller appears.
         if "locked=yes" in _session_facts(self._title):
             return False  # a locked session cannot be driven; leave it for the person
+        if "XFCE" in os.getenv("XDG_CURRENT_DESKTOP", "").upper().split(":"):
+            try:
+                status = subprocess.run(
+                    ["xfce4-screensaver-command", "--query"], capture_output=True, text=True,
+                    timeout=2, check=False, env={**os.environ, "LC_ALL": "C"},
+                )
+                if status.returncode == 0 and "The screensaver is active" in status.stdout:
+                    wake = subprocess.run(
+                        ["xfce4-screensaver-command", "--deactivate"], capture_output=True,
+                        timeout=2, check=False,
+                    )
+                    if wake.returncode != 0:
+                        return False
+            except FileNotFoundError:
+                pass  # XFCE also works without its optional screensaver installed.
+            except (OSError, subprocess.SubprocessError) as exc:
+                logger.warning("Cannot unblank the XFCE session: %s", exc)
+                return False
         return super().raise_window()
 
     def _resize_hint(self) -> str:

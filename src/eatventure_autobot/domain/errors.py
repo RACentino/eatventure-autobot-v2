@@ -20,3 +20,7 @@ class InputError(AutobotError):
 
 class DetectionError(AutobotError):
     """Raised when template loading or matching fails outside of a normal no-match result."""
+
+
+class ObservationError(DetectionError):
+    """The current screen cannot establish a safe action; localization may be retried."""

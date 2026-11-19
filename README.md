@@ -1,16 +1,17 @@
 # Eatventure Autobot
 
 A deterministic OpenCV screen-automation bot for the mobile game *Eatventure*, driving an Android
-device mirrored through [scrcpy](https://github.com/Genymobile/scrcpy). It runs an eleven-state
-finite state machine over masked template matching with an HSV colour gate, and sends only guarded
+device mirrored through [scrcpy](https://github.com/Genymobile/scrcpy). It runs a finite state
+machine over masked template matching with an HSV colour gate, and sends only guarded
 mouse input into a focused, exactly-sized target window.
 
-This is a greenfield rewrite that merges the behaviour of two earlier versions. See
-`GREENFIELD_PLAN.md` for the decisions, the verification trail, and what is and isn't proven.
+This rewrite merges the behaviour of two earlier versions. See [validation](VALIDATION.md)
+for the accepted results, verification evidence and remaining limitations.
+For future AI-assisted development, start with [the project handover](Handover.md).
 
 ## Requirements
 
-- **Python 3.11+** (developed and tested on 3.14)
+- **Python 3.12+** (developed and tested on 3.14)
 - **scrcpy** and **adb** on `PATH`
 - An Android device with USB debugging enabled
 - **Windows**, **Linux/X11**, or **Linux/Wayland via XWayland**
@@ -29,25 +30,50 @@ pip install -e ".[windows]" # mss
 
 ## Running
 
-The bot attaches to exactly one window titled `EatventureAuto` and resizes its client area to
-360×780. Launch scrcpy with that title, then start the bot.
+The bot uses a 360×780 client area. On Linux, starting the bot adopts an existing scrcpy window
+for the selected phone, including one with a custom title or launched with `--select-usb`.
+It verifies the live server's device serial and binds by process ID. If several user mirrors
+match, focus the one to use. If none matches, the bot launches its managed `EatventureAuto`
+window and waits for it to open. Set `GameRecoveryConfig.device_serial` when more
+than one phone is connected. The selected serial and ADB transport identify the session; reconnecting
+requires manual resume. Only the bot's own scrcpy process can be restarted, and its command never
+uses `--kill-adb-on-close`. The bot leaves your external scrcpy process running on shutdown or
+recovery. Existing-window device verification currently uses Linux `/proc`; Windows retains the
+managed-launch path.
+
+Start the bot with the commands below; it selects the device before adopting or launching scrcpy.
+See [candidate validation](VALIDATION.md) for the calibration and throughput gates. The default strategy
+maxes the first station, then the last, then the intermediate stations in reverse order. Only a
+visible MAX observation advances a phase; missing or unaffordable buttons do not. Candidate runtime
+accounting is enabled by default.
+
+Station searches combine stable detections and use screen coordinates: top row then left for
+FIRST, then the lowest target in the rightmost column for LAST. A 12-pixel column tolerance
+absorbs template-center jitter. FIRST can use a stable visible target; LAST requires
+bottom-edge verification so an on-screen middle station cannot replace an off-screen endpoint.
+Two identical nonempty target sets finish localization; differing sets use a third view.
+The observation interval includes detection work rather
+than adding an extra delay after it. Searches retain the original down-first 3/3/6/6 sweep and
+handle assets between drags. `StrategyConfig.camera_edge_checks_first=True` also requires an
+edge check before FIRST.
+
+Managed scrcpy uses the recorded test profile: always-on-top, screen-off, 360×780, no audio,
+stay-awake, H.264, zero video buffering, 12M bitrate, maximum 144 FPS and maximum dimension 1024.
+It binds the selected serial explicitly and keeps the shared ADB server alive on close.
 
 **Windows**
 ```powershell
-scrcpy --window-title "EatventureAuto"
 eatventure-autobot
 ```
 
 **Linux (X11)**
 ```bash
-scrcpy --window-title "EatventureAuto"
 eatventure-autobot
 ```
 
 **Linux (Wayland, through XWayland)**
 ```bash
-SDL_VIDEODRIVER=x11 scrcpy --window-title "EatventureAuto"
-eatventure-autobot
+SDL_VIDEODRIVER=x11 eatventure-autobot
 ```
 
 On a tiling compositor, make the scrcpy window floating so the 360×780 client size can be applied.
@@ -65,7 +91,20 @@ Hotkeys are global — they work regardless of which window has focus. The bot r
 stops itself, whenever the target window is not in the foreground.
 
 Fast mode matches a single red-icon template; Normal mode matches several and requires multiple
-templates to agree on a spot. A Fast-mode miss automatically retries the next frame in Normal mode.
+templates to agree on a spot. Station search retries the same observation in Normal mode when
+Fast mode finds no usable world arrow, including when it sees only protected HUD icons.
+
+Automatic mirror/environment recovery retains the current MAX-proven phase and discards old
+coordinates. Manual resume and process restart reacquire FIRST. Reconstructing an already-MAX
+FIRST after personal gameplay or a successful game relaunch remains a limitation when its built
+station cannot be recognized;
+the loot-box counter is never used as a restaurant identifier. For predictable ordering, start
+at a restaurant Open or city Welcome screen.
+
+The November 19 timings were accepted for this implementation: five confirmed restaurants took
+46.08, 76.55, 129.21, 135.70 and 121.35 seconds (101.78-second average). A sixth used another
+352.71 seconds before manual takeover, for 14 minutes 21.59 seconds overall; its completion was
+not confirmed. These results do not establish a complete-city average or 48/72-hour reliability.
 
 ## Configuration
 
@@ -94,24 +133,26 @@ Built bottom-up, each layer depending only on the one beneath it:
 | --- | --- | --- |
 | Foundation | `domain/` | `State`, types, validated `BotConfig`, error taxonomy, and the `Protocol` contracts every backend implements |
 | Modules | `capture/`, `input/`, `detection/`, `notifier/`, `resilience/`, `state/` | Isolated engines: per-platform capture, `pynput` input, the OpenCV matcher, Telegram, the stall watchdog, and the pure per-state decision functions |
-| Orchestration | `runtime/`, `main.py` | `GameVision` (semantic screen reads), `EatventureBot` (the eleven handlers and step loop), and the composition root |
+| Orchestration | `runtime/`, `main.py` | `GameVision` (semantic screen reads), `EatventureBot` (handlers and step loop), and the composition root |
 
 The state machine's decision logic is deliberately pure: handlers in `runtime/bot.py` perform all
 I/O, then hand an observation to a function in `state/transitions.py` that decides the next state
 and updates flow counters. That split is what makes the FSM testable without a screen or a mouse.
 
-Failure handling matches v1 exactly: a state that stalls past `state_stall_timeout_seconds` resets
-the search flow, forever, with no cap and no escalation — the watchdog never stops the bot on its
-own. Window/capture loss, lost window focus, and an unexpected handler exception are the only
-things that stop the bot and require a manual restart (Z).
+Ordinary state stalls reset the search flow; restaurant-arrival confirmation has its own loading
+deadline. Known screen-observation failures (including persistent UNKNOWN station panels)
+release input and retry localization through the same recovery path as connected-device
+game/window failures, after the desktop has been idle for
+60 seconds, retrying with delays capped at 15 minutes. Manual pause and phone disconnection latch
+a manual-resume requirement. Programming errors stay visible and never enter automatic retries.
 
 ## Development
 
 ```bash
-pytest          # unit, integration and fixture-replay tests
-ruff check .    # lint
-ruff format .   # format
-mypy            # strict type checking
+pytest                              # includes the live X11 window test when DISPLAY is set
+pytest --ignore=tests/test_capture_linux.py  # offline, without desktop interaction
+ruff check src tests tools           # lint
+mypy                                # strict source type checking
 ```
 
 `tests/fixtures/red_icons/` holds real 360×780 scrcpy-resolution frames replayed through the actual

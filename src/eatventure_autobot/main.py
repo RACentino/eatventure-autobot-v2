@@ -20,9 +20,10 @@ from eatventure_autobot.domain.types import Zone
 from eatventure_autobot.input import create_input_controller
 from eatventure_autobot.notifier import create_notifier
 from eatventure_autobot.notifier.desktop import notify_desktop
-from eatventure_autobot.runtime.bot import EatventureBot
+from eatventure_autobot.runtime.bot import EatventureBot, _config_fingerprint
 from eatventure_autobot.runtime.config_factory import build_default_config
 from eatventure_autobot.runtime.game_recovery import GameLauncher
+from eatventure_autobot.runtime.progress import ProgressLedger, candidate_identity
 from eatventure_autobot.runtime.vision import GameVision
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,7 @@ bot_instance: EatventureBot | None = None
 should_exit = threading.Event()
 toggle_requested = threading.Event()
 mode_toggle_requested = threading.Event()
+cursor_log_requested = threading.Event()
 primed_event_count: int | None = None
 _log_listener: QueueListener | None = None
 _log_handlers: list[logging.Handler] = []
@@ -63,7 +65,14 @@ def build_bot(config: BotConfig) -> EatventureBot:
     input_controller = create_input_controller(
         capture, config.input_timing, static_zones, stop_event
     )
-    launcher = GameLauncher(config.game_recovery) if config.game_recovery.enabled else None
+    launcher = GameLauncher(config.game_recovery)
+    fingerprint = _config_fingerprint(config)
+    identity, revision = candidate_identity(config, fingerprint)
+    progress = ProgressLedger(
+        config.paths.logs_dir / "progress.json", identity, revision=revision,
+        config=fingerprint, loadout=config.measurement.loadout,
+        candidate=config.measurement.candidate,
+    )
     return EatventureBot(
         config,
         vision,
@@ -72,6 +81,7 @@ def build_bot(config: BotConfig) -> EatventureBot:
         stop_event,
         game_launcher=launcher,
         desktop_notifier=notify_desktop,
+        progress=progress,
     )
 
 
@@ -94,11 +104,11 @@ def on_press(key: Any) -> None:
             return
         _pressed_keys.add(character)
     if character == "z":
-        if bot_instance is not None and bot_instance.running:
-            bot_instance.request_stop()
+        if bot_instance is not None and (bot_instance.running or bot_instance.recovering):
+            bot_instance.request_stop(manual=True)
         toggle_requested.set()
     elif character == "x":
-        _log_cursor()
+        cursor_log_requested.set()
     elif character == "m":
         mode_toggle_requested.set()
     elif character == "p":
@@ -178,8 +188,9 @@ def _toggle_bot(config: BotConfig) -> None:
     global primed_event_count
     if bot_instance is None:
         return
-    if bot_instance.running:
+    if bot_instance.running or bot_instance.manual_stop_pending:
         bot_instance.stop(manual=True)
+        bot_instance.acknowledge_manual_stop()
         # v1's exact (asymmetric) behavior: priming is cleared only on this manual-stop path.
         # An internal auto-stop (watchdog escalation, foreground loss, an unhandled exception)
         # leaves the prior event-zone selection primed, so the next Z press restarts instantly
@@ -268,6 +279,9 @@ def _run(config: BotConfig) -> None:
         elif mode_toggle_requested.is_set():
             mode_toggle_requested.clear()
             _toggle_red_icon_mode()
+        elif cursor_log_requested.is_set():
+            cursor_log_requested.clear()
+            _log_cursor()
         elif bot_instance is not None and bot_instance.running:
             bot_instance.step()
         elif bot_instance is not None:
@@ -295,6 +309,7 @@ def main() -> int:
         should_exit.clear()
         toggle_requested.clear()
         mode_toggle_requested.clear()
+        cursor_log_requested.clear()
         with _pressed_keys_lock:
             _pressed_keys.clear()
         for signal_number in (signal.SIGINT, signal.SIGTERM):
