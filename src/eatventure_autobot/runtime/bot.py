@@ -56,7 +56,8 @@ FLOW_REVISION = (
     "confirmed-transitions; device-latched-resume; bounded-hold; first-last-reverse-v1; "
     "neutral-idle-v1; two-frame-targets-v1; viewport-mirror-first-v1; phone-progress-proof-v1; "
     "visual-manual-reconstruction-v1; rightmost-column-last-v2; protected-station-reframe-v1; "
-    "observation-recovery-v1"
+    "observation-recovery-v1; footer-only-find-v1; candidate-no-drag-handoff-v1; "
+    "scroll-pause-observation-v1; known-lock-stats-v1; narrow-terminal-row-v1"
 )
 
 

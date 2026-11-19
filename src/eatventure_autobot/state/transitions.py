@@ -459,7 +459,10 @@ def confirm_restaurant(context: FlowContext, start_visible: bool) -> bool:
 
 
 def strategy_target(
-    context: FlowContext, candidates: Iterable[MatchCandidate]
+    context: FlowContext,
+    candidates: Iterable[MatchCandidate],
+    *,
+    viewport_width: int | None = None,
 ) -> MatchCandidate | None:
     remaining = [c for c in candidates if not any(
         math.dist(c.center, point) < ROW_DEDUPE_DISTANCE for point in context.maxed_positions
@@ -471,7 +474,14 @@ def strategy_target(
         last = unbuilt or remaining
         right = max(c.center[0] for c in last)
         column = [c for c in last if right - c.center[0] < ROW_DEDUPE_DISTANCE]
-        return max(column, key=lambda c: (c.center[1], c.center[0]))
+        endpoint = max(column, key=lambda c: (c.center[1], c.center[0]))
+        # A lower terminal row can sit left of a middle counter in a narrow drive-through.
+        if viewport_width is not None and right * 2 < viewport_width:
+            bottom = max(c.center[1] for c in last)
+            if bottom - endpoint.center[1] >= ROW_PROXIMITY_DISTANCE:
+                row = [c for c in last if bottom - c.center[1] < ROW_DEDUPE_DISTANCE]
+                return max(row, key=lambda c: (c.center[0], c.center[1]))
+        return endpoint
     reverse = context.gameplay_phase != GameplayPhase.FIRST
     edge_y = (max if reverse else min)(c.center[1] for c in remaining)
     edge = next(c for c in remaining if c.center[1] == edge_y)

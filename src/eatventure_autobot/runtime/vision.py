@@ -828,6 +828,14 @@ class GameVision:
             search_region=search_region,
         )
 
+    def new_level_icon_seen(self, frame: np.ndarray) -> bool:
+        zone = self._config.red_icon_zones.new_level_zone
+        if frame.shape[0] <= zone.y_min:
+            return False
+        region = BoundingBox(zone.x_min, zone.y_min, zone.x_max + 1,
+                             frame.shape[0] if zone.y_max is None else zone.y_max + 1)
+        return self.split_red_icons(self.find_red_icons(frame, search_region=region))[1]
+
     def stats_icon_seen(self, frame: np.ndarray) -> bool:
         """Read only the stats signal, keeping the matcher's full-frame coordinates."""
         zone = self._config.red_icon_zones.upgrade_zone

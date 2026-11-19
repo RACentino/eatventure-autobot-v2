@@ -240,10 +240,15 @@ class _HandlersMixin:
                 self.context, flow.RedIconScanObservation(True, False, ())
             )
 
+        if self._config.strategy.enabled:
+            if self._vision.new_level_icon_seen(frame):
+                return flow.decide_find_red_icons(
+                    self.context, flow.RedIconScanObservation(False, True, ())
+                )
+            return self._handle_strategy_find(frame)
+
         candidates = self._vision.find_red_icons(frame)
         actionable, new_level_seen, _ = self._vision.split_red_icons(candidates)
-        if self._config.strategy.enabled and not new_level_seen:
-            return self._handle_strategy_find(frame)
         # Verified v1 gate: retry only when neither an ordinary icon nor the footer new-level icon
         # was seen. A lone stats badge (classified out by split_red_icons) must not suppress it,
         # but a new-level badge does: that goes straight to CHECK_NEW_LEVEL.
@@ -292,6 +297,9 @@ class _HandlersMixin:
         if self._config.strategy.enabled:
             panel = self._observe_strategy_panel(frame)
             if panel in (StationPanel.MAX, StationPanel.UNKNOWN):
+                return State.UPGRADE_STATS
+            if panel == StationPanel.LOCKED:
+                self.context.stats_from_find = True
                 return State.UPGRADE_STATS
             region = self._vision.station_panel_bounds(frame)
         result = (self._vision.find_unlock_button(frame, search_region=region)
@@ -687,7 +695,6 @@ class _HandlersMixin:
     def _handle_scroll(self) -> State:
         if self._config.strategy.enabled:
             self.context.scan_boxes_after_scroll = True
-            self._sleep(self._config.scroll.post_scroll_settle)
             return State.OPEN_BOXES
         if not self._click_idle():
             return State.SCROLL
@@ -929,11 +936,16 @@ class _HandlersMixin:
                     "down" if direction > 0 else "up", "up" if direction > 0 else "down",
                     self.context.strategy_scrolls, self._config.strategy.viewport_limit)
         self.context.invalidate_viewport()
-        if not (self._sleep(scroll.post_scroll_settle) and self._sleep(scroll.interval_pause)):
+        if not self._sleep(scroll.post_scroll_settle):
+            return None
+        interval = self._config.strategy.target_observation_interval
+        # Use the mandatory pause to separate the first pair of camera observations.
+        settled = self._vision.capture() if scroll.interval_pause >= interval else None
+        if not self._sleep(scroll.interval_pause):
             return None
         previous = self._vision.capture()
-        still_samples = 0
-        interval = self._config.strategy.target_observation_interval
+        still_samples = int(settled is not None and
+                            self._vision.viewport_still(settled, previous) is True)
         samples = max(
             _VIEWPORT_MAX_SETTLE_SAMPLES,
             math.ceil(_VIEWPORT_MAX_SETTLE_SAMPLES * scroll.post_scroll_settle / interval),
@@ -1132,7 +1144,7 @@ class _HandlersMixin:
                 if confirmed and not any(math.dist(candidate.center, other.center) < tolerance
                                          for other in targets):
                     targets.append(candidate)
-        target = flow.strategy_target(context, targets)
+        target = flow.strategy_target(context, targets, viewport_width=frame.shape[1])
         if fresh_entry:
             if target is None:
                 context.stats_from_find = True
