@@ -47,6 +47,8 @@ class FlowContext:
     strategy_waiting_liveness: bool = False
     strategy_unknown_panels: int = 0
     strategy_anchor: Point | None = None
+    strategy_expected_last: Point | None = None  # projected into the current viewport after a drag
+    strategy_short_last_reframe: bool = False
     maxed_positions: set[Point] = field(default_factory=set)
     transition_pending: bool = False
     transition_departed: bool = False
@@ -170,6 +172,10 @@ class FlowContext:
 
     def invalidate_viewport(self) -> None:
         self.viewport += 1
+        if self.strategy_expected_last is not None:
+            self.strategy_seek = True
+            self.strategy_stationary_count = 0
+        self.strategy_expected_last = None
         self.target_viewport = None
         self.strategy_anchor = None
         self.red_icons.clear()

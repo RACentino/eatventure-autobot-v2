@@ -58,7 +58,8 @@ FLOW_REVISION = (
     "edge-gated-station-matching-v1; bounded-renovation-verification-v1; "
     "consistent-last-two-views-v1; economy-footer-preemption-v1; "
     "open-upgrade-handoff-v1; repeat-hold-observation-v1; shared-renovation-frame-v1; "
-    "step-local-asset-frame-v1; bounded-panel-preprocessing-v1"
+    "step-local-asset-frame-v1; bounded-panel-preprocessing-v1; "
+    "last-column-v3; tracked-last-reframe-v1; active-last-retry-v1; direct-economy-and-open-v2"
 )
 
 

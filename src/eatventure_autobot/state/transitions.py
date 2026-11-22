@@ -49,6 +49,10 @@ from eatventure_autobot.state.context import (
     FlowContext,
 )
 
+# Half the width of the calibrated flat station marker. The known neighboring
+# columns are 40px apart, while arrows and footprints can stagger by over 12px.
+_LAST_COLUMN_TOLERANCE = 24
+
 # --- FIND_RED_ICONS -----------------------------------------------------------------------
 
 
@@ -488,10 +492,17 @@ def strategy_target(
     if not remaining:
         return None
     if context.gameplay_phase == GameplayPhase.LAST:
+        expected = context.strategy_expected_last
+        if expected is not None:
+            # A footprint center can sit below the same station's red-arrow click point.
+            matching = [c for c in remaining
+                        if abs(c.center[0] - expected[0]) < ROW_DEDUPE_DISTANCE
+                        and abs(c.center[1] - expected[1]) < _LAST_COLUMN_TOLERANCE]
+            return matching[0] if len(matching) == 1 else None
         unbuilt = [c for c in remaining if not c.template_name.startswith("stationBuilt")]
         last = unbuilt or remaining
         right = max(c.center[0] for c in last)
-        column = [c for c in last if right - c.center[0] < ROW_DEDUPE_DISTANCE]
+        column = [c for c in last if right - c.center[0] < _LAST_COLUMN_TOLERANCE]
         endpoint = max(column, key=lambda c: (c.center[1], c.center[0]))
         # A lower terminal row can sit left of a middle counter in a narrow drive-through.
         if viewport_width is not None and right * 2 < viewport_width:
@@ -518,6 +529,7 @@ def observe_station(context: FlowContext, panel: StationPanel) -> None:
     context.maxed_positions.add(context.strategy_anchor)
     if context.gameplay_phase == GameplayPhase.FIRST:
         context.gameplay_phase = GameplayPhase.LAST
+        context.strategy_short_last_reframe = False
         context.strategy_seek = True
         context.strategy_scrolls = context.strategy_stationary_count = 0
     elif context.gameplay_phase == GameplayPhase.LAST:

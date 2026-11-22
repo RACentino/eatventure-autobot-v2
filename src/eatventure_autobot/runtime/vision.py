@@ -521,6 +521,22 @@ class GameVision:
 
     def viewport_still(self, before: np.ndarray, after: np.ndarray) -> bool | None:
         """Camera translation in world pixels; uncertain images cannot prove an edge."""
+        motion = self._viewport_motion(before, after)
+        return None if motion is None else motion[1] <= _VIEWPORT_MAX_DRIFT
+
+    def viewport_translation(self, before: np.ndarray, after: np.ndarray) -> Point | None:
+        """Track a station point only when the observed motion is close to a translation."""
+        motion = self._viewport_motion(before, after, pad_vertical=True)
+        if motion is None:
+            return None
+        (dx, dy), drift = motion
+        if drift - math.hypot(dx, dy) > _VIEWPORT_MAX_DRIFT:
+            return None
+        return round(dx), round(dy)
+
+    def _viewport_motion(
+        self, before: np.ndarray, after: np.ndarray, *, pad_vertical: bool = False,
+    ) -> tuple[tuple[float, float], float] | None:
         if before.shape != after.shape:
             return None
         margin = before.shape[1] // 6
@@ -533,14 +549,19 @@ class GameVision:
             return None
         height, width = gray[0].shape
         window = cv2.createHanningWindow((width, height), cv2.CV_32F)
+        if pad_vertical:
+            # A long vertical drag can exceed half the view. Padding prevents wraparound.
+            window = np.pad(window, ((0, height), (0, 0)))
         # Crowd effects obscure fine detail; retry weak matches with calibrated low-pass filtering.
         for sigma in (0, 5):
             images = [cv2.GaussianBlur(image, (0, 0), sigma) if sigma else image.copy()
                       for image in gray]
+            if pad_vertical:
+                images = [np.pad(image, ((0, height), (0, 0))) for image in images]
             shift, response = cv2.phaseCorrelate(images[0], images[1], window)
             if (math.isfinite(response) and response >= _VIEWPORT_MIN_RESPONSE
                     and all(math.isfinite(value) for value in shift)):
-                return math.hypot(*shift) <= _VIEWPORT_MAX_DRIFT
+                return (shift[0], shift[1]), math.hypot(*shift)
         # Animated crowds can overwhelm correlation. Require distributed feature consensus
         # before trusting the fallback; a few matching sprites cannot prove a stationary view.
         images = [image.astype(np.uint8) for image in gray]
@@ -576,7 +597,8 @@ class GameVision:
             corners = np.asarray([(0, 0), (width - 1, 0), (0, height - 1),
                                   (width - 1, height - 1)], dtype=np.float32)
             drift = corners @ transform[:, :2].T + transform[:, 2] - corners
-            return bool(np.linalg.norm(drift, axis=1).max() <= _VIEWPORT_MAX_DRIFT)
+            dx, dy = drift.mean(axis=0)
+            return (float(dx), float(dy)), float(np.linalg.norm(drift, axis=1).max())
         return None
 
     def _viewport_background(

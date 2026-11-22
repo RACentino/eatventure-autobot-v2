@@ -19,7 +19,7 @@ from eatventure_autobot.runtime._telemetry import _frame_thumbnail
 from eatventure_autobot.runtime.progress import ProgressLedger
 from eatventure_autobot.runtime.vision import GameVision
 from eatventure_autobot.state import transitions as flow
-from eatventure_autobot.state.context import FlowContext, LevelMark
+from eatventure_autobot.state.context import ROW_DEDUPE_DISTANCE, FlowContext, LevelMark
 
 logger = logging.getLogger("eatventure_autobot.runtime.bot")
 
@@ -426,20 +426,31 @@ class _HandlersMixin:
         flow.observe_station(context, panel)
         return panel
 
-    def _verify_upgrade_station_round(self) -> tuple[Point, float] | None:
-        """One full verify_search_attempts retry loop: base threshold on the first attempt,
-        relaxed threshold afterward. Used for the single verification round in
-        _verify_upgrade_station."""
+    def _verify_upgrade_station_round(
+        self, *, frame: np.ndarray | None = None, near: Point | None = None,
+    ) -> tuple[Point, float] | None:
+        """Look near the previous position first, then widen the search if it is lost.
+
+        Each retry uses a fresh capture and the configured relaxed threshold.
+        """
         station = self._config.upgrade_station
         base = self._config.thresholds.upgrade_station
         relaxed = base - station.threshold_relaxation
         attempts = max(1, station.verify_search_attempts)
+        region = self._upgrade_search_region(near) if near is not None else None
         for attempt in range(attempts):
             threshold = base if attempt == 0 else relaxed
-            frame = self._vision.capture(
-                max_y=self._config.capture_regions.upgrade_station_search_y
-            )
-            result = self._vision.find_upgrade_station(frame, threshold)
+            if frame is None:
+                frame = self._vision.capture(
+                    max_y=self._config.capture_regions.upgrade_station_search_y
+                )
+            result = self._vision.find_upgrade_station(frame, threshold, search_region=region)
+            if region is not None and (
+                result.best is None or not self._is_clickable(result.best.center)
+            ):
+                region = None  # The panel may have moved. Relocate on this frame.
+                result = self._vision.find_upgrade_station(frame, threshold)
+            frame = None  # Every retry must observe the screen again.
             if result.best is not None and self._is_clickable(result.best.center):
                 return result.best.center, relaxed
             # v1 doesn't sleep before giving up on the last attempt.
@@ -454,13 +465,20 @@ class _HandlersMixin:
         if not self._sleep(station.verify_settle_delay):
             return None
 
-        first = self._verify_upgrade_station_round()
+        candidate = self._config.strategy.enabled
+        frame = None
+        if candidate and station.verify_settle_delay == 0:
+            frame = self._capture_first_asset_frame(
+                self._config.capture_regions.upgrade_station_search_y
+            )
+        first = self._verify_upgrade_station_round(
+            frame=frame, near=self.context.upgrade_station_pos if candidate else None,
+        )
         if first is None:
             logger.info("Upgrade station was not visible during verification")
             return None
 
         target, _ = first
-        candidate = self._config.strategy.enabled
         if not candidate and not self._input.precise_click(*target):
             logger.info("Upgrade station verification click failed at (%s, %s)", *target)
             return None
@@ -469,7 +487,7 @@ class _HandlersMixin:
         if not self._sleep(interval):
             return None
 
-        second = self._verify_upgrade_station_round()
+        second = self._verify_upgrade_station_round(near=target if candidate else None)
         if second is None:
             logger.info("Upgrade station was not visible during verification")
             return None
@@ -477,6 +495,13 @@ class _HandlersMixin:
             logger.info("Upgrade control moved between verification frames; retrying")
             return None
         return second
+
+    def _upgrade_search_region(self, position: Point) -> BoundingBox:
+        tolerance = self._config.upgrade_station.disappear_position_tolerance_px
+        return BoundingBox(
+            position[0] - tolerance, position[1] - tolerance,
+            position[0] + tolerance + 1, position[1] + tolerance + 1,
+        )
 
     def _station_seen_near(
         self, frame: np.ndarray, threshold: float, position: Point,
@@ -493,10 +518,7 @@ class _HandlersMixin:
         assuming the real popup is confined to any particular screen region."""
         station = self._config.upgrade_station
         tolerance = station.disappear_position_tolerance_px
-        region = BoundingBox(
-            position[0] - tolerance, position[1] - tolerance,
-            position[0] + tolerance + 1, position[1] + tolerance + 1,
-        )
+        region = self._upgrade_search_region(position)
         result = self._vision.find_upgrade_station(frame, threshold, search_region=region)
         if result.found and result.best is not None:
             dx = abs(result.best.center[0] - position[0])
@@ -554,6 +576,13 @@ class _HandlersMixin:
 
         return check
 
+    def _economy_level_transition(
+        self, frame: np.ndarray, *, button_max_y: int | None = None,
+    ) -> State | None:
+        if self._vision.find_new_level_button(frame[:button_max_y]).found:
+            return State.TRANSITION_LEVEL
+        return self._candidate_renovation_footer(frame)
+
     def _handle_upgrade_stats(self) -> State:
         # Consumed on every entry, even through the idle-click bail-out below, so it can't go stale.
         from_find = self.context.stats_from_find
@@ -563,20 +592,20 @@ class _HandlersMixin:
         if not self._click_idle():
             return State.OPEN_BOXES
         frame = self._capture_first_asset_frame(self._config.capture_regions.extended_search_y)
-        if self._vision.find_new_level_button(
-            frame[: self._config.capture_regions.max_search_y]
-        ).found:
-            return flow.decide_upgrade_stats(
-                self.context, flow.StatsIconObservation(True, False, from_find)
-            )
-        if (renovation := self._candidate_renovation_footer(frame)) is not None:
-            return renovation
+        transition = self._economy_level_transition(
+            frame, button_max_y=self._config.capture_regions.max_search_y,
+        )
+        if transition is not None:
+            return transition
 
         stats_seen = self._vision.stats_icon_seen(frame)
         if not stats_seen:
-            return flow.decide_upgrade_stats(
+            next_state = flow.decide_upgrade_stats(
                 self.context, flow.StatsIconObservation(False, False, from_find)
             )
+            if next_state == State.SCROLL and self._config.strategy.enabled:
+                return State.OPEN_BOXES
+            return next_state
 
         targets = self._config.click_targets
         button_clicked = self._input.click(*targets.stats_upgrade_button_pos)
@@ -626,30 +655,16 @@ class _HandlersMixin:
         frame = self._capture_first_asset_frame(box_search_y)
         self._record_box_scan()
         self._update_box_scan_thumbnail(frame)
-        new_level = self._vision.find_new_level_button(frame).found
-        if new_level:
-            logger.info("New level found while opening boxes")
-        elif (renovation := self._candidate_renovation_footer(frame)) is not None:
-            return renovation
-
-        # These crates come from purchases already made. Station spending is gated earlier.
-        boxes = [] if new_level else self._vision.find_boxes(frame)
-        if not new_level and not boxes and self._scrcpy_recovery(
-            self._config.scrcpy_recovery.box_delay
-        ):
-            frame = self._vision.capture(max_y=box_search_y)
-            new_level = self._vision.find_new_level_button(frame).found
-            if not new_level:
-                if (renovation := self._candidate_renovation_footer(frame)) is not None:
-                    return renovation
-                boxes = self._vision.find_boxes(frame)
-        if new_level:
-            return flow.decide_open_boxes(
-                self.context,
-                self._config.upgrade_station,
-                self._config.scroll.max_idle_pass_attempts,
-                flow.BoxCycleObservation(True),
-            )
+        for attempt in range(2):
+            if attempt:
+                if not self._scrcpy_recovery(self._config.scrcpy_recovery.box_delay):
+                    break
+                frame = self._vision.capture(max_y=box_search_y)
+            if (transition := self._economy_level_transition(frame)) is not None:
+                return transition
+            boxes = self._vision.find_boxes(frame)
+            if boxes:
+                break
 
         if self._box_scan_needs_recovery(frame, len(boxes)):
             return self._queue_game_recovery()
@@ -667,11 +682,15 @@ class _HandlersMixin:
             return renovation
         if self.context.box_guard_trips != trips:
             logger.warning(
-                "Box loop guard: %s box passes without a scroll or upgrade; forcing a scroll. "
+                "Box loop guard: %s box passes without a scroll or upgrade; %s. "
                 "Last clicked positions: %s",
                 self._config.upgrade_station.max_box_only_passes,
+                "resuming station search" if self._config.strategy.enabled else "forcing a scroll",
                 [(x, y, round(conf, 3)) for x, y, conf in self._recent_box_clicks],
             )
+        if next_state == State.SCROLL and self._config.strategy.enabled:
+            # Strategy localization owns camera movement. This view already had its crate pass.
+            return State.FIND_RED_ICONS
         return next_state
 
     def _update_box_scan_thumbnail(self, frame: np.ndarray) -> None:
@@ -726,8 +745,10 @@ class _HandlersMixin:
         for index, box in enumerate(clickable):
             if index:
                 frame = self._vision.capture(max_y=box_search_y)
-                if (renovation := self._candidate_renovation_footer(frame)) is not None:
-                    return opened, renovation
+                if self._config.strategy.enabled and (
+                    transition := self._economy_level_transition(frame)
+                ) is not None:
+                    return opened, transition
                 fresh = self._vision.find_boxes(frame)
                 refreshed = next((item for item in fresh
                                   if item.bounding_box.iou(box.bounding_box) > 0.2
@@ -965,6 +986,13 @@ class _HandlersMixin:
                 self._progress.confirm_transition()
             self._report_level_completion()
             self._end_unlock_sequence(completed=True)
+            if self._config.strategy.enabled and self._vision.find_new_level_button(
+                frame[: self._config.capture_regions.max_search_y]
+            ).found:
+                # The transition handler verifies the button again before clicking.
+                return flow.decide_find_red_icons(
+                    self.context, flow.RedIconScanObservation(True, False, ())
+                )
             return State.FIND_RED_ICONS
         if self._clock() - self.context.transition_started >= (
             self._config.level_transition.confirmation_timeout
@@ -978,7 +1006,7 @@ class _HandlersMixin:
         self._sleep(self._config.level_transition.unlock_search_interval)
         return State.CONFIRM_RESTAURANT
 
-    def _strategy_scroll(self, direction: int) -> bool | None:
+    def _strategy_scroll(self, direction: int, *, shorter: bool = False) -> bool | None:
         """False means unchanged views; True means changed/uncertain; None cancels the attempt."""
         if self.context.strategy_scrolls >= self._config.strategy.viewport_limit:
             raise _ViewportError("Station viewport search limit reached; recalibrate localization")
@@ -987,6 +1015,8 @@ class _HandlersMixin:
         scroll = self._config.scroll
         x, y = self._config.click_targets.scroll_start_pos
         distance = round(scroll.pixel_step * scroll.distance_ratio)
+        if shorter:
+            distance = max(1, distance // 2)
         destination = y - direction * distance
         moved = self._input.drag(x, y, x, destination, duration=scroll.duration)
         if not moved:
@@ -1158,8 +1188,7 @@ class _HandlersMixin:
             return State.FIND_RED_ICONS
         if (current_target.center[1] < _MIN_STATION_TARGET_Y
                 or not self._is_clickable(current_target.center)):
-            moved = self._strategy_scroll(-1)
-            return State.UPGRADE_STATS if moved is not None else State.FIND_RED_ICONS
+            return self._reframe_strategy_target(frame, current_target.center)
         self._strategy_target_frame = frame
         context.strategy_anchor = current_target.center
         context.red_icons = [current_target]
@@ -1261,22 +1290,61 @@ class _HandlersMixin:
             if next_state is not None:
                 return next_state
         if target is None:
+            if context.strategy_expected_last is not None:
+                if context.state_attempt >= self._config.upgrade_station.search_attempts:
+                    return self._retry_last_reframe("projected target remained unobservable")
+                return State.FIND_RED_ICONS
             return self._scroll_for_missing_station()
         if target.center[1] < _MIN_STATION_TARGET_Y or not self._is_clickable(target.center):
             # Leave room above the station for a complete Level/MAX panel below the HUD.
-            moved = self._strategy_scroll(-1)
-            return State.UPGRADE_STATS if moved is not None else State.FIND_RED_ICONS
+            return self._reframe_strategy_target(fresh, target.center)
         context.strategy_scrolls = 0
         context.strategy_stationary_count = 0
+        context.strategy_expected_last = None
         context.strategy_anchor = target.center
         context.target_viewport = context.viewport
         context.red_icons = [target]
         self._strategy_target_frame = fresh
         context.current_red_icon_index = 0
-        if target.template_name == "stationPosition":
+        if context.gameplay_phase == GameplayPhase.LAST:
+            logger.info("Selected LAST station at %s (%s)", target.center, target.template_name)
+        elif target.template_name == "stationPosition":
             logger.info("Positional %s station fallback at %s; panel verification required",
                         context.gameplay_phase.value, target.center)
         return State.CLICK_RED_ICON
+
+    def _reframe_strategy_target(self, frame: np.ndarray, point: Point) -> State:
+        context = self.context
+        last = context.gameplay_phase == GameplayPhase.LAST
+        if last and context.strategy_scrolls >= self._config.strategy.viewport_limit:
+            return self._retry_last_reframe("reframe gesture limit reached")
+        moved = self._strategy_scroll(-1, shorter=last and context.strategy_short_last_reframe)
+        if moved is None:
+            return State.FIND_RED_ICONS
+        if last:
+            if not moved:
+                return self._retry_last_reframe("camera did not move")
+            after = self._vision.capture(max_y=frame.shape[0])
+            shift = self._vision.viewport_translation(frame, after)
+            if shift is None or abs(shift[0]) >= ROW_DEDUPE_DISTANCE or shift[1] <= 0:
+                return self._retry_last_reframe("camera displacement could not be verified")
+            context.strategy_expected_last = (point[0] + shift[0], point[1] + shift[1])
+            context.strategy_seek = False
+        return State.UPGRADE_STATS
+
+    def _retry_last_reframe(self, reason: str) -> State:
+        context = self.context
+        context.invalidate_viewport()
+        context.strategy_seek = True
+        context.strategy_scrolls = context.strategy_stationary_count = 0
+        # Shorter drags preserve overlap for tracking. Retry the full drag if the short one fails.
+        context.strategy_short_last_reframe = not context.strategy_short_last_reframe
+        context.stats_from_find = context.scan_boxes_after_scroll = True
+        logger.warning(
+            "Retrying LAST from the bottom edge (%s); next reframe is %s",
+            reason, "half distance" if context.strategy_short_last_reframe else "full distance",
+        )
+        return State.UPGRADE_STATS
 
     def _seek_station_edge(self, visible_target: bool) -> State | None:
         context = self.context
