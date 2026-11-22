@@ -39,6 +39,10 @@ class _ViewportError(ObservationError):
     """Bounded viewport readiness failure, separate from unrelated detector failures."""
 
 
+class _StationSearchSpent(_ViewportError):
+    """A search pass ended without a verified station."""
+
+
 class _HandlersMixin:
     # What this mixin reaches on self. EatventureBot.__init__ (bot.py) creates the attributes;
     # the methods live in bot.py or another mixin.
@@ -60,6 +64,7 @@ class _HandlersMixin:
     _strategy_health_thumb: np.ndarray | None
     _strategy_target_frame: np.ndarray | None
     _strategy_alive_at: float
+    _phone_game_foreground: bool | None
     _stop_requested: Event
 
     if TYPE_CHECKING:  # annotation only: nothing here exists at runtime
@@ -1008,9 +1013,18 @@ class _HandlersMixin:
 
     def _strategy_scroll(self, direction: int, *, shorter: bool = False) -> bool | None:
         """False means unchanged views; True means changed/uncertain; None cancels the attempt."""
-        if self.context.strategy_scrolls >= self._config.strategy.viewport_limit:
-            raise _ViewportError("Station viewport search limit reached; recalibrate localization")
-        self.context.strategy_scrolls += 1
+        context = self.context
+        if context.strategy_scrolls >= self._config.strategy.viewport_limit:
+            raise _StationSearchSpent("Station viewport gesture budget spent")
+        if context.strategy_retry_delay:
+            remaining = context.strategy_probe_at - self._clock()
+            if remaining > 0:
+                self._sleep(min(remaining, self._config.scroll.post_scroll_settle))
+                return None  # recheck on a fresh frame before sending input
+            context.strategy_retry_delay = min(4, 2 * context.strategy_retry_delay)
+            context.strategy_probe_at = self._clock() + context.strategy_retry_delay
+        context.strategy_scrolls += 1
+        context.strategy_stationary_count = 0  # only a completed observation can restore evidence
         before = self._vision.capture()
         scroll = self._config.scroll
         x, y = self._config.click_targets.scroll_start_pos
@@ -1058,40 +1072,89 @@ class _HandlersMixin:
         thumb = _frame_thumbnail(frame)
         previous = self._strategy_health_thumb
         now = self._clock()
-        changed = previous is None or float(np.abs(thumb - previous).mean()) >= (
-            self._config.game_recovery.static_recent_delta
-        )
-        if changed:
+        recovery = self._config.game_recovery
+        delta = 0.0 if previous is None else float(np.abs(thumb - previous).mean())
+        moving = previous is not None and delta >= recovery.static_frame_delta
+        if (context.strategy_waiting_liveness and moving
+                and self._station_view_live(frame, moving=True)):
+            return self._retry_station_pass("game activity returned")
+        if self._stop_requested.is_set():
+            return State.FIND_RED_ICONS
+        if previous is None or delta >= recovery.static_recent_delta:
             self._strategy_alive_at = now
             self._strategy_health_thumb = thumb
         elif (now - self._strategy_alive_at >= self._config.game_recovery.stale_after_seconds
                 and self._config.game_recovery.enabled):
             return self._queue_game_recovery()
         if context.strategy_waiting_liveness:
-            if changed:
-                self._arm_resume("viewport activity returned; retry localization")
-                self.stop()
-            else:
-                self._sleep(self._config.scroll.post_scroll_settle)
+            self._sleep(self._config.scroll.post_scroll_settle)
             return State.FIND_RED_ICONS
         try:
             return self._strategy_locate(frame)
         except _ViewportError as exc:
-            if not self._config.game_recovery.enabled:
+            if not isinstance(exc, _StationSearchSpent) and not self._config.game_recovery.enabled:
                 raise
             if self._recover_stalled_mirror():
                 return State.FIND_RED_ICONS
-            fresh = _frame_thumbnail(self._vision.capture())
-            if float(np.abs(fresh - thumb).mean()) >= (
-                self._config.game_recovery.static_recent_delta
+            if (
+                isinstance(exc, _StationSearchSpent)
+                and self._station_view_live(frame, moving=moving)
             ):
-                raise
+                return self._retry_station_pass(str(exc))
+            if self._stop_requested.is_set():
+                return State.FIND_RED_ICONS
             context.strategy_waiting_liveness = True
             context.invalidate_viewport()
             if self._progress is not None:
                 self._progress.checkpoint("recovery")
-            logger.warning("%s; suspending input while checking screen liveness", exc)
+            logger.warning("%s; checking screen liveness phase=%s gestures=%d",
+                           exc, context.gameplay_phase.value, context.strategy_scrolls)
             return State.FIND_RED_ICONS
+
+    def _station_view_live(self, frame: np.ndarray, *, moving: bool) -> bool:
+        """After a failed pass, require a fresh, foreground game view before resuming input."""
+        if not self._sleep(self._config.strategy.target_observation_interval):
+            return False
+        fresh = self._vision.capture(max_y=frame.shape[0])
+        thumb = _frame_thumbnail(fresh)
+        if not moving and float(np.abs(thumb - _frame_thumbnail(frame)).mean()) < (
+            self._config.game_recovery.static_frame_delta
+        ):
+            return False
+        if (not self._device_available(force=True) or self._stop_requested.is_set()
+                or not self._input.is_target_foreground()):
+            return False
+        if self._phone_game_foreground is False:
+            return False
+        if not (
+            (self._phone_game_foreground is True and self._vision.viewport_still(frame, fresh)
+             is True)
+            or self._vision.city_arrival(fresh) or self._vision.restaurant_start(fresh)
+            or self._vision.find_new_level_button(
+                fresh[:self._config.capture_regions.max_search_y]).found
+            or self._vision.new_level_icon_seen(fresh) or self._vision.stats_icon_seen(fresh)
+            or self._vision.station_targets(fresh) or self._vision.find_boxes(fresh)
+        ):
+            return False
+        if self._stop_requested.is_set():
+            return False
+        self._strategy_alive_at = self._clock()
+        self._strategy_health_thumb = thumb
+        return True
+
+    def _retry_station_pass(self, reason: str) -> State:
+        context = self.context
+        logger.info("Station search retry phase=%s gestures=%d reason=%s",
+                    context.gameplay_phase.value, context.strategy_scrolls, reason)
+        context.invalidate_viewport()
+        context.strategy_waiting_liveness = False
+        context.strategy_seek = True
+        context.strategy_scrolls = context.strategy_stationary_count = 0
+        context.strategy_retry_delay = context.strategy_retry_delay or 1
+        context.strategy_probe_at = self._clock() + context.strategy_retry_delay
+        if self._progress is not None:
+            self._progress.checkpoint("active")
+        return State.FIND_RED_ICONS  # fresh New Level / city check before economy work or a probe
 
     def _strategy_sweep_direction(self) -> int:
         context = self.context
@@ -1109,7 +1172,7 @@ class _HandlersMixin:
         # both original cycles, then allow one largest-leg approach plus two edge checks.
         if remaining < scroll.max_cycles * scroll.increment_step + 2:
             return -1 if context.gameplay_phase == GameplayPhase.FIRST else 1
-        raise _ViewportError("Station search exhausted the configured down/up sweep")
+        raise _StationSearchSpent("Station search exhausted the configured down/up sweep")
 
     def _strategy_targets(self, frame: np.ndarray) -> list[MatchCandidate]:
         targets = [target for target in self._vision.station_targets(frame)
@@ -1273,6 +1336,11 @@ class _HandlersMixin:
             return observation
         fresh, targets = observation
         target = flow.strategy_target(context, targets, viewport_width=ready_frame.shape[1])
+        if (context.strategy_retry_delay and self._clock() < context.strategy_probe_at
+                and target is None
+                and (self._vision.stats_icon_seen(fresh) or self._vision.find_boxes(fresh))):
+            context.stats_from_find = context.scan_boxes_after_scroll = True
+            return State.UPGRADE_STATS
         if fresh_entry:
             if target is None:
                 context.stats_from_find = True
@@ -1298,6 +1366,10 @@ class _HandlersMixin:
         if target.center[1] < _MIN_STATION_TARGET_Y or not self._is_clickable(target.center):
             # Leave room above the station for a complete Level/MAX panel below the HUD.
             return self._reframe_strategy_target(fresh, target.center)
+        if context.strategy_retry_delay:
+            logger.info("Station search reacquired phase=%s gestures=%d",
+                        context.gameplay_phase.value, context.strategy_scrolls)
+            context.strategy_retry_delay = 0
         context.strategy_scrolls = 0
         context.strategy_stationary_count = 0
         context.strategy_expected_last = None
@@ -1359,23 +1431,31 @@ class _HandlersMixin:
             return None
         edge_direction = -1 if context.gameplay_phase == GameplayPhase.FIRST else 1
         # Verify a possible endpoint before the sweep reverses away from it.
-        direction = (edge_direction if context.strategy_stationary_count == 1
-                     else self._strategy_sweep_direction())
+        approach_edge = context.strategy_retry_delay or context.strategy_stationary_count in (1, -2)
+        direction = edge_direction if approach_edge else self._strategy_sweep_direction()
+        count = context.strategy_stationary_count
         moved = self._strategy_scroll(direction)
         if moved is not None:
-            context.strategy_stationary_count = (
-                context.strategy_stationary_count + 1 if not moved and direction == edge_direction
-                else 0
-            )
+            if direction == edge_direction:
+                # -2 remembers the opposite edge until we reach the required endpoint.
+                if not moved:
+                    context.strategy_stationary_count = max(0, count) + 1
+                else:
+                    context.strategy_stationary_count = -2 if count == -2 else 0
+            else:
+                context.strategy_stationary_count = 0 if moved else max(-2, min(0, count) - 1)
         return State.UPGRADE_STATS if moved is not None else State.FIND_RED_ICONS
 
     def _scroll_for_missing_station(self) -> State:
         context = self.context
+        if context.strategy_stationary_count >= 2:
+            raise _StationSearchSpent("Verified empty end of the inward station search")
         direction = 1 if context.gameplay_phase == GameplayPhase.FIRST else -1
+        count = context.strategy_stationary_count
         moved = self._strategy_scroll(direction)
         if moved is None:
             return State.FIND_RED_ICONS
-        context.strategy_stationary_count = 0 if moved else context.strategy_stationary_count + 1
+        context.strategy_stationary_count = 0 if moved else count + 1
         if (context.gameplay_phase == GameplayPhase.REVERSE_MIDDLE
                 and context.strategy_stationary_count >= 2
                 and not context.strategy_reanchored):

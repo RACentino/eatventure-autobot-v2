@@ -42,9 +42,11 @@ class FlowContext:
     strategy_seek: bool = True
     strategy_fresh_entry: int = 0  # remaining localization probes at a confirmed arrival
     strategy_scrolls: int = 0
-    strategy_stationary_count: int = 0
+    strategy_stationary_count: int = 0  # negative while confirming the opposite edge on a sweep
     strategy_reanchored: bool = False
     strategy_waiting_liveness: bool = False
+    strategy_retry_delay: int = 0  # seconds between probes after an exhausted station pass
+    strategy_probe_at: float = 0.0
     strategy_unknown_panels: int = 0
     strategy_anchor: Point | None = None
     strategy_expected_last: Point | None = None  # projected into the current viewport after a drag

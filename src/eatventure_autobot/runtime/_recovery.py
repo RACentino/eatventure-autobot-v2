@@ -215,8 +215,11 @@ class _RecoveryMixin:
         return changing
 
     def _apply_watchdog(self, current_state: State) -> None:
-        if current_state == State.CONFIRM_RESTAURANT:
-            self._watchdog.reset()  # this observation has its own longer loading deadline
+        if current_state == State.CONFIRM_RESTAURANT or (
+            current_state == State.FIND_RED_ICONS and self._config.strategy.enabled
+            and self.context.strategy_waiting_liveness
+        ):
+            self._watchdog.reset()  # these observations have their own longer deadlines
             return
         verdict = self._watchdog.tick(current_state)
         if verdict is WatchdogVerdict.OK:

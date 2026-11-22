@@ -457,6 +457,7 @@ def confirm_restaurant(context: FlowContext, start_visible: bool) -> bool:
     context.strategy_seek = True
     context.strategy_scrolls = context.strategy_stationary_count = 0
     context.strategy_reanchored = False
+    context.strategy_retry_delay = 0
     return True
 
 

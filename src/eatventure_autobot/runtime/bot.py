@@ -59,7 +59,8 @@ FLOW_REVISION = (
     "consistent-last-two-views-v1; economy-footer-preemption-v1; "
     "open-upgrade-handoff-v1; repeat-hold-observation-v1; shared-renovation-frame-v1; "
     "step-local-asset-frame-v1; bounded-panel-preprocessing-v1; "
-    "last-column-v3; tracked-last-reframe-v1; active-last-retry-v1; direct-economy-and-open-v2"
+    "last-column-v3; tracked-last-reframe-v1; active-last-retry-v1; direct-economy-and-open-v2; "
+    "bounded-station-retry-v1"
 )
 
 
@@ -314,6 +315,7 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
             self.context.gameplay_phase = phase
             self.context.strategy_seek = True
             self.context.strategy_waiting_liveness = False
+            self.context.strategy_retry_delay = 0
             self.context.strategy_scrolls = self.context.strategy_stationary_count = 0
             self._strategy_health_thumb = None
             if self._progress is not None:
