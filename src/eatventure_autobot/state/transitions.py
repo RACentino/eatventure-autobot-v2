@@ -49,9 +49,8 @@ from eatventure_autobot.state.context import (
     FlowContext,
 )
 
-# Half the width of the calibrated flat station marker. The known neighboring
-# columns are 40px apart, while arrows and footprints can stagger by over 12px.
-_LAST_COLUMN_TOLERANCE = 24
+# After a drag, the same station's arrow and footprint can differ in height.
+_LAST_REFRAME_Y_TOLERANCE = 24
 
 # --- FIND_RED_ICONS -----------------------------------------------------------------------
 
@@ -463,21 +462,25 @@ def confirm_restaurant(context: FlowContext, start_visible: bool) -> bool:
 
 def confirmed_station_targets(
     views: list[list[MatchCandidate]], tolerance: float,
+    *, y_ranges: dict[MatchCandidate, tuple[int, int]] | None = None,
 ) -> list[MatchCandidate]:
-    """Keep stations seen in multiple frames, preferring the newest coordinates."""
+    """Keep the latest click point and, when requested, the observed vertical span."""
     targets: list[MatchCandidate] = []
     for index in reversed(range(len(views))):
         for candidate in views[index]:
-            confirmed = any(
-                other_index != index and any(
-                    math.dist(candidate.center, other.center) < tolerance for other in other_view
-                )
-                for other_index, other_view in enumerate(views)
-            )
-            if confirmed and not any(
-                math.dist(candidate.center, target.center) < tolerance for target in targets
-            ):
+            if any(math.dist(candidate.center, t.center) < tolerance for t in targets):
+                continue
+            heights = [candidate.center[1]]
+            for other_index, other_view in enumerate(views):
+                if other_index == index or not other_view:
+                    continue
+                nearest = min(other_view, key=lambda t: math.dist(candidate.center, t.center))
+                if math.dist(candidate.center, nearest.center) < tolerance:
+                    heights.append(nearest.center[1])
+            if len(heights) > 1:
                 targets.append(candidate)
+                if y_ranges is not None:
+                    y_ranges[candidate] = (min(heights), max(heights))
     return targets
 
 
@@ -486,7 +489,9 @@ def strategy_target(
     candidates: Iterable[MatchCandidate],
     *,
     viewport_width: int | None = None,
+    y_ranges: dict[MatchCandidate, tuple[int, int]] | None = None,
 ) -> MatchCandidate | None:
+    """Rank eligible endpoints by height, using x only where observed heights overlap."""
     remaining = [c for c in candidates if not any(
         math.dist(c.center, point) < ROW_DEDUPE_DISTANCE for point in context.maxed_positions
     )]
@@ -498,29 +503,29 @@ def strategy_target(
             # A footprint center can sit below the same station's red-arrow click point.
             matching = [c for c in remaining
                         if abs(c.center[0] - expected[0]) < ROW_DEDUPE_DISTANCE
-                        and abs(c.center[1] - expected[1]) < _LAST_COLUMN_TOLERANCE]
+                        and abs(c.center[1] - expected[1]) < _LAST_REFRAME_Y_TOLERANCE]
             return matching[0] if len(matching) == 1 else None
         unbuilt = [c for c in remaining if not c.template_name.startswith("stationBuilt")]
-        last = unbuilt or remaining
-        right = max(c.center[0] for c in last)
-        column = [c for c in last if right - c.center[0] < _LAST_COLUMN_TOLERANCE]
-        endpoint = max(column, key=lambda c: (c.center[1], c.center[0]))
-        # A lower terminal row can sit left of a middle counter in a narrow drive-through.
-        if viewport_width is not None and right * 2 < viewport_width:
-            bottom = max(c.center[1] for c in last)
-            if bottom - endpoint.center[1] >= ROW_PROXIMITY_DISTANCE:
-                row = [c for c in last if bottom - c.center[1] < ROW_DEDUPE_DISTANCE]
-                return max(row, key=lambda c: (c.center[0], c.center[1]))
-        return endpoint
-    reverse = context.gameplay_phase != GameplayPhase.FIRST
-    edge_y = (max if reverse else min)(c.center[1] for c in remaining)
+        remaining = unbuilt or remaining
+
+    if context.gameplay_phase in (GameplayPhase.FIRST, GameplayPhase.LAST):
+        first = context.gameplay_phase == GameplayPhase.FIRST
+        choose = min if first else max
+        if y_ranges is None:
+            return choose(remaining, key=lambda c: (c.center[1], c.center[0]))
+        # Compare against a single extreme so a chain of partial overlaps cannot tie distant rows.
+        boundary_y = choose(y_ranges[c][1 if first else 0] for c in remaining)
+        tied = (c for c in remaining if y_ranges[c][0] <= boundary_y <= y_ranges[c][1])
+        return choose(tied, key=lambda c: (c.center[0], c.center[1]))
+
+    edge_y = max(c.center[1] for c in remaining)
     edge = next(c for c in remaining if c.center[1] == edge_y)
     row = [c for c in remaining if abs(c.center[1] - edge_y) < ROW_PROXIMITY_DISTANCE
            and (c.template_name.startswith("stationBuilt")
                 == edge.template_name.startswith("stationBuilt")
                 or max(c.bounding_box.y_min, edge.bounding_box.y_min)
                 < min(c.bounding_box.y_max, edge.bounding_box.y_max))]
-    return (max if reverse else min)(row, key=lambda c: (c.center[0], c.center[1]))
+    return max(row, key=lambda c: (c.center[0], c.center[1]))
 
 
 def observe_station(context: FlowContext, panel: StationPanel) -> None:

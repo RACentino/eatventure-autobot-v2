@@ -274,7 +274,7 @@ class InputTimingConfig:
 
 @dataclass(frozen=True, slots=True)
 class FlowTimingConfig:
-    upgrades_before_stats: int = 1
+    upgrades_before_stats: int = 2
     # 1.5 x (the longest legitimate same-state chain + one red-X storm), rounded up to 0.5 s. The
     # longest chain is strategy FIND_RED_ICONS escalating over upgrade_station.search_attempts (5)
     # passes, each with one panel dismissal: X check 31 + preamble 46 + dismissal 971 (panel 107,
@@ -599,6 +599,7 @@ class ForbiddenZoneConfig:
             1: Zone(310, 360, 70, 260),
             2: Zone(310, 360, 70, 320),
             3: Zone(310, 360, 70, 370),
+            4: Zone(310, 360, 70, 340),
         }
     )
     numbered_zones: tuple[Zone, ...] = (

@@ -60,7 +60,7 @@ FLOW_REVISION = (
     "open-upgrade-handoff-v1; repeat-hold-observation-v1; shared-renovation-frame-v1; "
     "step-local-asset-frame-v1; bounded-panel-preprocessing-v1; "
     "last-column-v3; tracked-last-reframe-v1; active-last-retry-v1; direct-economy-and-open-v2; "
-    "bounded-station-retry-v1"
+    "bounded-station-retry-v1; hold-opportunities-and-frame-reuse-v1; vertical-endpoints-v1"
 )
 
 

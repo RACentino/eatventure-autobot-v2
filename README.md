@@ -47,10 +47,11 @@ maxes the first station, then the last, then the intermediate stations in revers
 visible MAX observation advances a phase; missing or unaffordable buttons do not. Candidate runtime
 accounting is enabled by default.
 
-Station searches combine stable detections and use screen coordinates: top row then left for
-FIRST, then the lowest target in the rightmost column for LAST. A 12-pixel column tolerance
-absorbs template-center jitter. FIRST can use a stable visible target; LAST requires
-bottom-edge verification so an on-screen middle station cannot replace an off-screen endpoint.
+Station searches combine stable detections and rank eligible station centers by screen height.
+FIRST chooses the highest center, with the leftmost winning a tie. LAST chooses the lowest
+center, with the rightmost winning a tie. A stable one-pixel difference takes priority.
+If a marker wobbles, stations whose measured height ranges overlap at the endpoint tie vertically.
+FIRST can use a stable visible target. LAST verifies the bottom camera edge before selecting.
 Two identical nonempty target sets finish localization; differing sets use a third view.
 The observation interval includes detection work rather
 than adding an extra delay after it. Searches retain the original down-first 3/3/6/6 sweep and

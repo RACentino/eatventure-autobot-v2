@@ -56,10 +56,10 @@ def _frame_thumbnail(frame: np.ndarray) -> np.ndarray:
     """64x36 grayscale subsample, enough to tell a frozen or dimmed view from a live one.
     ponytail: nearest-pixel sampling, not an area average; it only has to distinguish an identical
     frame (delta 0) from an animated one, so no cv2 call and any frame size works."""
-    gray = frame.mean(axis=2) if frame.ndim == 3 else frame.astype(np.float64)
-    rows = np.linspace(0, gray.shape[0] - 1, 36).astype(int)
-    cols = np.linspace(0, gray.shape[1] - 1, 64).astype(int)
-    return np.asarray(gray[rows][:, cols])
+    rows = np.linspace(0, frame.shape[0] - 1, 36).astype(int)
+    cols = np.linspace(0, frame.shape[1] - 1, 64).astype(int)
+    pixels = frame[rows[:, None], cols]
+    return np.asarray(pixels.mean(axis=2)) if frame.ndim == 3 else pixels.astype(np.float64)
 
 
 def _format_near_misses(

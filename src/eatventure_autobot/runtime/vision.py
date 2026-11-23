@@ -6,6 +6,7 @@ threshold/HSV/region lookups out of the handlers, so a handler reads as flow, no
 import logging
 import math
 import time
+from dataclasses import dataclass
 from itertools import groupby
 
 import cv2
@@ -189,6 +190,16 @@ def _shifted(candidate: MatchCandidate, dx: int, dy: int) -> MatchCandidate:
         (candidate.center[0] + dx, candidate.center[1] + dy),
         BoundingBox(box.x_min + dx, box.y_min + dy, box.x_max + dx, box.y_max + dy),
     )
+
+
+@dataclass(frozen=True, slots=True)
+class StationPanelRead:
+    """Classification and controls seen together, in coordinates of the supplied frame."""
+
+    state: StationPanel
+    bounds: BoundingBox | None
+    upgrade: MatchCandidate | None = None
+    unlock: MatchCandidate | None = None
 
 
 class GameVision:
@@ -482,6 +493,11 @@ class GameVision:
     def station_panel(
         self, frame: np.ndarray, *, held_position: Point | None = None,
     ) -> StationPanel:
+        return self.read_station_panel(frame, held_position=held_position).state
+
+    def read_station_panel(
+        self, frame: np.ndarray, *, held_position: Point | None = None, prefer_unlock: bool = False,
+    ) -> StationPanelRead:
         config = self._config.strategy
         tolerance = self._config.upgrade_station.disappear_position_tolerance_px
         near = (None if held_position is None else BoundingBox(
@@ -491,17 +507,25 @@ class GameVision:
         region = (self.station_panel_bounds(frame) if near is None
                   else self.station_panel_bounds(frame, near=near))
         if region is None:
-            return StationPanel.UNKNOWN
+            return StationPanelRead(StationPanel.UNKNOWN, None)
         max_frame = cv2.threshold(frame, config.max_text_min_value, 255, cv2.THRESH_BINARY)[1]
         max_frame = cv2.GaussianBlur(max_frame, (3, 3), 0)
         if any(self._find_one(max_frame, name, config.max_threshold,
                              search_region=region).found for name in config.max_templates):
-            return StationPanel.MAX
-        if (self._find_one(frame, UPGRADE_STATION_TEMPLATE,
-                          self._config.thresholds.upgrade_station, hsv_gated=True,
-                          search_region=region).found
-                or self.find_unlock_button(frame, search_region=region).found):
-            return StationPanel.AFFORDABLE
+            return StationPanelRead(StationPanel.MAX, region)
+        if prefer_unlock:
+            unlock = self.find_unlock_button(frame, search_region=region)
+            if unlock.found:
+                return StationPanelRead(StationPanel.AFFORDABLE, region, unlock=unlock.best)
+        upgrade = self._find_one(frame, UPGRADE_STATION_TEMPLATE,
+                                 self._config.thresholds.upgrade_station, hsv_gated=True,
+                                 search_region=region)
+        if upgrade.found:
+            return StationPanelRead(StationPanel.AFFORDABLE, region, upgrade=upgrade.best)
+        if not prefer_unlock:
+            unlock = self.find_unlock_button(frame, search_region=region)
+            if unlock.found:
+                return StationPanelRead(StationPanel.AFFORDABLE, region, unlock=unlock.best)
         locked = self._find_one(frame, config.locked_template, config.locked_threshold,
                                 search_region=region)
         if locked.best is not None:
@@ -512,12 +536,12 @@ class GameVision:
                 or not (box.x_min <= held_position[0] < box.x_max
                         and box.y_min <= held_position[1] < box.y_max)
             ):
-                return StationPanel.UNKNOWN
+                return StationPanelRead(StationPanel.UNKNOWN, region)
             hsv = cv2.cvtColor(frame[box.y_min:box.y_max, box.x_min:box.x_max], cv2.COLOR_BGR2HSV)
             red = hsv_ranges_mask(hsv, config.locked_price_hsv.ranges)
             if cv2.countNonZero(red) / red.size >= config.locked_price_hsv.min_match_ratio:
-                return StationPanel.LOCKED
-        return StationPanel.UNKNOWN
+                return StationPanelRead(StationPanel.LOCKED, region)
+        return StationPanelRead(StationPanel.UNKNOWN, region)
 
     def viewport_still(self, before: np.ndarray, after: np.ndarray) -> bool | None:
         """Camera translation in world pixels; uncertain images cannot prove an edge."""

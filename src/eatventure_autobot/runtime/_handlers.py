@@ -17,7 +17,7 @@ from eatventure_autobot.domain.state import GameplayPhase, State, StationPanel
 from eatventure_autobot.domain.types import BoundingBox, MatchCandidate, Point, TemplateExplanation
 from eatventure_autobot.runtime._telemetry import _frame_thumbnail
 from eatventure_autobot.runtime.progress import ProgressLedger
-from eatventure_autobot.runtime.vision import GameVision
+from eatventure_autobot.runtime.vision import GameVision, StationPanelRead
 from eatventure_autobot.state import transitions as flow
 from eatventure_autobot.state.context import ROW_DEDUPE_DISTANCE, FlowContext, LevelMark
 
@@ -307,28 +307,29 @@ class _HandlersMixin:
         if not self._settle_and_watch(self._config.scrcpy_recovery.action_settle_delay):
             return State.CHECK_UNLOCK
         frame = self._vision.capture(max_y=self._config.capture_regions.max_search_y)
-        region = None
         if self._config.strategy.enabled:
-            panel = self._observe_strategy_panel(frame)
+            read = self._vision.read_station_panel(frame, prefer_unlock=True)
+            panel = self._observe_strategy_panel(frame, read)
             if panel in (StationPanel.MAX, StationPanel.UNKNOWN):
                 return State.UPGRADE_STATS
             if panel == StationPanel.LOCKED:
                 self.context.stats_from_find = True
                 return State.UPGRADE_STATS
-            region = self._vision.station_panel_bounds(frame)
-        result = (self._vision.find_unlock_button(frame, search_region=region)
-                  if self._config.strategy.enabled else self._vision.find_unlock_button(frame))
-        if result.best is None and region is not None:
-            position = self._clickable_upgrade(frame, self._config.thresholds.upgrade_station)
-            if position is not None:
-                return flow.decide_search_upgrade_station(
-                    self.context,
-                    self._config.upgrade_station,
-                    flow.UpgradeStationSearchObservation(True, position, 1),
+            unlock = read.unlock
+            if unlock is None and read.bounds is not None:
+                position = self._clickable_upgrade(
+                    frame, self._config.thresholds.upgrade_station, read.upgrade,
                 )
-        if result.best is None or not self._is_clickable(result.best.center):
+                if position is not None:
+                    return flow.decide_search_upgrade_station(
+                        self.context, self._config.upgrade_station,
+                        flow.UpgradeStationSearchObservation(True, position, 1),
+                    )
+        else:
+            unlock = self._vision.find_unlock_button(frame).best
+        if unlock is None or not self._is_clickable(unlock.center):
             return flow.decide_check_unlock(False, None)
-        clicked = self._input.click(*result.best.center)
+        clicked = self._input.click(*unlock.center)
         if clicked:
             self.context.check_unlock_clicks += 1
             self._sleep(self._config.level_transition.unlock_settle_delay)
@@ -343,12 +344,15 @@ class _HandlersMixin:
         frame = self._capture_first_asset_frame(
             self._config.capture_regions.upgrade_station_search_y
         )
+        upgrade = None
         if self._config.strategy.enabled:
-            panel = self._observe_strategy_panel(frame)
+            read = self._vision.read_station_panel(frame)
+            panel = self._observe_strategy_panel(frame, read)
             if panel != StationPanel.AFFORDABLE:
                 self.context.stats_from_find = True
                 return State.UPGRADE_STATS
-        position = self._clickable_upgrade(frame, threshold)
+            upgrade = read.upgrade
+        position = self._clickable_upgrade(frame, threshold, upgrade)
         found = position is not None
         # Verified v1: no scrcpy-recovery delay in the search itself (only the hold monitor has
         # one), and no sleep before giving up on the last attempt.
@@ -360,7 +364,11 @@ class _HandlersMixin:
             flow.UpgradeStationSearchObservation(found, position, attempt),
         )
 
-    def _clickable_upgrade(self, frame: np.ndarray, threshold: float) -> Point | None:
+    def _clickable_upgrade(
+        self, frame: np.ndarray, threshold: float, best: MatchCandidate | None = None,
+    ) -> Point | None:
+        if best is not None and best.confidence >= threshold and self._is_clickable(best.center):
+            return best.center
         candidates = self._vision.find_upgrade_station_candidates(frame, threshold)
         return next((c.center for c in candidates if self._is_clickable(c.center)), None)
 
@@ -400,25 +408,35 @@ class _HandlersMixin:
             ),
         )
         panel_region = None
+        transition = None
         if held:
             self._record_hold(time.monotonic() - hold_started)
-            if self._config.strategy.enabled:
+            if self._config.strategy.enabled and not self._stop_requested.is_set():
                 frame = self._vision.capture()
-                self._observe_strategy_panel(frame)
-                panel_region = self._vision.station_panel_bounds(frame)
+                transition = self._economy_level_transition(
+                    frame, button_max_y=self._config.capture_regions.max_search_y,
+                )
+                read = self._vision.read_station_panel(frame)
+                if transition is None or read.state != StationPanel.UNKNOWN:
+                    self._observe_strategy_panel(frame, read)
+                panel_region = read.bounds
         post_ok = (
             held
-            and self._click_idle(panel_region)
-            and self._sleep(self._config.flow_timing.state_delay)
+            and (transition is not None or (
+                self._click_idle(panel_region) and self._sleep(self._config.flow_timing.state_delay)
+            ))
         )
-        return flow.decide_hold_upgrade_station(
+        next_state = flow.decide_hold_upgrade_station(
             self.context,
             self._config.flow_timing,
             flow.UpgradeHoldObservation(True, True, held, post_ok, verified_position=target),
         )
+        return transition or next_state
 
-    def _observe_strategy_panel(self, frame: np.ndarray) -> StationPanel:
-        panel = self._vision.station_panel(frame)
+    def _observe_strategy_panel(
+        self, frame: np.ndarray, read: StationPanelRead | None = None,
+    ) -> StationPanel:
+        panel = self._vision.station_panel(frame) if read is None else read.state
         context = self.context
         context.strategy_unknown_panels = (
             context.strategy_unknown_panels + 1 if panel == StationPanel.UNKNOWN else 0
@@ -508,9 +526,9 @@ class _HandlersMixin:
             position[0] + tolerance + 1, position[1] + tolerance + 1,
         )
 
-    def _station_seen_near(
+    def _held_station_view(
         self, frame: np.ndarray, threshold: float, position: Point,
-    ) -> bool:
+    ) -> StationPanelRead:
         """Check the current frame at the relaxed verification threshold.
 
         A match is only accepted if it's near `position` (the position we're actually holding).
@@ -529,19 +547,21 @@ class _HandlersMixin:
             dx = abs(result.best.center[0] - position[0])
             dy = abs(result.best.center[1] - position[1])
             box = result.best.bounding_box
-            return (dx <= tolerance and dy <= tolerance and (
-                not self._config.strategy.enabled or (
-                    box.x_min <= position[0] < box.x_max and box.y_min <= position[1] < box.y_max
-                )
-            ))
+            if dx <= tolerance and dy <= tolerance and (
+                not self._config.strategy.enabled or
+                (box.x_min <= position[0] < box.x_max and box.y_min <= position[1] < box.y_max)
+            ):
+                return StationPanelRead(StationPanel.AFFORDABLE, None, upgrade=result.best)
+            return StationPanelRead(StationPanel.UNKNOWN, None)
         # A held upgrade resumes when income arrives; grey is not a vanished control.
-        if (
-            not self._config.strategy.enabled
-            or self._vision.station_panel(frame, held_position=position) != StationPanel.LOCKED
-        ):
-            return False
-        # Release before the next stats action; the existing flow opens free worker crates too.
-        return not self._vision.stats_icon_seen(frame)
+        if self._config.strategy.enabled:
+            read = self._vision.read_station_panel(frame, held_position=position)
+            if read.state == StationPanel.LOCKED and not self._vision.stats_icon_seen(frame):
+                return read
+        return StationPanelRead(StationPanel.UNKNOWN, None)
+
+    def _station_seen_near(self, frame: np.ndarray, threshold: float, position: Point) -> bool:
+        return self._held_station_view(frame, threshold, position).state != StationPanel.UNKNOWN
 
     def _make_disappearance_check(
         self, threshold: float, position: Point, required_misses: int
@@ -549,34 +569,56 @@ class _HandlersMixin:
         """Requires `required_misses` CONSECUTIVE misses before treating the station as gone —
         debounces a single flaky/transient miss so a real hold isn't cut short by one bad frame."""
         misses = 0
-        visible_view: tuple[np.ndarray, bool] | None = None
+        visible_view: tuple[np.ndarray, bool, StationPanelRead] | None = None
+        next_crate_check = -math.inf
+        regions = self._config.capture_regions
 
-        def station_seen() -> bool:
-            nonlocal visible_view
-            frame = self._vision.capture(
-                max_y=self._config.capture_regions.upgrade_station_search_y,
-            )
+        def station_seen() -> bool | None:
+            """None requests release for visible work; ordinary misses still need confirmation."""
+            nonlocal visible_view, next_crate_check
             if not self._config.strategy.enabled:
+                frame = self._vision.capture(max_y=regions.upgrade_station_search_y)
                 return self._station_seen_near(frame, threshold, position)
+            frame = self._vision.capture(max_y=max(
+                regions.upgrade_station_search_y, regions.extended_search_y, regions.box_search_y,
+            ))
             fast_mode = self._vision.fast_red_icon_mode
             if (visible_view is not None and visible_view[1] == fast_mode
                     and visible_view[0].dtype == frame.dtype
                     and np.array_equal(visible_view[0], frame)):
-                return True
-            found = self._station_seen_near(frame, threshold, position)
-            # Keep one verified view per hold. Copy it because captures can reuse their buffer.
-            visible_view = (frame.copy(), fast_mode) if found else None
-            return found
+                read = visible_view[2]
+            else:
+                if self._vision.new_level_icon_seen(frame[:regions.extended_search_y]):
+                    return None
+                read = self._held_station_view(frame[:regions.upgrade_station_search_y],
+                                               threshold, position)
+                if read.state == StationPanel.UNKNOWN:
+                    visible_view = None
+                    return False
+                # The capture backend may reuse its buffer during the next poll.
+                visible_view = (frame.copy(), fast_mode, read)
+            if (read.state == StationPanel.LOCKED and read.bounds is not None
+                    and self._clock() >= next_crate_check):
+                next_crate_check = self._clock() + 1.0
+                boxes = [box for box in self._vision.find_boxes(frame[:regions.box_search_y])
+                         if self._is_clickable(box.center)]
+                cap = self._config.box.max_clicks_per_pass
+                if (not cap or len(boxes) <= cap) and any(
+                    box.bounding_box.iou(read.bounds) == 0 for box in boxes
+                ):
+                    return None
+            return True
 
         def check() -> bool:
             nonlocal misses
             if not self._device_available():
                 return True
-            gone = not station_seen() and (
-                not self._scrcpy_recovery(self._config.scrcpy_recovery.upgrade_delay)
-                or not station_seen()
-            )
-            misses = misses + 1 if gone else 0
+            seen = station_seen()
+            if seen is False and self._scrcpy_recovery(self._config.scrcpy_recovery.upgrade_delay):
+                seen = station_seen()
+            if seen is None:
+                return True
+            misses = 0 if seen else misses + 1
             return misses >= max(1, required_misses)
 
         return check
@@ -660,16 +702,22 @@ class _HandlersMixin:
         frame = self._capture_first_asset_frame(box_search_y)
         self._record_box_scan()
         self._update_box_scan_thumbnail(frame)
-        for attempt in range(2):
-            if attempt:
-                if not self._scrcpy_recovery(self._config.scrcpy_recovery.box_delay):
-                    break
+        config = self._config
+        fast_mode = self._vision.fast_red_icon_mode if config.strategy.enabled else None
+        if (transition := self._economy_level_transition(frame)) is not None:
+            return transition
+        boxes = self._vision.find_boxes(frame)
+        if not boxes and config.scrcpy_recovery.enabled:
+            # The retry capture may overwrite the first buffer. Remember only this pass's miss.
+            empty = frame.copy() if config.strategy.enabled else None
+            if self._scrcpy_recovery(config.scrcpy_recovery.box_delay):
                 frame = self._vision.capture(max_y=box_search_y)
-            if (transition := self._economy_level_transition(frame)) is not None:
-                return transition
-            boxes = self._vision.find_boxes(frame)
-            if boxes:
-                break
+                if (empty is None or self._config is not config
+                        or self._vision.fast_red_icon_mode != fast_mode
+                        or frame.dtype != empty.dtype or not np.array_equal(frame, empty)):
+                    if (transition := self._economy_level_transition(frame)) is not None:
+                        return transition
+                    boxes = self._vision.find_boxes(frame)
 
         if self._box_scan_needs_recovery(frame, len(boxes)):
             return self._queue_game_recovery()
@@ -1260,18 +1308,25 @@ class _HandlersMixin:
 
     def _observe_station_targets(
         self, frame: np.ndarray, *, fresh_entry: bool, prefer_visible: bool,
-    ) -> tuple[np.ndarray, list[MatchCandidate]] | State | None:
+    ) -> tuple[np.ndarray, MatchCandidate | None] | State | None:
         context = self.context
         can_confirm = (
             not context.strategy_seek or fresh_entry or context.strategy_stationary_count >= 2
         )
         if not can_confirm and not prefer_visible:
-            return frame, []
+            return frame, None
 
         observed_at = self._clock()
         views = [self._strategy_targets(frame)]
         if not can_confirm and not views[0]:
-            return frame, []
+            return frame, None
+
+        def confirmed_target() -> MatchCandidate | None:
+            y_ranges: dict[MatchCandidate, tuple[int, int]] = {}
+            targets = flow.confirmed_station_targets(
+                views, self._config.red_icon.fast_min_distance, y_ranges=y_ranges,
+            )
+            return flow.strategy_target(context, targets, y_ranges=y_ranges)
 
         # Two of three views reject transient effects while allowing one occluded observation.
         fresh = frame
@@ -1295,19 +1350,14 @@ class _HandlersMixin:
                 break
             if context.gameplay_phase == GameplayPhase.LAST:
                 # Changes in other stations need no extra scan if LAST itself agrees in both.
-                width = frame.shape[1]
-                earlier, latest = (
-                    flow.strategy_target(context, view, viewport_width=width) for view in views
-                )
+                earlier, latest = (flow.strategy_target(context, view) for view in views)
                 if (earlier is not None and latest is not None
                         and (earlier.center, earlier.template_name)
                         == (latest.center, latest.template_name)):
-                    confirmed = flow.confirmed_station_targets(
-                        views, self._config.red_icon.fast_min_distance,
-                    )
-                    if flow.strategy_target(context, confirmed, viewport_width=width) == latest:
-                        return fresh, confirmed
-        return fresh, flow.confirmed_station_targets(views, self._config.red_icon.fast_min_distance)
+                    target = confirmed_target()
+                    if target == latest:
+                        return fresh, target
+        return fresh, confirmed_target()
 
     def _strategy_locate(self, frame: np.ndarray) -> State:
         ready_frame = self._dismiss_station_panel(frame)
@@ -1334,8 +1384,7 @@ class _HandlersMixin:
             return State.FIND_RED_ICONS
         if isinstance(observation, State):
             return observation
-        fresh, targets = observation
-        target = flow.strategy_target(context, targets, viewport_width=ready_frame.shape[1])
+        fresh, target = observation
         if (context.strategy_retry_delay and self._clock() < context.strategy_probe_at
                 and target is None
                 and (self._vision.stats_icon_seen(fresh) or self._vision.find_boxes(fresh))):
