@@ -28,6 +28,7 @@ logger = logging.getLogger("eatventure_autobot.runtime.bot")
 # panel reads 0; 2 only absorbs a single sub-pixel rounding flip.
 _POPUP_STILL_PX = 2.0
 _VIEWPORT_MAX_SETTLE_SAMPLES = 12
+_VIEWPORT_SETTLE_WAIT_BUDGET = 3.6  # Seconds of observation waits available to a moving camera.
 _VIEWPORT_REQUIRED_STILL_SAMPLES = 2
 _VIEWPORT_MAX_PANEL_DISMISSALS = 2
 _VIEWPORT_FRESH_ENTRY_PROBES = 3
@@ -1099,6 +1100,7 @@ class _HandlersMixin:
                             self._vision.viewport_still(settled, previous) is True)
         samples = max(
             _VIEWPORT_MAX_SETTLE_SAMPLES,
+            math.ceil(_VIEWPORT_SETTLE_WAIT_BUDGET / interval),
             math.ceil(_VIEWPORT_MAX_SETTLE_SAMPLES * scroll.post_scroll_settle / interval),
         )
         for _ in range(samples):

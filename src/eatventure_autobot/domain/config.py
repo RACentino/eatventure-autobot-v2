@@ -1,8 +1,9 @@
 """Bot configuration and operator timing constraints.
 
-Timing reset 2026-11-19: every timing was re-derived from scratch on this rig (scrcpy 5.0.1, h264,
-12M, buffer 0, max-fps 144, max-size 1024, client resized to 360x780 first), not from earlier
-values.
+Defaults minimize software waits in the gameplay loop. Repeated scans may see the same frame.
+Blind taps and drag gestures still need time for the game to display or recognize their targets.
+These defaults are theoretical. Earlier measurements below used the November 19 calibration on
+scrcpy 5.0.1, h264, 12M, buffer 0, max-fps 144, max-size 1024, at a 360x780 client size.
 Measured inputs (live scrcpy unless noted; no purchases were made while measuring):
   F     changed-frame gap: p50 33, p95 61, p99 80, max 123 ms (n=2,563 idle; drags: max 111)
   Tpan  station tap -> panel settled, from click() return, 33 ms press: 168-265 ms (n=36);
@@ -19,13 +20,9 @@ Measured inputs (live scrcpy unless noted; no purchases were made while measurin
   Logs  restaurant load, attempt -> confirmed: max 12.14 s (n=213, 0 unconfirmed); cold start
         after an adb relaunch: last popup X <= 21.6 s (n=17 relaunches)
   adb   devices <= 10, dumpsys <= 92, force-stop <= 160, screencap <= 802, monkey <= 1,341 ms
-Rules: a gap between two observations that must see different frames = F max - the minimum work
-between them; a gap whose repeated frame only repeats a harmless scan = 0. A blind wait before a
-capture = the slowest measured settle of that UI change; before a dependent blind tap, + F max.
-A deadline that ends the moment the awaited event arrives = 2 x the longest observed duration (it
-costs time only when the event never comes); a window that always runs in full, and the stall
-watchdog, = 1.5 x the longest legitimate duration. The active flow is strategy mode
-(strategy.enabled); legacy-only caveats are noted at the fields they affect.
+The previous calibration allowed a worst-case frame gap between retries. The current defaults
+retry immediately where a subsequent state can observe the result. Failure deadlines still give
+slow operations time to finish and return early on success.
 
 Operator pins: state_delay 0; hover disabled, hover_duration 0; hold cap 15 s; stats burst 1.5 s
 with a 16 ms inter-click pause.
@@ -67,16 +64,12 @@ class ScrcpyRecoveryConfig:
     # cost every empty box pass ~1.5% of run time. red_icon_delay is legacy-mode only.
     red_icon_delay: float = 0.0
     box_delay: float = 0.0
-    # The second look before a hold is released must be a different frame (a false release costs
-    # a full re-acquire): F max 123 - hold miss-check minimum 40 = 83 -> 0.084.
-    upgrade_delay: float = 0.084
-    # Station tap -> panel settled: max 265 ms after click() return (n=36, 33 ms press), so the
-    # CHECK_UNLOCK read never meets a panel still animating in (an UNKNOWN read wastes a cycle).
-    # The red-X pre-check before it (>= 15 ms) is extra margin. Also covers the dismissal close
-    # (max 178 ms) in _dismiss_station_panel.
-    action_settle_delay: float = 0.27
-    # 0 disables the probe: each probe scan costs ~98 ms (station match), an early exit needs three
-    # scans, and the last scan can overrun the deadline, so a 0.27 s plain sleep is faster.
+    # Recheck a missing held station immediately. A repeated frame can release the hold early.
+    upgrade_delay: float = 0.0
+    # CHECK_UNLOCK reads the panel once. Its 250 ms wait plus a red-X scan (when active, >= 15 ms)
+    # covers the earlier 265 ms opening. Dismissal also uses this wait (observed <= 178 ms).
+    action_settle_delay: float = 0.250
+    # Zero disables probing. Three station scans for early exit can cost more than the settle.
     popup_probe_interval: float = 0.0
     popup_early_exit: bool = True
 
@@ -241,24 +234,14 @@ class UpgradeStationConfig:
 
 @dataclass(frozen=True, slots=True)
 class InputTimingConfig:
-    # click_delay 0: every click's consumer waits its own measured settle from click() return
-    # (action/close/unlock settles, the stats-panel poll, the scroll sampler), so a global
-    # post-click wait would only stack on top of them. It also ends drags and the stats burst.
-    # move_delay 0: _set_cursor_pos reads the warp back (<= 1.55 ms, n=40) and X orders the warp
-    # before the press; all 152 live bench taps ran with it at 0.
-    # mouse_down_duration 0.033: one median frame. Every press length registered (60/60 station
-    # taps: 6 each at 0/16/66/100 ms, 36 at 33 ms), but the
-    # game answers a 0 ms press ~1.5 frames later after release (216 vs 164 ms), so press start ->
-    # panel open is lowest at 16-33 ms (~202 ms) and rises at 66 ms (240) and 100 ms (271). 33 ms
-    # had 36/36 taps + 30/30 dismissals register. mouse_up_duration 0: nothing needs a wait after
-    # the release that its consumer does not already have. retry_delay: the warp read-back max
-    # (1.55 ms) -> 0.002 before a re-warp.
+    # Send ordered press/release events with no added dwell. The backend reads back pointer
+    # position on each attempt, including immediate retries.
     click_delay: float = 0.0
     move_delay: float = 0.0
-    mouse_down_duration: float = 0.033
+    mouse_down_duration: float = 0.0
     mouse_up_duration: float = 0.0
     retry_count: int = 3
-    retry_delay: float = 0.002
+    retry_delay: float = 0.0
     # Operator pin: hover inactive and 0.
     hover_enabled: bool = False
     hover_duration: float = 0.0
@@ -275,7 +258,7 @@ class InputTimingConfig:
 @dataclass(frozen=True, slots=True)
 class FlowTimingConfig:
     upgrades_before_stats: int = 2
-    # 1.5 x (the longest legitimate same-state chain + one red-X storm), rounded up to 0.5 s. The
+    # November 19 watchdog budget, derived from the slower timings then in use. The
     # longest chain is strategy FIND_RED_ICONS escalating over upgrade_station.search_attempts (5)
     # passes, each with one panel dismissal: X check 31 + preamble 46 + dismissal 971 (panel 107,
     # idle point 139, tap 44, 2 x action settle 270, 2 x re-read 124) + anchor 145 + scroll settle
@@ -294,10 +277,7 @@ class FlowTimingConfig:
     # floor): the smallest nonzero wait. At ~2.4 steps/s it adds ~0.24% to run time; 0 would
     # busy-spin a core while the bot is stopped or waiting for the event-count prompt.
     event_loop_interval: float = 0.001
-    # 0: in strategy mode CHECK_NEW_LEVEL's idle click is a no-op, so this would be pure dead time,
-    # and WAIT_FOR_UNLOCK's dialog settle is carried by level_transition.settle_delay (Open click)
-    # while its retries are spaced by unlock_search_interval. Legacy caveat: legacy mode's real
-    # idle click is then followed by the verification drag with no settle.
+    # Strategy mode skips the idle click. The Open dialog has its own settle below.
     focus_settle_delay: float = 0.0
     # v1's STATE_DELAY: the settle after a completed upgrade-station hold's idle click and after
     # the stats-panel button click. Operator anchor: exactly 0.0 (as in v1; still stop-aware).
@@ -363,34 +343,25 @@ class LevelTransitionConfig:
     # fails; giving up early on a slow load forfeits the level's credit.
     confirmation_timeout: float = 24.5
     search_attempts: int = 2
-    # Retry gap for the Open button (2nd attempt, no click before it), so it reads a new frame:
-    # F max 123 - minimum try 26 (capture + new-level match) = 97 -> 0.098.
-    search_interval: float = 0.098
-    # These dialogs could not be triggered on demand, so their settles use the slowest measured UI
-    # transition on this rig (station panel 265 ms; the stats panel 247 and red X 176 are faster).
-    # settle_delay: after the Open click (and the city "Okay"); it carries WAIT_FOR_UNLOCK's dialog
-    # settle so the first unlock read is not an animating dialog that looks greyed (a false greyed
-    # early-out ends the attempt). confirmation_delay: the footer New Level button opens the
-    # dialog that the next, unverified tap at level_transition_pos needs; a miss costs a failed
-    # transition (confirmation_timeout), so it gets one extra worst frame gap: 265 + 123 -> 0.39.
-    # secondary_settle_delay 0: CONFIRM_RESTAURANT polls for the new restaurant itself.
-    settle_delay: float = 0.27
-    confirmation_delay: float = 0.39
+    # Rescan for Open immediately. After a click, the Unlock read can mistake an animating
+    # dialog for a greyed one. The footer route's next click is blind. Both keep one UI settle
+    # using the earlier 265 ms panel measurement as a proxy for these dialogs.
+    search_interval: float = 0.0
+    settle_delay: float = 0.265
+    confirmation_delay: float = 0.265
     secondary_settle_delay: float = 0.0
     # v1's real, practical give-up point for WAIT_FOR_UNLOCK: reverted from the greenfield
     # redesign's 1000 (which relied on the 9s same-state watchdog as the sole backstop instead) per
     # the decision to follow v1's state-handler flow verbatim, including its pacing.
     unlock_search_attempts: int = 4
-    # Gap between WAIT_FOR_UNLOCK tries and between CONFIRM_RESTAURANT polls, so each read is a new
-    # frame (CONFIRM needs two separate sightings): F max 123 - the cheaper minimum of the two
-    # (CONFIRM poll 36; unlock try 46) = 87 -> 0.088.
-    unlock_search_interval: float = 0.088
-    # After an Unlock click (CHECK_UNLOCK's station unlock, WAIT_FOR_UNLOCK's dialog): the slowest
-    # measured UI transition, 265 ms -> 0.27 (cannot be timed without spending on an unlock).
-    unlock_settle_delay: float = 0.27
+    # Recheck Unlock and restaurant arrival as soon as capture and matching finish. Two
+    # observations can share a mirror frame. The confirmation deadline still covers slow loads.
+    unlock_search_interval: float = 0.0
+    # Both Unlock routes return to a state that inspects the screen again.
+    unlock_settle_delay: float = 0.0
     # A greyed-out Unlock button (cash or a requirement is short) reads 0.85-0.90 against the 0.905
     # gate: 83% of 6,454 misses, and the last misses before a completion read the same as the
-    # earliest, so retrying cannot turn it on within the ~4 s the retries last. With this on, the
+    # earliest, so retrying did not help even with the earlier ~4 s retry window. With this on, the
     # first try whose raw best match is at least greyed_unlock_min_conf ends the sequence, as if the
     # attempts had run out; lower matches (0.70-0.85: the dialog still animating in) keep every
     # retry. False is v1's plain unlock_search_attempts tries again.
@@ -404,13 +375,9 @@ class LevelTransitionConfig:
     # UPGRADE_STATS scroll and must not be conflated with this one-shot verification step. Origin
     # point reuses click_targets.scroll_start_pos; only distance/duration/settle timing are here.
     verification_scroll_distance: int = 200
-    # Same reliable drag as ScrollConfig.duration (0.2 s moved 28/28; 0.0 s 0/4, 0.1 s 3/4; a drag
-    # that does not move can read as a tap). What follows only reads the HUD footer badge and the
-    # Open dialog, which do not depend on the camera having stopped, so the settle only has to
-    # guarantee a frame rendered after the release: F max 123 -> 0.123. The pause adds nothing
-    # on top of that: 0.
-    verification_scroll_duration: float = 0.2
-    verification_scroll_settle_delay: float = 0.123
+    # The footer is fixed on screen during this gesture. Read it immediately after release.
+    verification_scroll_duration: float = 0.15
+    verification_scroll_settle_delay: float = 0.0
     verification_scroll_interval_pause: float = 0.0
 
 
@@ -421,29 +388,16 @@ class ScrollConfig:
     max_cycles: int = 2
     increment_step: int = 3
     max_idle_pass_attempts: int = 1
-    # duration: the shortest tested drag >= 1.5 x F max (185 ms) that always moved the camera:
-    # 0.2 s moved 28/28 (0.15 s 12/12, 0.1 s 3/4, 0.0 s 0/4). A drag that does not move reads as a
-    # camera edge to the strategy sweep. The camera comes to rest 172-602 ms after the release.
-    # Strategy mode (_strategy_scroll) waits post_scroll_settle + interval_pause blind, then samples
-    # every strategy.target_observation_interval until two consecutive still pairs, within
-    # max(12, ceil(12 x settle / interval)) samples, so the settle also sets the give-up allowance
-    # (~12 x settle); running out raises the viewport error that stops the bot. Replayed on 12
-    # recorded 0.2 s drags at interval 0.05, every setting below exited on a frame at rest: settle
-    # 0.15 + pause 0.05 at 646 ms mean / 770 max after the release; settle 0.25-0.35 + pause 0.05
-    # at 663-665 mean / 784-808 max. Settle 0 leaves only 12 samples, which ran out on 1 of 12
-    # drags (9 of 12 at interval 0.034). Settle 0.3 costs ~20 ms per scroll over 0.15 and doubles
-    # the allowance to 72 samples (3.6 s of waits, 6 x the slowest rest), since the camera is rarely
-    # at rest before 0.5 s anyway. Pause 0.05 >= interval, so the first still pair starts at the
-    # pause. The settle is also the liveness/anchor re-check pause in strategy FIND_RED_ICONS.
-    # Legacy caveat (strategy.enabled False): the legacy scroll waits only settle + pause (0.35 s)
-    # before the box scan, while the camera may move for up to 0.6 s.
-    interval_pause: float = 0.05
-    post_scroll_settle: float = 0.3
-    duration: float = 0.2
+    # A 150 ms drag moved the camera in 12/12 earlier trials. Zero moved it in 0/4.
+    # Strategy starts observing after 50 ms and uses the pause for its first pair of frames.
+    # Legacy scans after both waits (96 ms), potentially while the camera is still moving.
+    interval_pause: float = 0.046
+    post_scroll_settle: float = 0.05
+    duration: float = 0.15
     # Stall alert: after this many completed scrolls in a row with no box opened, upgrade held,
     # stats upgrade or level completed, log a WARNING and probe box detection on the next scan.
-    # 150 idle passes is ~7 min in the no-work loop (FIND, UPGRADE_STATS, OPEN, SCROLL, OPEN:
-    # ~3.0 s per scroll with these timings); the Sep 8-25 logs held 12 idle-scroll stalls
+    # Historically, 150 idle passes took ~7 min in the no-work loop (FIND, UPGRADE_STATS, OPEN,
+    # SCROLL, OPEN). The Sep 8-25 logs held 12 idle-scroll stalls
     # of >= 5 min (10 of them >= 9 min, longest 5.3 h) in which the bot logged nothing.
     # Repeats every multiple. 0 disables.
     stall_scrolls_before_alert: int = 150
@@ -564,14 +518,13 @@ class CloseButtonConfig:
     )
     block_window: int = 38
     block_min_fraction: float = 0.60
-    # Wait after the tap, so the X is gone before the next capture (a second tap would land on
-    # the scene under it). Live: the stats panel's X at (308, 250) stopped matching 130-176 ms
-    # after the click's return (n=16) -> 0.18.
-    settle_delay: float = 0.18
+    # The old X can remain clickable on the mirror for 176 ms after release. A repeat click
+    # during that interval can land on the game control underneath.
+    settle_delay: float = 0.176
     # Guard for absolute priority: the same spot tapped this many times in a row means the tap is
     # not closing it (or it is not an X), so the rule stands down for suppress_seconds instead of
-    # starving every other behaviour. One stuck storm is 6 x (X check 31 + tap 44 + settle 180) =
-    # 1.53 s; 19 x that = 29.1 -> 29.5 s keeps the rule at <= 5% of the time if it never closes.
+    # starving every other behaviour. At the November 19 timings, six attempts took 1.53 s.
+    # Suppressing for 29.5 s kept the rule at <= 5% of the time if the popup never closed.
     max_consecutive_clicks: int = 6
     suppress_seconds: float = 29.5
     # Hard-lock layer 2: after any step in a New Level state, the X rule stays off this long, so
@@ -642,12 +595,9 @@ class StrategyConfig:
     # Original 3/3/6/6 sweep, then one directed endpoint pass (up to 6 travel + 2 checks).
     # Stop as soon as the required edge/target is verified; no third oscillation cycle.
     viewport_limit: int = 26
-    # Spacing of the post-scroll stillness samples, of the two pre-hold verify rounds and the
-    # minimum spacing of the three target views. 0.05: two sampler steps (2 x (0.05 + 0.016)) =
-    # 132 ms > F max 123, so two "still" readings in a row are never the same frame twice; the
-    # verify rounds are >= 86 + 50 = 136 ms apart (always a new frame); a target view itself takes
-    # >= 90 ms, so the views get no added wait. Replay result: see ScrollConfig.
-    target_observation_interval: float = 0.05
+    # Two camera samples must span the 123 ms observed frame gap. At the earlier minimum
+    # of 16 ms work per sample, 46 ms is the smallest whole-ms wait with 2 * (46 + 16) > 123.
+    target_observation_interval: float = 0.046
 
 
 @dataclass(frozen=True, slots=True)
