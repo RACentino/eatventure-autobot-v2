@@ -45,8 +45,9 @@ class FlowContext:
     strategy_stationary_count: int = 0  # negative while confirming the opposite edge on a sweep
     strategy_reanchored: bool = False
     strategy_waiting_liveness: bool = False
-    strategy_retry_delay: int = 0  # seconds between probes after an exhausted station pass
-    strategy_probe_at: float = 0.0
+    strategy_reacquiring: bool = False  # establish the phase edge again after an empty pass
+    strategy_pass_moved: bool = False  # verified world displacement during this pass
+    station_progress_at: float = 0.0
     strategy_unknown_panels: int = 0
     strategy_anchor: Point | None = None
     # First recognized station in this endpoint phase, in the saved reference frame.

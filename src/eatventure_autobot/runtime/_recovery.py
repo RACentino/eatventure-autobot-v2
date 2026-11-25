@@ -26,7 +26,8 @@ from eatventure_autobot.state.context import FlowContext
 
 logger = logging.getLogger("eatventure_autobot.runtime.bot")
 
-EMPTY_INWARD_SEARCH = "Verified empty end of the inward station search"
+STATION_SEARCH_ANR = "Android reports game unresponsive during station search"
+RECOVERY_PROBE_SECONDS = 15.0
 
 # The recovery window judges "is the screen alive" from its last few seconds.
 _RECOVERY_TAIL_SECONDS = 5.0

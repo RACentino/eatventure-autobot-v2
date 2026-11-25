@@ -323,7 +323,10 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
             self.context.gameplay_phase = phase
             self.context.strategy_seek = True
             self.context.strategy_waiting_liveness = False
-            self.context.strategy_retry_delay = 0
+            self.context.strategy_reacquiring = self.context.strategy_pass_moved = False
+            self._station_recheck_at = None
+            if report or self.context.station_progress_at == 0.0:
+                self.context.station_progress_at = self._clock()
             self.context.strategy_scrolls = self.context.strategy_stationary_count = 0
             self._strategy_health_thumb = None
             if self._progress is not None:
@@ -488,8 +491,9 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
         action = watch.action_screen if watch is not None else None
         return probe_screen(self._vision, self._launcher, self._config, self._manual_stop_requested,
                             expected_unlock=action == "open", expected_gameplay=action is not None,
-                            check_scroll=watch is not None and self._game_recovery_pending
-                            and action is None,
+                            check_scroll=(self.running and self._config.strategy.enabled
+                                          or watch is not None and self._game_recovery_pending
+                                          and action is None),
                             checked_world=watch.checked_world if watch is not None else None,
                             after_scroll=after_scroll)
 

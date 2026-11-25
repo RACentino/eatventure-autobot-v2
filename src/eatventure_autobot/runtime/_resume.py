@@ -17,7 +17,7 @@ from eatventure_autobot.domain.errors import CaptureError
 from eatventure_autobot.domain.protocols import InputController, Notifier
 from eatventure_autobot.domain.state import PauseReason, State
 from eatventure_autobot.domain.types import Point
-from eatventure_autobot.runtime._recovery import EMPTY_INWARD_SEARCH
+from eatventure_autobot.runtime._recovery import RECOVERY_PROBE_SECONDS, STATION_SEARCH_ANR
 from eatventure_autobot.runtime._recovery_probe import (
     ScreenProbe,
     same_game_area,
@@ -35,7 +35,6 @@ logger = logging.getLogger("eatventure_autobot.runtime.bot")
 _RESUME_SAMPLE_SECONDS = 1.0
 _RESUME_HEARTBEAT_SECONDS = 600.0
 _RESUME_MAX_BACKOFF_SECONDS = 900.0
-_RECOVERY_PROBE_SECONDS = 15.0
 _RECOVERY_SCROLL_SETTLE = .65  # Recorded camera drift lasted up to 602 ms after drag release.
 
 
@@ -166,7 +165,7 @@ class _ResumeMixin:
             if now >= watch.check_at:
                 self._check_resume(watch, now, key_at)
         except CaptureError:
-            delay = (_RECOVERY_PROBE_SECONDS if self._game_recovery_pending
+            delay = (RECOVERY_PROBE_SECONDS if self._game_recovery_pending
                      else self._config.resume.check_seconds)
             watch.check_at = self._clock() + delay
         except Exception:
@@ -239,12 +238,12 @@ class _ResumeMixin:
         launcher = self._launcher
         if launcher is None or self._resume is not watch or self._manual_stop_requested.is_set():
             return
-        watch.check_at = now + _RECOVERY_PROBE_SECONDS
+        watch.check_at = now + RECOVERY_PROBE_SECONDS
         if not quiet:
             watch.check_at = min(watch.check_at, max(watch.activity_at, last_key_at)
                                  + self._config.resume.idle_seconds)
-            if watch.reason == EMPTY_INWARD_SEARCH:
-                return  # The edge already had a paired observation before entering recovery.
+            if watch.reason == STATION_SEARCH_ANR:
+                return  # Both feeds were sampled immediately before this confirmed ANR.
         can_repair = quiet and now >= watch.repair_at
         if not ready:
             if not can_repair:
@@ -298,7 +297,7 @@ class _ResumeMixin:
                     and watch.action_screen is None and view.signature is not None
                     and not same_game_area(watch.checked_world, view.signature,
                                            3 * recovery.static_recent_delta)
-                    and (watch.reason == EMPTY_INWARD_SEARCH
+                    and (watch.reason == STATION_SEARCH_ANR
                          or now - self._idle_started_at >= recovery.stale_after_seconds)):
                 view = self._verify_recovery_scroll(watch, view)
                 if view.status == "unknown":
@@ -332,8 +331,8 @@ class _ResumeMixin:
             if not self.running:
                 self._stop_requested.set()
             # A 38-second cold start or slow ADB command must not cause catch-up polls.
-            if self._clock() > now + _RECOVERY_PROBE_SECONDS:
-                watch.check_at = self._clock() + _RECOVERY_PROBE_SECONDS
+            if self._clock() > now + RECOVERY_PROBE_SECONDS:
+                watch.check_at = self._clock() + RECOVERY_PROBE_SECONDS
 
     def _verify_recovery_scroll(self, watch: _ResumeWatch, before: ScreenProbe) -> ScreenProbe:
         scroll = self._config.scroll
@@ -349,7 +348,7 @@ class _ResumeMixin:
                     or not scroll_surface_current(self._vision, self._config, before)
                     or not self._scroll_input_ready(watch)):
                 return ScreenProbe("unknown")
-            if watch.reason == EMPTY_INWARD_SEARCH:
+            if watch.reason == STATION_SEARCH_ANR:
                 watch.checked_world = before.signature
             if not self._input.drag(x, y, x, end_y, duration=scroll.duration):
                 return ScreenProbe("unknown")
@@ -447,7 +446,7 @@ class _ResumeMixin:
     def _back_off_repair(self, watch: _ResumeWatch) -> None:
         watch.attempts = min(watch.attempts + 1, 20)
         watch.repair_at = self._clock() + min(
-            _RESUME_MAX_BACKOFF_SECONDS, _RECOVERY_PROBE_SECONDS * 2 ** (watch.attempts - 1)
+            _RESUME_MAX_BACKOFF_SECONDS, RECOVERY_PROBE_SECONDS * 2 ** (watch.attempts - 1)
         )
 
     def _report_self_stop(self, reason: str) -> None:

@@ -55,7 +55,10 @@ FIRST can use a stable visible target. LAST verifies the bottom camera edge befo
 Two identical nonempty target sets finish localization; differing sets use a third view.
 The observation interval includes detection work rather
 than adding an extra delay after it. Searches retain the original down-first 3/3/6/6 sweep and
-handle assets between drags. `StrategyConfig.camera_edge_checks_first=True` also requires an
+check for the station after every settled drag, even at a stationary edge. A responsive
+restaurant keeps scrolling through repeated passes while servicing stats and boxes. A saved
+station that cannot be located across a pass is reacquired from its phase's camera edge.
+`StrategyConfig.camera_edge_checks_first=True` also requires an
 edge check before FIRST.
 
 Managed scrcpy uses the recorded test profile: always-on-top, screen-off, 360×780, no audio,
