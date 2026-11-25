@@ -354,8 +354,8 @@ class LevelTransitionConfig:
     # redesign's 1000 (which relied on the 9s same-state watchdog as the sole backstop instead) per
     # the decision to follow v1's state-handler flow verbatim, including its pacing.
     unlock_search_attempts: int = 4
-    # Recheck Unlock and restaurant arrival as soon as capture and matching finish. Two
-    # observations can share a mirror frame. The confirmation deadline still covers slow loads.
+    # Recheck Unlock as soon as capture and matching finish. Restaurant confirmation uses
+    # a separate 200 ms polling interval within confirmation_timeout.
     unlock_search_interval: float = 0.0
     # Both Unlock routes return to a state that inspects the screen again.
     unlock_settle_delay: float = 0.0

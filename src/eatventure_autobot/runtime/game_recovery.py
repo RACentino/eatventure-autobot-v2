@@ -25,6 +25,32 @@ _PACKAGE_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*")
 _PROC_ROOT = Path("/proc")
 
 
+def _primary_window_focus(dump: str) -> str | None:
+    """Read display 0 only when every secondary display explicitly has no focused window."""
+    display: str | None = None  # Older dumps have a single, unlabelled focus.
+    focus: dict[str | None, str | None] = {}
+    for raw in dump.splitlines():
+        line = raw.strip()
+        if line.startswith("Display:"):
+            header = re.fullmatch(
+                r"Display:\s+mDisplayId=(0|[1-9][0-9]*)(?:\s+\(organized\))?", line,
+            )
+            if header is None or header[1] in focus:
+                return None
+            display = header[1]
+            focus[display] = None
+        elif line.startswith("mCurrentFocus="):
+            if focus.get(display) is not None:
+                return None
+            focus[display] = line.removeprefix("mCurrentFocus=")
+
+    if None in focus:
+        return focus[None] if len(focus) == 1 else None
+    if any(value != "null" for key, value in focus.items() if key != "0"):
+        return None
+    return focus.get("0")
+
+
 def _scrcpy_device(process_id: int) -> str | None:
     """Read the live adb server child's serial, including children of scrcpy's worker threads."""
     process = _PROC_ROOT / str(process_id)
@@ -277,16 +303,17 @@ class GameLauncher:
             return None
         code, output = self._run(self._adb("shell", "dumpsys", "window", "displays"),
                                  self._config.command_timeout)
-        # Older display dumps omit this field. Multiple displays or a system overlay are ambiguous.
+        # Some older Android releases expose the focus only in the full window dump.
         if code == 0 and "mCurrentFocus=" not in output:
             code, output = self._run(self._adb("shell", "dumpsys", "window"),
                                      self._config.command_timeout)
-        focused = [line.strip() for line in output.splitlines()
-                   if line.lstrip().startswith("mCurrentFocus=")]
-        if code or len(focused) != 1:
+        if code:
+            return None
+        focused = _primary_window_focus(output)
+        if focused is None:
             return None
         component = re.fullmatch(
-            r"mCurrentFocus=Window\{[a-fA-F0-9]+ u\d+ ([\w.]+)/[\w.$]+\}", focused[0],
+            r"Window\{[a-fA-F0-9]+ u\d+ ([\w.]+)/[\w.$]+\}", focused,
         )
         if component is None or not _PACKAGE_NAME.fullmatch(component[1]):
             return None

@@ -17,6 +17,7 @@ from eatventure_autobot.domain.errors import CaptureError
 from eatventure_autobot.domain.protocols import InputController, Notifier
 from eatventure_autobot.domain.state import PauseReason, State
 from eatventure_autobot.domain.types import Point
+from eatventure_autobot.runtime._recovery import EMPTY_INWARD_SEARCH
 from eatventure_autobot.runtime._recovery_probe import (
     ScreenProbe,
     same_game_area,
@@ -118,6 +119,13 @@ class _ResumeMixin:
         self._resume = _ResumeWatch(
             reason, now, now, now, now + self._config.resume.check_seconds
         )
+
+    @property
+    def resume_poll_delay(self) -> float:
+        """Seconds until the next cursor sample, or the next stopped-time checkpoint."""
+        if self._resume is None:
+            return _RESUME_SAMPLE_SECONDS
+        return max(0.0, self._resume.sample_at - self._clock())
 
     def poll_resume(self, last_key_at: float | Callable[[], float]) -> None:
         """Called on every pass of the main loop while the bot is stopped; a no-op unless armed.
@@ -235,6 +243,8 @@ class _ResumeMixin:
         if not quiet:
             watch.check_at = min(watch.check_at, max(watch.activity_at, last_key_at)
                                  + self._config.resume.idle_seconds)
+            if watch.reason == EMPTY_INWARD_SEARCH:
+                return  # The edge already had a paired observation before entering recovery.
         can_repair = quiet and now >= watch.repair_at
         if not ready:
             if not can_repair:
@@ -288,7 +298,8 @@ class _ResumeMixin:
                     and watch.action_screen is None and view.signature is not None
                     and not same_game_area(watch.checked_world, view.signature,
                                            3 * recovery.static_recent_delta)
-                    and now - self._idle_started_at >= recovery.stale_after_seconds):
+                    and (watch.reason == EMPTY_INWARD_SEARCH
+                         or now - self._idle_started_at >= recovery.stale_after_seconds)):
                 view = self._verify_recovery_scroll(watch, view)
                 if view.status == "unknown":
                     self._back_off_repair(watch)
@@ -338,6 +349,8 @@ class _ResumeMixin:
                     or not scroll_surface_current(self._vision, self._config, before)
                     or not self._scroll_input_ready(watch)):
                 return ScreenProbe("unknown")
+            if watch.reason == EMPTY_INWARD_SEARCH:
+                watch.checked_world = before.signature
             if not self._input.drag(x, y, x, end_y, duration=scroll.duration):
                 return ScreenProbe("unknown")
             self._note_recovery_click((x, end_y))

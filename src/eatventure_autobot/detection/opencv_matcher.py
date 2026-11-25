@@ -30,6 +30,8 @@ from eatventure_autobot.domain.types import (
 logger = logging.getLogger(__name__)
 
 _DEFAULT_NMS_IOU_THRESHOLD = 0.20
+_MEAN_BGR = np.full((1, 3), 1 / 3, dtype=np.float32)
+_PANEL_SCORE_ROUNDOFF = 2e-5
 
 
 def _as_bgr(image: np.ndarray, label: str) -> np.ndarray:
@@ -58,6 +60,30 @@ def _search_crop(
     if region.area() == 0 or right <= left or bottom <= top:
         return frame[:0, :0], left, top
     return frame[top:bottom, left:right], left, top
+
+
+def _panel_score_crop(
+    frame: np.ndarray, template: np.ndarray, mask: np.ndarray | None, threshold: float,
+) -> tuple[np.ndarray, int, int]:
+    """Bound all possible full-colour matches using the panel's opaque rectangular header."""
+    if mask is None or frame.dtype != np.uint8 or threshold <= 0:
+        return frame, 0, 0
+    left, top, width, height = cv2.boundingRect(mask)
+    if not width or not height or not np.all(mask[top:top + height, left:left + width]):
+        return frame, 0, 0
+    h, w = template.shape[:2]
+    header = template[top:top + height, left:left + width]
+    pixels = frame[top:frame.shape[0] - h + top + height, left:frame.shape[1] - w + left + width]
+    # Averaging BGR can only reduce RMS error (Cauchy–Schwarz). A passing normalized SQDIFF
+    # has mean squared channel error <= (1-threshold)*255² on uint8 pixels. Two intensity
+    # levels cover uint8 rounding and OpenCV correlation round-off.
+    coarse = cv2.matchTemplate(cv2.transform(pixels, _MEAN_BGR), cv2.transform(header, _MEAN_BGR),
+                               cv2.TM_SQDIFF)
+    limit = width * height * (255 * np.sqrt(1 - threshold) + 2) ** 2
+    x, y, cols, rows = cv2.boundingRect((coarse <= limit).astype(np.uint8))
+    if not cols or not rows:
+        return frame[:0, :0], 0, 0
+    return frame[y:y + rows + h - 1, x:x + cols + w - 1], x, y
 
 
 def _match_template(
@@ -280,6 +306,77 @@ class OpenCvTemplateMatcher:
         if template_name not in self._templates:
             raise DetectionError(f"Template not loaded: {template_name}")
         return self._templates[template_name]
+
+    def _panel_location(
+        self, scores: np.ndarray, offset: Point, name: str, threshold: float,
+        original: np.ndarray, centers: BoundingBox, padding: int = 0,
+    ) -> Point | None:
+        value, _, (dx, dy), _ = cv2.minMaxLoc(scores)
+        cutoff = 1.0 - threshold
+        if value > cutoff + _PANEL_SCORE_ROUNDOFF:
+            return None
+        # OpenCV correlation round-off depends on the image extent. Resolve a close threshold
+        # decision or competing minima on the original search grid to preserve its chosen box.
+        if (abs(value - cutoff) <= _PANEL_SCORE_ROUNDOFF
+                or np.count_nonzero(scores <= value + _PANEL_SCORE_ROUNDOFF) > 1):
+            match = self.find_template(original, name, threshold, search_region=centers).best
+            if match is None:
+                return None
+            return match.bounding_box.x_min - padding, match.bounding_box.y_min - padding
+        return offset[0] + dx, offset[1] + dy
+
+    def find_panel_bounds(
+        self, frame: np.ndarray, names: tuple[str, ...], threshold: float,
+        centers: BoundingBox, padding: int,
+    ) -> BoundingBox | None:
+        """Prefer any fully visible panel to a clipped one, in configured template order."""
+        if not names:
+            return None
+        height, width = frame.shape[:2]
+        radius = max(max(self._lookup(name)[0].shape[:2]) // 2 for name in names)
+        outside = max(0, -centers.x_min, -centers.y_min, centers.x_max - width,
+                      centers.y_max - height)
+        padding = min(padding, radius + outside)
+        extended = cv2.copyMakeBorder(
+            _as_bgr(frame, "frame"), padding, padding, padding, padding, cv2.BORDER_CONSTANT,
+        )
+        region = BoundingBox(centers.x_min + padding, centers.y_min + padding,
+                             centers.x_max + padding, centers.y_max + padding)
+        clipped = None
+        for name in names:
+            template, mask = self._lookup(name)
+            h, w = template.shape[:2]
+            image, x, y = _search_crop(extended, template, region)
+            if image.shape[0] < h or image.shape[1] < w:
+                continue
+            image, dx, dy = _panel_score_crop(image, template, mask, threshold)
+            if not image.size:
+                continue
+            scores = _match_template(image, template, mask, name)
+            if scores is None:
+                continue
+            # Each score denotes the top-left of the original, untrimmed panel template.
+            x, y = x + dx - padding, y + dy - padding
+            left, top = max(0, -x), max(0, -y)
+            right, bottom = width - w - x + 1, height - h - y + 1
+            if right > left and bottom > top:
+                interior = scores[top:bottom, left:right]
+                if interior.size:
+                    position = self._panel_location(interior, (x + left, y + top), name,
+                                                    threshold, frame, centers)
+                    if position is not None:
+                        x0, y0 = position
+                        return BoundingBox(x0, y0, x0 + w, y0 + h)
+            if clipped is None:
+                position = self._panel_location(scores, (x, y), name, threshold,
+                                                extended, region, padding)
+                if position is not None:
+                    x0, y0 = position
+                    left, top = max(0, x0), max(0, y0)
+                    right, bottom = min(width, x0 + w), min(height, y0 + h)
+                    if left < right and top < bottom:
+                        clipped = BoundingBox(left, top, right, bottom)
+        return clipped
 
     def find_template(
         self,

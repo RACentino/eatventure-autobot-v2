@@ -36,6 +36,7 @@ should_exit = threading.Event()
 toggle_requested = threading.Event()
 mode_toggle_requested = threading.Event()
 cursor_log_requested = threading.Event()
+_loop_wake = threading.Event()
 primed_event_count: int | None = None
 _log_listener: QueueListener | None = None
 _log_handlers: list[logging.Handler] = []
@@ -116,6 +117,7 @@ def on_press(key: Any) -> None:
         if bot_instance is not None:
             bot_instance.request_stop()
         should_exit.set()
+    _loop_wake.set()
 
 
 def on_release(key: Any) -> None:
@@ -166,6 +168,7 @@ def _select_event_count(config: BotConfig) -> int | None:
                 raw = input("Selection: ").strip()
             except EOFError:
                 selection.put(None)
+                _loop_wake.set()
                 return
             try:
                 count = int(raw)
@@ -173,16 +176,19 @@ def _select_event_count(config: BotConfig) -> int | None:
                 count = 0
             if count in options:
                 selection.put(count)
+                _loop_wake.set()
                 return
             print(f"Enter one of: {', '.join(map(str, options))}.")
 
     threading.Thread(target=read_selection, name="event_selection", daemon=True).start()
-    while not should_exit.wait(config.flow_timing.event_loop_interval):
+    while True:
+        _loop_wake.clear()
+        if should_exit.is_set():
+            return None
         try:
             return selection.get_nowait()
         except queue.Empty:
-            continue
-    return None
+            _loop_wake.wait()
 
 
 def _toggle_bot(config: BotConfig) -> None:
@@ -273,7 +279,12 @@ def shutdown_logging() -> None:
 
 
 def _run(config: BotConfig) -> None:
-    while not should_exit.is_set():
+    while True:
+        # Clear before reading the request flags so a concurrent hotkey cannot be lost.
+        _loop_wake.clear()
+        if should_exit.is_set():
+            return
+        delay: float | None = config.flow_timing.event_loop_interval
         if toggle_requested.is_set():
             toggle_requested.clear()
             _toggle_bot(config)
@@ -287,13 +298,19 @@ def _run(config: BotConfig) -> None:
             bot_instance.step()
         elif bot_instance is not None:
             bot_instance.poll_resume(lambda: _last_key_at)
-        should_exit.wait(config.flow_timing.event_loop_interval)
+            if not bot_instance.running:
+                delay = bot_instance.resume_poll_delay
+        else:
+            delay = None
+        if not should_exit.is_set():
+            _loop_wake.wait(delay)
 
 
 def _request_exit(_signum: int, _frame: Any) -> None:
     if bot_instance is not None:
         bot_instance.request_stop()
     should_exit.set()
+    _loop_wake.set()
 
 
 def _close_bot() -> None:

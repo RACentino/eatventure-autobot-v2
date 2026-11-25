@@ -6,7 +6,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 from threading import Event
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 
@@ -15,7 +15,8 @@ from eatventure_autobot.domain.errors import ObservationError
 from eatventure_autobot.domain.protocols import InputController
 from eatventure_autobot.domain.state import GameplayPhase, State, StationPanel
 from eatventure_autobot.domain.types import BoundingBox, MatchCandidate, Point, TemplateExplanation
-from eatventure_autobot.runtime._recovery_probe import recovery_unlock_visible
+from eatventure_autobot.runtime._recovery import EMPTY_INWARD_SEARCH
+from eatventure_autobot.runtime._recovery_probe import ScreenProbe, recovery_unlock_visible
 from eatventure_autobot.runtime._telemetry import _frame_thumbnail
 from eatventure_autobot.runtime.game_recovery import GameLauncher
 from eatventure_autobot.runtime.progress import ProgressLedger
@@ -44,6 +45,20 @@ class _ViewportError(ObservationError):
 
 class _StationSearchSpent(_ViewportError):
     """A search pass ended without a verified station."""
+
+
+class _EmptyInwardSearch(_StationSearchSpent):
+    """Two stationary gestures at the inward edge still left no verified target."""
+
+
+class _SettlingControl(NamedTuple):
+    point: Point
+    panel: BoundingBox
+    name_ink: np.ndarray
+
+    def same_panel(self, other: "_SettlingControl") -> bool:
+        return (self.panel.iou(other.panel) >= _VIEWPORT_SAME_PANEL_IOU
+                and bool(np.array_equal(self.name_ink, other.name_ink)))
 
 
 class _HandlersMixin:
@@ -130,6 +145,7 @@ class _HandlersMixin:
         def _device_available(self, *, force: bool = False) -> bool: ...
 
         def _recover_stalled_mirror(self) -> bool: ...
+        def _probe_recovery_screen(self) -> ScreenProbe: ...
 
     def _settle_and_watch(self, duration: float) -> bool:
         """_sleep(duration) that also notes when the popup the last click opened first shows (tally
@@ -494,7 +510,7 @@ class _HandlersMixin:
 
     def _verify_upgrade_station_round(
         self, *, frame: np.ndarray | None = None, near: Point | None = None,
-    ) -> tuple[Point, float] | None:
+    ) -> tuple[Point, float, np.ndarray, bool] | None:
         """Look near the previous position first, then widen the search if it is lost.
 
         Each retry uses a fresh capture and the configured relaxed threshold.
@@ -516,17 +532,45 @@ class _HandlersMixin:
             ):
                 region = None  # The panel may have moved. Relocate on this frame.
                 result = self._vision.find_upgrade_station(frame, threshold)
-            frame = None  # Every retry must observe the screen again.
             if result.best is not None and self._is_clickable(result.best.center):
-                return result.best.center, relaxed
+                uninterrupted = attempt == 0 and (near is None or region is not None)
+                return result.best.center, relaxed, frame, uninterrupted
+            frame = None  # Every retry must observe the screen again.
             # v1 doesn't sleep before giving up on the last attempt.
             if attempt < attempts - 1 and not self._sleep(station.verify_search_interval):
                 return None
         return None
 
+    def _settling_upgrade_control(
+        self, frame: np.ndarray, near: Point, threshold: float,
+    ) -> _SettlingControl | None:
+        """Identify a single affordable control and its station name on this observation."""
+        read = self._vision.read_station_panel(frame, held_position=near, prefer_unlock=True)
+        if read.upgrade is None or read.bounds is None or read.state != StationPanel.AFFORDABLE:
+            return None
+        point, panel = read.upgrade.center, read.bounds
+        if math.dist(point, near) > _POPUP_STILL_PX or not self._is_clickable(point):
+            return None
+        controls = self._vision.find_upgrade_station_candidates(frame, threshold, panel=panel)
+        if len(controls) != 1 or math.dist(controls[0].center, point) > _POPUP_STILL_PX:
+            return None
+        # The calibrated popup has the station name below Level and above the stars.
+        # Comparing its ink excludes the changing price, progress bar and game behind it.
+        w, h = panel.x_max - panel.x_min, panel.y_max - panel.y_min
+        name = frame[panel.y_min + h // 8:panel.y_min + h // 5 + 1,
+                     panel.x_min + w // 10:panel.x_max - w // 5]
+        ink = name.max(axis=2) < 220
+        return _SettlingControl(point, panel, ink) if ink.any() and not ink.all() else None
+
+    def _verification_cursor(self) -> Point | None:
+        try:
+            return self._input.get_cursor_position()
+        except Exception as exc:
+            logger.debug("Cursor unavailable for optional settling check: %s", exc)
+            return None
+
     def _verify_upgrade_station(self) -> tuple[Point, float] | None:
-        """Two fresh checks before holding. Candidate checks cannot spend the available cash;
-        legacy mode retains its priming click between rounds."""
+        """Require a stable pair before holding. Legacy mode primes with its usual click."""
         station = self._config.upgrade_station
         if not self._sleep(station.verify_settle_delay):
             return None
@@ -544,7 +588,17 @@ class _HandlersMixin:
             logger.info("Upgrade station was not visible during verification")
             return None
 
-        target, _ = first
+        target, _, first_frame, uninterrupted = first
+        context = self.context
+        station_identity = (context.viewport, context.strategy_anchor, context.upgrade_station_pos)
+        can_settle = (candidate and uninterrupted and context.strategy_anchor is not None
+                      and context.target_viewport == context.viewport
+                      and context.upgrade_station_pos is not None
+                      and math.dist(target, context.upgrade_station_pos)
+                      <= station.disappear_position_tolerance_px)
+        cursor = self._verification_cursor() if can_settle else None
+        if cursor is not None:
+            first_frame = first_frame.copy()  # A later capture may overwrite its buffer.
         if not candidate and not self._input.precise_click(*target):
             logger.info("Upgrade station verification click failed at (%s, %s)", *target)
             return None
@@ -557,10 +611,39 @@ class _HandlersMixin:
         if second is None:
             logger.info("Upgrade station was not visible during verification")
             return None
-        if candidate and math.dist(target, second[0]) > _POPUP_STILL_PX:
-            logger.info("Upgrade control moved between verification frames; retrying")
+        point, threshold, current_frame, uninterrupted = second
+        if not candidate or math.dist(target, point) <= _POPUP_STILL_PX:
+            return point, threshold
+        if (cursor is None or not uninterrupted
+                or math.dist(target, point) > station.disappear_position_tolerance_px):
             return None
-        return second
+
+        def same_station() -> bool:
+            return (context.target_viewport == context.viewport
+                    and station_identity == (context.viewport, context.strategy_anchor,
+                                             context.upgrade_station_pos)
+                    and not self._stop_requested.is_set() and self._input.is_target_foreground()
+                    and self._verification_cursor() == cursor)
+
+        if (not same_station()
+                or self._vision.viewport_still(first_frame, current_frame) is not True):
+            return None
+        previous = self._settling_upgrade_control(first_frame, target, threshold)
+        current = self._settling_upgrade_control(current_frame, point, threshold)
+        if previous is None or current is None or not previous.same_panel(current):
+            return None
+        # Only one additional fresh capture. No input, fallback search, or retry loop.
+        current_frame = current_frame.copy()
+        if not self._sleep(interval) or not same_station():
+            return None
+        fresh = self._vision.capture(max_y=self._config.capture_regions.upgrade_station_search_y)
+        if self._vision.viewport_still(current_frame, fresh) is not True:
+            return None
+        final = self._settling_upgrade_control(fresh, point, threshold)
+        if (final is None or not current.same_panel(final)
+                or math.dist(current.point, final.point) > _POPUP_STILL_PX or not same_station()):
+            return None
+        return final.point, threshold
 
     def _upgrade_search_region(self, position: Point) -> BoundingBox:
         tolerance = self._config.upgrade_station.disappear_position_tolerance_px
@@ -1091,6 +1174,7 @@ class _HandlersMixin:
         return True
 
     def _handle_confirm_restaurant(self) -> State:
+        probe_started = self._clock()
         frame = self._vision.capture()
         if self._progress is not None:
             self._progress.checkpoint(boost=self._vision.boost_level(frame))
@@ -1112,16 +1196,20 @@ class _HandlersMixin:
                     self.context, flow.RedIconScanObservation(True, False, ())
                 )
             return State.FIND_RED_ICONS
-        if self._clock() - self.context.transition_started >= (
-            self._config.level_transition.confirmation_timeout
-        ):
+        deadline = (
+            self.context.transition_started + self._config.level_transition.confirmation_timeout
+        )
+        now = self._clock()
+        if now >= deadline:
             logger.warning("Restaurant transition unconfirmed; no completion credited")
             self.context.transition_pending = False
             if self._progress is not None:
                 self._progress.cancel_transition()
             self._end_unlock_sequence(completed=False)
             return State.FIND_RED_ICONS
-        self._sleep(self._config.level_transition.unlock_search_interval)
+        next_probe = min(probe_started + 0.2, deadline)
+        if next_probe > now:
+            self._sleep(next_probe - now)
         return State.CONFIRM_RESTAURANT
 
     def _strategy_scroll(self, direction: int, *, shorter: bool = False) -> bool | None:
@@ -1208,6 +1296,10 @@ class _HandlersMixin:
         except _ViewportError as exc:
             if not isinstance(exc, _StationSearchSpent) and not self._config.game_recovery.enabled:
                 raise
+            if (isinstance(exc, _EmptyInwardSearch) and self._config.game_recovery.enabled
+                    and self._config.resume.enabled and self._launcher is not None
+                    and self._launcher.package is not None):
+                return self._verify_empty_inward_search(frame, moving=moving)
             if self._recover_stalled_mirror():
                 return State.FIND_RED_ICONS
             if (
@@ -1224,6 +1316,23 @@ class _HandlersMixin:
             logger.warning("%s; checking screen liveness phase=%s gestures=%d",
                            exc, context.gameplay_phase.value, context.strategy_scrolls)
             return State.FIND_RED_ICONS
+
+    def _verify_empty_inward_search(self, frame: np.ndarray, *, moving: bool) -> State:
+        if not self._device_available(force=True) or self._stop_requested.is_set():
+            return State.FIND_RED_ICONS
+        view = self._probe_recovery_screen()
+        if not self._device_available(force=True) or self._stop_requested.is_set():
+            return State.FIND_RED_ICONS
+        if view.status == "mirror-stale":
+            return self._queue_game_recovery("phone progresses while scrcpy display is frozen")
+        live_game = view.status == "playable" and view.screen is None
+        if ((live_game and self._input.is_target_foreground())
+                or self._station_view_live(frame, moving=moving)):
+            self._strategy_alive_at = self._clock()
+            return self._retry_station_pass(EMPTY_INWARD_SEARCH)
+        if self._stop_requested.is_set():
+            return State.FIND_RED_ICONS
+        return self._queue_game_recovery(EMPTY_INWARD_SEARCH)
 
     def _station_view_live(self, frame: np.ndarray, *, moving: bool) -> bool:
         """After a failed pass, require a fresh, foreground game view before resuming input."""
@@ -1289,11 +1398,12 @@ class _HandlersMixin:
         raise _StationSearchSpent("Station search exhausted the configured down/up sweep")
 
     def _strategy_targets(self, frame: np.ndarray) -> list[MatchCandidate]:
-        targets = [target for target in self._vision.station_targets(frame)
-                   if self._is_clickable(target.center)]
         if self.context.gameplay_phase not in (GameplayPhase.FIRST, GameplayPhase.LAST):
-            return targets
-        for target in self._vision.positional_station_targets(frame):
+            return [target for target in self._vision.station_targets(frame)
+                    if self._is_clickable(target.center)]
+        matched, positional = self._vision.endpoint_station_targets(frame)
+        targets = [target for target in matched if self._is_clickable(target.center)]
+        for target in positional:
             protected_last = (self.context.gameplay_phase == GameplayPhase.LAST
                               and any(zone.contains(*target.center) for zone in
                                       self._config.forbidden_zones.event_zone_options.values()))
@@ -1591,7 +1701,7 @@ class _HandlersMixin:
     def _scroll_for_missing_station(self) -> State:
         context = self.context
         if context.strategy_stationary_count >= 2:
-            raise _StationSearchSpent("Verified empty end of the inward station search")
+            raise _EmptyInwardSearch(EMPTY_INWARD_SEARCH)
         direction = 1 if context.gameplay_phase == GameplayPhase.FIRST else -1
         count = context.strategy_stationary_count
         moved = self._strategy_scroll(direction)

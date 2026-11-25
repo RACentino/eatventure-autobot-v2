@@ -392,7 +392,7 @@ class GameVision:
         )
 
     def find_upgrade_station_candidates(
-        self, frame: np.ndarray, threshold: float
+        self, frame: np.ndarray, threshold: float, *, panel: BoundingBox | None = None,
     ) -> list[MatchCandidate]:
         """Multi-candidate scan so a handler can skip a forbidden-zone best match in favor of
         the next one — matches v1's _find_upgrade_station_match, which iterates every detected
@@ -401,13 +401,14 @@ class GameVision:
         if UPGRADE_STATION_TEMPLATE not in self._loaded:
             return []
         station = self._config.upgrade_station
-        region = self.station_panel_bounds(frame) if self._config.strategy.enabled else None
-        if self._config.strategy.enabled and region is None:
-            return []
+        if self._config.strategy.enabled and panel is None:
+            panel = self.station_panel_bounds(frame)
+            if panel is None:
+                return []
         return self._matcher.suppress_overlaps(
             self._matcher.find_template_candidates(
                 frame, UPGRADE_STATION_TEMPLATE, threshold,
-                station.candidate_min_distance, station.hsv, search_region=region,
+                station.candidate_min_distance, station.hsv, search_region=panel,
             ), station.candidate_nms_iou_threshold,
         )
 
@@ -462,6 +463,22 @@ class GameVision:
         observed = pixels.copy()
         height, width = frame.shape[:2]
         blurred = cv2.GaussianBlur(pixels, (3, 3), 0)
+        find_panels = getattr(self._matcher, "find_panel_bounds", None)
+        if find_panels is not None:
+            search = (BoundingBox(0, 0, width, height) if centers is None else BoundingBox(
+                centers.x_min - crop_x, centers.y_min - crop_y,
+                centers.x_max - crop_x, centers.y_max - crop_y,
+            ))
+            loaded = tuple(name for name in names if name in self._loaded)
+            local: BoundingBox | None = find_panels(blurred, loaded, config.panel_threshold,
+                                                    search, width)
+            bounds = None if local is None else BoundingBox(
+                local.x_min + crop_x, local.y_min + crop_y,
+                local.x_max + crop_x, local.y_max + crop_y,
+            )
+            self._panel_cache = (observed, cache_key, bounds)
+            return bounds
+        # Backends implementing only the basic matcher protocol use separate edge searches.
         # A visible masked header can fit while its transparent template border overhangs.
         for padding in (0, width):
             image = (blurred if not padding else cv2.copyMakeBorder(
@@ -514,9 +531,20 @@ class GameVision:
                              search_region=region).found for name in config.max_templates):
             return StationPanelRead(StationPanel.MAX, region)
         if prefer_unlock:
-            unlock = self.find_unlock_button(frame, search_region=region)
-            if unlock.found:
-                return StationPanelRead(StationPanel.AFFORDABLE, region, unlock=unlock.best)
+            # Both blue price buttons match Unlock. A Level header can retain its full height
+            # at a side edge. Clipping cannot make the shorter Unlock template that tall.
+            level_size = self._panel_template_sizes.get(config.panel_template)
+            unlock_size = self._panel_template_sizes.get(config.unlock_panel_template)
+            level_header = (
+                level_size is not None and unlock_size is not None
+                and 0 < region.x_max - region.x_min <= level_size[0]
+                and region.y_max - region.y_min == level_size[1] > unlock_size[1]
+                and region.y_min > 0 and region.y_max < frame.shape[0]
+            )
+            if not level_header:
+                unlock = self.find_unlock_button(frame, search_region=region)
+                if unlock.found:
+                    return StationPanelRead(StationPanel.AFFORDABLE, region, unlock=unlock.best)
         upgrade = self._find_one(frame, UPGRADE_STATION_TEMPLATE,
                                  self._config.thresholds.upgrade_station, hsv_gated=True,
                                  search_region=region)
@@ -643,7 +671,20 @@ class GameVision:
             stable[start:max(start, end), left:max(left, right)] = 0
         return images, cv2.erode(stable, np.ones((31, 31), dtype=np.uint8))
 
-    def positional_station_targets(self, frame: np.ndarray) -> list[MatchCandidate]:
+    def endpoint_station_targets(
+        self, frame: np.ndarray,
+    ) -> tuple[list[MatchCandidate], list[MatchCandidate]]:
+        """Both endpoint detectors observe the same capture and contrast outline."""
+        if self._world_bottom(frame) <= _WORLD_SEARCH_TOP:
+            return [], []
+        outline = _station_outline(frame)
+        return self.station_targets(frame, outline=outline), self.positional_station_targets(
+            frame, outline=outline,
+        )
+
+    def positional_station_targets(
+        self, frame: np.ndarray, *, outline: np.ndarray | None = None,
+    ) -> list[MatchCandidate]:
         """Template-independent footprints and arrow shapes, ordered by world position."""
         bottom = self._world_bottom(frame)
         if bottom <= _WORLD_SEARCH_TOP:
@@ -654,7 +695,9 @@ class GameVision:
         white[bottom:] = 0
         candidates: list[MatchCandidate] = []
         # Raw borders retain clipped building edges; contrast rejects bright floor-tile fill.
-        for mask in (white, white & _station_outline(frame)):
+        if outline is None:
+            outline = _station_outline(frame)
+        for mask in (white, white & outline):
             connected = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((7, 7), dtype=np.uint8))
             connected = cv2.dilate(connected, np.ones((3, 3), dtype=np.uint8))
             contours, _ = cv2.findContours(connected, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
@@ -739,7 +782,9 @@ class GameVision:
             return None
         return MatchCandidate("stationPosition", 0.0, (left + width // 2, top + height // 2), box)
 
-    def station_targets(self, frame: np.ndarray) -> list[MatchCandidate]:
+    def station_targets(
+        self, frame: np.ndarray, *, outline: np.ndarray | None = None,
+    ) -> list[MatchCandidate]:
         """Station click points from footprints or the existing arrow-to-station offset."""
         config = self._config.strategy
         # The legacy scan cap excludes valid edge stations; the footer bounds the world.
@@ -750,8 +795,9 @@ class GameVision:
         targets: list[MatchCandidate] = []
         if markers:
             # Translucent dashed borders keep their local contrast across floor colours.
-            border = _station_outline(frame)
-            border = cv2.cvtColor(cv2.GaussianBlur(border, (3, 3), 0), cv2.COLOR_GRAY2BGR)
+            if outline is None:
+                outline = _station_outline(frame)
+            border = cv2.cvtColor(cv2.GaussianBlur(outline, (3, 3), 0), cv2.COLOR_GRAY2BGR)
             for built, names in groupby(markers, key=lambda name: name.startswith("stationBuilt")):
                 found = self._matcher.find_candidates_across_templates(
                     frame if built else border, tuple(names),
