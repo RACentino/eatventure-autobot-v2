@@ -10,7 +10,6 @@ from collections import deque
 from collections.abc import Callable
 from contextlib import ExitStack
 
-import cv2
 import numpy as np
 
 from eatventure_autobot.domain.config import BotConfig
@@ -27,6 +26,7 @@ from eatventure_autobot.domain.types import BoundingBox, Point, Zone
 from eatventure_autobot.resilience.watchdog import StallWatchdog
 from eatventure_autobot.runtime._handlers import _HandlersMixin
 from eatventure_autobot.runtime._recovery import _RecoveryMixin
+from eatventure_autobot.runtime._recovery_probe import ScreenProbe, probe_screen
 from eatventure_autobot.runtime._resume import _ResumeMixin, _ResumeWatch
 from eatventure_autobot.runtime._telemetry import (  # noqa: F401  (re-exported: tests import them)
     _format_near_misses,
@@ -60,7 +60,9 @@ FLOW_REVISION = (
     "open-upgrade-handoff-v1; repeat-hold-observation-v1; shared-renovation-frame-v1; "
     "step-local-asset-frame-v1; bounded-panel-preprocessing-v1; "
     "last-column-v3; tracked-last-reframe-v1; active-last-retry-v1; direct-economy-and-open-v2; "
-    "bounded-station-retry-v1; hold-opportunities-and-frame-reuse-v1; vertical-endpoints-v1"
+    "bounded-station-retry-v1; hold-opportunities-and-frame-reuse-v1; vertical-endpoints-v1; "
+    "station-panel-recheck-v1; two-empty-target-views-v1; single-station-endpoints-v1; "
+    "verified-recovery-v1; recovery-scroll-v1"
 )
 
 
@@ -159,7 +161,9 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
         self._recent_thumb: np.ndarray | None = None
         self._latest_thumb: np.ndarray | None = None
         self._metrics_thumb: np.ndarray | None = None
-        self._relaunch_progress: tuple[int, int] | None = None
+        self._recovery_restart_used = False
+        self._recovery_station: tuple[int, Point] | None = None
+        self._verify_recovered_unlock = False
         # Red-X rule (see _dismiss_popup): where the last X was tapped and how many times in a row,
         # when the rule may act again after standing down, when the post-level lock ends, and the
         # time the pre-check has cost (capture + match), reported in the metrics line.
@@ -257,8 +261,9 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
     def _prepare_start(self, *, report: bool) -> bool:
         if self._launcher is not None:
             available = self._launcher.select_device() if report else self._launcher.connected()
-            if not available:
-                self._disconnect()
+            if available is not True:
+                if available is False:
+                    self._disconnect()
                 return False
         missing = self._vision.validate_required_templates()
         if missing:
@@ -309,7 +314,10 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
             phase = GameplayPhase.FIRST if report else self.context.gameplay_phase
             if self._manual_stop_requested.is_set() or self._stop_requested.is_set():
                 return False
+            self._verify_recovered_unlock = False
             self._running.set()
+            if report:
+                self.context.strategy_endpoint = None
             self.pause_reason = None
             self.context.invalidate_viewport()
             self.context.gameplay_phase = phase
@@ -473,42 +481,29 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
         self.stop()
         logger.warning("Device disconnected; manual resume required")
 
+    def _probe_recovery_screen(self, *, after_scroll: bool = False) -> ScreenProbe:
+        if self._launcher is None or self._phone_game_foreground is not True:
+            return ScreenProbe("unknown")
+        watch = self._resume
+        action = watch.action_screen if watch is not None else None
+        return probe_screen(self._vision, self._launcher, self._config, self._manual_stop_requested,
+                            expected_unlock=action == "open", expected_gameplay=action is not None,
+                            check_scroll=watch is not None and self._game_recovery_pending
+                            and action is None,
+                            checked_world=watch.checked_world if watch is not None else None,
+                            after_scroll=after_scroll)
+
     def _recover_stalled_mirror(self) -> bool:
-        """Only failed UI observations pay for an independent phone-progress check."""
         if self._launcher is None or not self._config.game_recovery.enabled:
             return False
         if not self._device_available(force=True) or self._stop_requested.is_set():
             return True
-        before = self._vision.capture().copy()
-        phone_before = None
-        for _ in range(3):
-            encoded = self._launcher.capture_device_png()
-            if self._stop_requested.is_set():
-                return True
-            if encoded is None:
-                return not self._device_available(force=True)
-            try:
-                phone = cv2.imdecode(np.frombuffer(encoded, np.uint8), cv2.IMREAD_COLOR)
-            except cv2.error:
-                return False
-            if phone is None:
-                return False
-            if phone_before is not None and not np.array_equal(phone_before, phone):
-                break
-            phone_before = phone
-        else:
-            return False
-        if not np.array_equal(before, self._vision.capture()):
-            return False
+        observation = self._probe_recovery_screen()
         if not self._device_available(force=True) or self._stop_requested.is_set():
             return True
-        logger.warning("Phone is changing but scrcpy is frozen; suspending input for mirror repair")
-        self.pause_reason = PauseReason.RECOVERY
-        self.stop()
-        self._game_recovery_pending = False
-        self._arm_resume("phone progresses while scrcpy display is frozen")
-        if self._resume is not None:
-            self._resume.restart_mirror = True
+        if observation.status != "mirror-stale":
+            return False
+        self._queue_game_recovery("phone progresses while scrcpy display is frozen")
         return True
 
     def _device_available(self, *, force: bool = False) -> bool:
@@ -516,23 +511,35 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
             return True
         now = self._clock()
         if not force and now < self._device_check_at:
-            return self.pause_reason != PauseReason.DISCONNECTED
-        self._device_check_at = now + 1.0
-        if self._launcher.connected():
-            self._phone_game_foreground = (
-                self._launcher.game_foreground() if self._launcher.package is not None else None
+            return self.pause_reason != PauseReason.DISCONNECTED and (
+                self._launcher.package is None or self._phone_game_foreground is True
             )
-            if self.running and self._phone_game_foreground is False:
-                logger.warning("Selected game left Android foreground; releasing input")
-                if self._config.game_recovery.enabled:
-                    self._queue_game_recovery()
-                else:
-                    self.pause_reason = PauseReason.ERROR
-                    self.stop()
-                return False
+        self._device_check_at = now + 1.0
+        connected = self._launcher.connected()
+        if connected is False:
+            self._disconnect()
+            return False
+        self._phone_game_foreground = (
+            self._launcher.game_foreground()
+            if connected and self._launcher.package is not None else None
+        )
+        if self.running and self._manual_stop_requested.is_set():
+            self.stop(manual=True)
+            return False
+        if connected and (self._launcher.package is None or self._phone_game_foreground is True):
             return True
-        self._disconnect()
-        return False
+        if self.running:
+            reason = ("selected game left Android foreground"
+                      if self._phone_game_foreground is False
+                      else "Android device or foreground observation unavailable")
+            if self._config.game_recovery.enabled:
+                self._queue_game_recovery(reason)
+            else:
+                self.pause_reason = PauseReason.ERROR
+                self.stop()
+            return False
+        # The stopped monitor can inspect a confirmed background game for process exit.
+        return connected is True and not self.running
 
     def _sleep(self, duration: float) -> bool:
         if duration <= 0:

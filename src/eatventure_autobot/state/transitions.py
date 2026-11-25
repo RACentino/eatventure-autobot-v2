@@ -452,6 +452,7 @@ def confirm_restaurant(context: FlowContext, start_visible: bool) -> bool:
     context.idle_scrolls = 0
     context.reset_search_cycle()
     context.invalidate_viewport()
+    context.strategy_endpoint = None
     context.gameplay_phase = GameplayPhase.FIRST
     context.strategy_seek = True
     context.strategy_scrolls = context.strategy_stationary_count = 0
@@ -484,6 +485,16 @@ def confirmed_station_targets(
     return targets
 
 
+def station_at_projection(
+    candidates: Iterable[MatchCandidate], expected: Point,
+) -> MatchCandidate | None:
+    # A footprint center can sit below the same station's red-arrow click point.
+    matching = [c for c in candidates
+                if abs(c.center[0] - expected[0]) < ROW_DEDUPE_DISTANCE
+                and abs(c.center[1] - expected[1]) < _LAST_REFRAME_Y_TOLERANCE]
+    return matching[0] if len(matching) == 1 else None
+
+
 def strategy_target(
     context: FlowContext,
     candidates: Iterable[MatchCandidate],
@@ -500,11 +511,7 @@ def strategy_target(
     if context.gameplay_phase == GameplayPhase.LAST:
         expected = context.strategy_expected_last
         if expected is not None:
-            # A footprint center can sit below the same station's red-arrow click point.
-            matching = [c for c in remaining
-                        if abs(c.center[0] - expected[0]) < ROW_DEDUPE_DISTANCE
-                        and abs(c.center[1] - expected[1]) < _LAST_REFRAME_Y_TOLERANCE]
-            return matching[0] if len(matching) == 1 else None
+            return station_at_projection(remaining, expected)
         unbuilt = [c for c in remaining if not c.template_name.startswith("stationBuilt")]
         remaining = unbuilt or remaining
 
@@ -533,6 +540,7 @@ def observe_station(context: FlowContext, panel: StationPanel) -> None:
             or context.strategy_anchor is None):
         return
     context.maxed_positions.add(context.strategy_anchor)
+    context.strategy_endpoint = None
     if context.gameplay_phase == GameplayPhase.FIRST:
         context.gameplay_phase = GameplayPhase.LAST
         context.strategy_short_last_reframe = False

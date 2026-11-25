@@ -49,6 +49,8 @@ class FlowContext:
     strategy_probe_at: float = 0.0
     strategy_unknown_panels: int = 0
     strategy_anchor: Point | None = None
+    # First recognized station in this endpoint phase, in the saved reference frame.
+    strategy_endpoint: Point | None = None
     strategy_expected_last: Point | None = None  # projected into the current viewport after a drag
     strategy_short_last_reframe: bool = False
     maxed_positions: set[Point] = field(default_factory=set)

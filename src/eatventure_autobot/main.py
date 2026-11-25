@@ -286,7 +286,7 @@ def _run(config: BotConfig) -> None:
         elif bot_instance is not None and bot_instance.running:
             bot_instance.step()
         elif bot_instance is not None:
-            bot_instance.poll_resume(_last_key_at)  # a no-op unless it stopped itself on an error
+            bot_instance.poll_resume(lambda: _last_key_at)
         should_exit.wait(config.flow_timing.event_loop_interval)
 
 

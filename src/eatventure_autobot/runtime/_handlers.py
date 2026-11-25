@@ -15,7 +15,9 @@ from eatventure_autobot.domain.errors import ObservationError
 from eatventure_autobot.domain.protocols import InputController
 from eatventure_autobot.domain.state import GameplayPhase, State, StationPanel
 from eatventure_autobot.domain.types import BoundingBox, MatchCandidate, Point, TemplateExplanation
+from eatventure_autobot.runtime._recovery_probe import recovery_unlock_visible
 from eatventure_autobot.runtime._telemetry import _frame_thumbnail
+from eatventure_autobot.runtime.game_recovery import GameLauncher
 from eatventure_autobot.runtime.progress import ProgressLedger
 from eatventure_autobot.runtime.vision import GameVision, StationPanelRead
 from eatventure_autobot.state import transitions as flow
@@ -62,8 +64,13 @@ class _HandlersMixin:
     _vision: GameVision
     context: FlowContext
     _progress: ProgressLedger | None
+    _launcher: GameLauncher | None
+    _verify_recovered_unlock: bool
+    _recovery_station: tuple[int, Point] | None
+    _recovery_restart_used: bool
     _strategy_health_thumb: np.ndarray | None
     _strategy_target_frame: np.ndarray | None
+    _strategy_endpoint_frame: np.ndarray | None = None
     _strategy_alive_at: float
     _phone_game_foreground: bool | None
     _stop_requested: Event
@@ -105,10 +112,10 @@ class _HandlersMixin:
         def _game_looks_dead(self, thumb: np.ndarray) -> bool:
             ...
 
-        def _relaunch_game(self) -> State:
-            ...
+        def _recovery_input_allowed(self) -> bool: ...
+        def _note_recovery_click(self, point: Point) -> None: ...
 
-        def _queue_game_recovery(self) -> State: ...
+        def _queue_game_recovery(self, reason: str = ...) -> State: ...
 
         def _arm_resume(self, reason: str) -> None: ...
 
@@ -310,8 +317,29 @@ class _HandlersMixin:
         frame = self._vision.capture(max_y=self._config.capture_regions.max_search_y)
         if self._config.strategy.enabled:
             read = self._vision.read_station_panel(frame, prefer_unlock=True)
+            if read.state == StationPanel.UNKNOWN:
+                if not self._sleep(self._config.strategy.target_observation_interval):
+                    return State.CHECK_UNLOCK
+                frame = self._vision.capture()
+                transition = self._economy_level_transition(
+                    frame, button_max_y=self._config.capture_regions.max_search_y,
+                )
+                if transition is not None:
+                    return transition
+                read = self._vision.read_station_panel(frame, prefer_unlock=True)
             panel = self._observe_strategy_panel(frame, read)
-            if panel in (StationPanel.MAX, StationPanel.UNKNOWN):
+            if panel == StationPanel.UNKNOWN:
+                if read.bounds is None:
+                    # The tap never established a panel. Re-select without losing known MAX rows.
+                    self.context.strategy_anchor = self.context.target_viewport = None
+                    self.context.red_icons.clear()
+                    self.context.upgrade_station_pos = None
+                    self._strategy_target_frame = None
+                    if (self.context.gameplay_phase == GameplayPhase.LAST
+                            and self.context.strategy_endpoint is None):
+                        self.context.strategy_seek = True
+                return State.FIND_RED_ICONS
+            if panel == StationPanel.MAX:
                 return State.UPGRADE_STATS
             if panel == StationPanel.LOCKED:
                 self.context.stats_from_find = True
@@ -447,6 +475,20 @@ class _HandlersMixin:
                 return StationPanel.UNKNOWN
             context.invalidate_viewport()
             raise ObservationError("Station panel remained UNKNOWN; retry localization")
+        if (panel in (StationPanel.AFFORDABLE, StationPanel.LOCKED)
+                and context.gameplay_phase in (GameplayPhase.FIRST, GameplayPhase.LAST)
+                and context.strategy_endpoint is None and context.strategy_anchor is not None
+                and context.target_viewport == context.viewport
+                and self._strategy_target_frame is not None):
+            context.strategy_endpoint = context.strategy_anchor
+            self._strategy_endpoint_frame = self._strategy_target_frame.copy()
+        if (self._recovery_restart_used and context.strategy_anchor is not None
+                and context.target_viewport == context.viewport):
+            station = (context.viewport, context.strategy_anchor)
+            if panel in (StationPanel.LOCKED, StationPanel.AFFORDABLE):
+                self._recovery_station = station
+            elif panel == StationPanel.MAX and self._recovery_station == station:
+                self._recovery_restart_used = False
         flow.observe_station(context, panel)
         return panel
 
@@ -924,12 +966,14 @@ class _HandlersMixin:
             logger.info("Restaurant transition attempted; awaiting visual confirmation")
         return next_state
 
-    def _handle_transition_level(self) -> State:
+    def _handle_transition_level(self, *, require_open: bool = False) -> State:
         level = self._config.level_transition
         attempt = self.context.state_attempt
         # Preserve the visible dialog. Focus and forbidden-zone checks remain in the input layer.
         # v1 captures at max_search_y for this state's search loop, not extended_search_y.
         frame = self._vision.capture(max_y=self._config.capture_regions.max_search_y)
+        if require_open and not self._vision.restaurant_start(frame):
+            return State.FIND_RED_ICONS
         result = self._vision.find_new_level_button(frame)
         # No forbidden-zone pre-gate: like v1, a forbidden match is handed to click(), which
         # rejects it, and the failed click routes to CHECK_NEW_LEVEL.
@@ -949,8 +993,12 @@ class _HandlersMixin:
             attempt,
         )
         fresh_restaurant = self._config.strategy.enabled and self._vision.restaurant_start(frame)
+        if require_open and not self._recovery_input_allowed():
+            return State.FIND_RED_ICONS
         clicked = self._input.click(*result.best.center)
         if clicked:
+            if require_open:
+                self._note_recovery_click(result.best.center)
             if fresh_restaurant:
                 self.context.strategy_fresh_entry = _VIEWPORT_FRESH_ENTRY_PROBES
             self._sleep(level.settle_delay)
@@ -975,6 +1023,12 @@ class _HandlersMixin:
         # which uses the same "unlock" template against a max_search_y-limited frame.
         frame = self._vision.capture()
         result = self._vision.find_unlock_button(frame)
+        if self._verify_recovered_unlock:
+            self._verify_recovered_unlock = False
+            if result.best is None or not recovery_unlock_visible(
+                self._vision, frame, result.best.center
+            ):
+                return State.FIND_RED_ICONS
         if result.best is None or not self._is_clickable(result.best.center):
             # The gate found nothing. Whether that is a greyed-out button (a raw match just under
             # the gate, so more tries cannot help) decides if the retries are worth their ~1.3 s.
@@ -1014,18 +1068,27 @@ class _HandlersMixin:
                 else next_state)
 
     def _handle_city_arrival(self, frame: np.ndarray) -> bool:
-        city = self._vision.city_arrival(frame)
-        if city:
-            if self._progress is not None and not self.context.city_seen:
-                self._progress.city_boundary()
-            result = self._vision.find_city_continue(frame)
-            if result.best is not None and self._input.click(*result.best.center):
-                self.context.strategy_fresh_entry = (
-                    _VIEWPORT_FRESH_ENTRY_PROBES if self._config.strategy.enabled else 0
-                )
-                self._sleep(self._config.level_transition.settle_delay)
-        self.context.city_seen = city
-        return city
+        if self._vision.city_arrival(frame):
+            self._continue_city(frame)
+            return True
+        self.context.city_seen = False
+        return False
+
+    def _continue_city(self, frame: np.ndarray, *, recovering: bool = False) -> bool:
+        if self._progress is not None and not self.context.city_seen:
+            self._progress.city_boundary()
+        self.context.city_seen = True
+        result = self._vision.find_city_continue(frame)
+        if (result.best is None or (recovering and not self._recovery_input_allowed())
+                or not self._input.click(*result.best.center)):
+            return False
+        if recovering:
+            self._note_recovery_click(result.best.center)
+        self.context.strategy_fresh_entry = (
+            _VIEWPORT_FRESH_ENTRY_PROBES if self._config.strategy.enabled else 0
+        )
+        self._sleep(self._config.level_transition.settle_delay)
+        return True
 
     def _handle_confirm_restaurant(self) -> State:
         frame = self._vision.capture()
@@ -1033,6 +1096,7 @@ class _HandlersMixin:
             self._progress.checkpoint(boost=self._vision.boost_level(frame))
         city = self._handle_city_arrival(frame)
         if flow.confirm_restaurant(self.context, not city and self._vision.restaurant_start(frame)):
+            self._recovery_restart_used = False
             self.context.strategy_fresh_entry = (
                 _VIEWPORT_FRESH_ENTRY_PROBES if self._config.strategy.enabled else 0
             )
@@ -1134,7 +1198,7 @@ class _HandlersMixin:
             self._strategy_alive_at = now
             self._strategy_health_thumb = thumb
         elif (now - self._strategy_alive_at >= self._config.game_recovery.stale_after_seconds
-                and self._config.game_recovery.enabled):
+                and self._config.game_recovery.enabled and self._launcher is not None):
             return self._queue_game_recovery()
         if context.strategy_waiting_liveness:
             self._sleep(self._config.scroll.post_scroll_settle)
@@ -1238,16 +1302,34 @@ class _HandlersMixin:
                 for known in targets
             ):
                 targets.append(target)
+        endpoint = self.context.strategy_endpoint
+        if endpoint is not None and targets:
+            reference = self._strategy_endpoint_frame
+            if reference is None:
+                return []
+            height = min(reference.shape[0], frame.shape[0])
+            before, after = reference[:height], frame[:height]
+            if self._vision.viewport_still(before, after) is not True:
+                shift = self._vision.viewport_translation(before, after)
+                if shift is None or abs(shift[0]) >= ROW_DEDUPE_DISTANCE:
+                    return []
+                endpoint = endpoint[0] + shift[0], endpoint[1] + shift[1]
+            match = flow.station_at_projection(targets, endpoint)
+            return [match] if match is not None else []
         return targets
+
+    def _localization_panel_bounds(self, frame: np.ndarray) -> BoundingBox | None:
+        read = self._vision.read_station_panel(frame)
+        if read.bounds is None and read.state != StationPanel.UNKNOWN:
+            raise ObservationError("Station panel bounds unavailable before localization")
+        return read.bounds
 
     def _dismiss_station_panel(self, frame: np.ndarray) -> np.ndarray | None:
         previous_panel: BoundingBox | None = None
+        panel = self._localization_panel_bounds(frame)
         for _ in range(_VIEWPORT_MAX_PANEL_DISMISSALS):
-            if self._vision.station_panel(frame) == StationPanel.UNKNOWN:
-                return frame
-            panel = self._vision.station_panel_bounds(frame)
             if panel is None:
-                raise ObservationError("Station panel bounds unavailable before localization")
+                return frame
             # An outside tap can select a different station instead of clearing the overlay.
             persistent = (
                 previous_panel is not None and previous_panel.iou(panel) >= _VIEWPORT_SAME_PANEL_IOU
@@ -1262,11 +1344,13 @@ class _HandlersMixin:
                 return None
             previous_panel = panel
             frame = self._vision.capture()
-            if self._vision.station_panel(frame) == StationPanel.UNKNOWN:
+            panel = self._localization_panel_bounds(frame)
+            if panel is None:
                 if not self._sleep(self._config.scrcpy_recovery.action_settle_delay):
                     return None
                 frame = self._vision.capture()
-        if self._vision.station_panel(frame) != StationPanel.UNKNOWN:
+                panel = self._localization_panel_bounds(frame)
+        if panel is not None:
             raise _ViewportError("Station panel did not close before viewport localization")
         return frame
 
@@ -1314,6 +1398,7 @@ class _HandlersMixin:
         context = self.context
         can_confirm = (
             not context.strategy_seek or fresh_entry or context.strategy_stationary_count >= 2
+            or context.strategy_endpoint is not None
         )
         if not can_confirm and not prefer_visible:
             return frame, None
@@ -1341,8 +1426,10 @@ class _HandlersMixin:
             observed_at = self._clock()
             if (renovation := self._candidate_renovation_footer(fresh)) is not None:
                 return renovation
-            if self._vision.station_panel(fresh) != StationPanel.UNKNOWN:
+            if self._localization_panel_bounds(fresh) is not None:
                 return None
+            if len(views) == 2 and not any(views):
+                return fresh, None  # A third view alone cannot confirm a station.
             views.append(self._strategy_targets(fresh))
             if len(views) != 2 or not views[0]:
                 continue
@@ -1387,6 +1474,10 @@ class _HandlersMixin:
         if isinstance(observation, State):
             return observation
         fresh, target = observation
+        if target is not None and context.strategy_endpoint is not None:
+            # The saved world frame identifies the endpoint even after a recovery invalidates
+            # the old camera edge. Reaching that edge again could move it out of view.
+            context.strategy_seek = False
         if (context.strategy_retry_delay and self._clock() < context.strategy_probe_at
                 and target is None
                 and (self._vision.stats_icon_seen(fresh) or self._vision.find_boxes(fresh))):

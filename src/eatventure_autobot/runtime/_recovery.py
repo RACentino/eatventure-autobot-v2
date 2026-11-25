@@ -17,6 +17,7 @@ from eatventure_autobot.domain.protocols import InputController, Notifier
 from eatventure_autobot.domain.state import X_LOCKED_STATES, GameplayPhase, PauseReason, State
 from eatventure_autobot.domain.types import MatchCandidate, Point
 from eatventure_autobot.resilience.watchdog import StallWatchdog, WatchdogVerdict
+from eatventure_autobot.runtime._recovery_probe import ScreenProbe
 from eatventure_autobot.runtime._telemetry import _frame_thumbnail
 from eatventure_autobot.runtime.game_recovery import GameLauncher
 from eatventure_autobot.runtime.progress import ProgressLedger
@@ -46,7 +47,8 @@ class _RecoveryMixin:
     _launcher: GameLauncher | None
     _notifier: Notifier
     _recent_thumb: np.ndarray | None
-    _relaunch_progress: tuple[int, int] | None
+    _recovery_station: tuple[int, Point] | None
+    _recovery_restart_used: bool
     _stop_requested: threading.Event
     _streak_thumb: np.ndarray | None
     _strategy_alive_at: float
@@ -58,6 +60,7 @@ class _RecoveryMixin:
     _progress: ProgressLedger | None
     _game_recovery_pending: bool
     _phone_game_foreground: bool | None
+    _manual_stop_requested: threading.Event
 
     if TYPE_CHECKING:  # annotation only: nothing here exists at runtime
 
@@ -68,7 +71,11 @@ class _RecoveryMixin:
         def stop(self, *, manual: bool = False) -> None: ...
         def _arm_resume(self, reason: str) -> None: ...
 
-        def _restart_mirror(self, cancelled: threading.Event) -> bool: ...
+        def _probe_recovery_screen(self) -> ScreenProbe: ...
+        def _recovery_input_allowed(self) -> bool: ...
+        def _clear_recovery_dialog(self) -> None: ...
+        def _note_recovery_click(self, point: Point) -> None: ...
+        def _retry_station_pass(self, reason: str) -> State: ...
 
     def _dismiss_popup(self) -> tuple[bool, np.ndarray | None]:
         """Red-X priority: runs before the state handler, so it outranks every handler and asset.
@@ -168,10 +175,11 @@ class _RecoveryMixin:
         while self._clock() < deadline and not self._stop_requested.is_set():
             if self._progress is not None:
                 self._progress.checkpoint()
-            if not self._device_available():
+            available = self._device_available()
+            if self._stop_requested.is_set() or self.pause_reason == PauseReason.DISCONNECTED:
                 return False
             remaining = deadline - self._clock()
-            if self._phone_game_foreground is False:
+            if not available or self._phone_game_foreground is not True:
                 self._sleep(min(config.recovery_poll_seconds, remaining))
                 continue
             try:
@@ -191,9 +199,10 @@ class _RecoveryMixin:
                 # Periodic animation can return to its first pose; retain the whole tail's motion.
                 tail_min = last if tail_min is None else np.minimum(tail_min, last)
                 tail_max = last if tail_max is None else np.maximum(tail_max, last)
-            if found:
+            if found and self._recovery_input_allowed():
                 taps += 1
-                self._tap_close_button(found[0], remaining=remaining, recovery=True)
+                if self._tap_close_button(found[0], remaining=remaining, recovery=True):
+                    self._note_recovery_click(found[0].center)
             else:
                 self._sleep(min(config.recovery_poll_seconds, remaining))
         elapsed = self._clock() - started
@@ -210,7 +219,7 @@ class _RecoveryMixin:
             "changing" if changing else "still static",
             delta,
             _RECOVERY_TAIL_SECONDS,
-            "" if changing else "; remaining in recovery with capped backoff",
+            "" if changing else "; awaiting phone verification",
         )
         return changing
 
@@ -269,54 +278,67 @@ class _RecoveryMixin:
             return False
         return static
 
-    def _queue_game_recovery(self) -> State:
+    def _queue_game_recovery(self, reason: str = "stall timer expired") -> State:
+        if self._manual_stop_requested.is_set():
+            self.stop(manual=True)
+            return State.FIND_RED_ICONS
         if self._config.strategy.enabled:
             self._idle_started_at = self._strategy_alive_at
+        if (reason == "stall timer expired" and self._phone_game_foreground is True
+                and self._vision.environment_ready()):
+            view = self._probe_recovery_screen()
+            logger.info("Stall check trigger=%s evidence=%s screen=%s", reason, view.status,
+                        view.screen)
+            if self._stop_requested.is_set():
+                return State.FIND_RED_ICONS
+            if view.status == "playable" and view.screen is None:
+                if self._config.strategy.enabled:
+                    self._strategy_alive_at = self._clock()
+                    return self._retry_station_pass("phone and mirror show live gameplay")
+                self._streak_thumb = self._recent_thumb = None
+                return State.FIND_RED_ICONS
+        logger.warning("Game recovery queued trigger=%s", reason)
         self._game_recovery_pending = True
         self.pause_reason = PauseReason.RECOVERY
         self.stop()
-        self._arm_resume("game appears frozen")
+        self._arm_resume(reason)
         return State.FIND_RED_ICONS
 
-    def _relaunch_game(self) -> State:
-        """adb force-stop + launch, wait out the cold start, and restart the search from scratch.
-        No cap on repeats (by choice): the next chance is another full stall alert, ~8 min away."""
+    def _relaunch_game(self, *, cold: bool = True) -> State:
+        """Called after the resume monitor verifies a freeze or an exited game."""
         launcher, context = self._launcher, self.context
-        assert launcher is not None  # _game_looks_dead only says yes when a launcher is armed
-        if not self._device_available(force=True) or self._stop_requested.is_set():
+        if (launcher is None or launcher.package is None or self._stop_requested.is_set()
+                or not self._device_available(force=True) or self._manual_stop_requested.is_set()):
             return State.FIND_RED_ICONS
+        if cold and (self._phone_game_foreground is not True or self._recovery_restart_used):
+            return State.FIND_RED_ICONS
+        if not cold and (self._phone_game_foreground is not False or not launcher.game_exited()):
+            return State.FIND_RED_ICONS
+        if not self._recovery_input_allowed():
+            return State.FIND_RED_ICONS
+        if cold:
+            # A failed ADB reply can follow a successful force-stop.
+            self._recovery_restart_used = True
+            self._recovery_station = None
         self._input.release_left_button()
         context.invalidate_viewport()
         if self._progress is not None:
             self._progress.checkpoint("recovery")
-        progress = (context.holds_completed, context.boxes_opened_total)
-        again = ""
-        viewport_frozen = context.strategy_waiting_liveness
-        if viewport_frozen or progress == self._relaunch_progress:
-            again = (" (viewport frozen; restarting owned scrcpy)" if viewport_frozen else
-                     " (still static after the previous relaunch; the scrcpy window may be frozen)")
-            restarted = self._restart_mirror(self._stop_requested)
-            if viewport_frozen and not restarted or self._stop_requested.is_set():
-                return State.FIND_RED_ICONS
-        logger.warning(
-            "Game appears dead: frame unchanged for %.0f min%s; relaunching %s",
-            (time.monotonic() - self._idle_started_at) / 60,
-            again,
-            launcher.package,
-        )
-        self._relaunch_progress = progress
-        minutes = (time.monotonic() - self._idle_started_at) / 60
+        minutes = max(0.0, self._clock() - self._idle_started_at) / 60
+        logger.warning("Game recovery action=%s elapsed_min=%.1f package=%s",
+                       "cold-restart" if cold else "launch-exited", minutes, launcher.package)
         self._game_recovery_pending = True
-        if launcher.relaunch(self._stop_requested):
+        launched = (launcher.relaunch(self._stop_requested) if cold
+                    else launcher.launch(self._stop_requested))
+        if launched:
             context.gameplay_phase = GameplayPhase.FIRST
+            context.strategy_endpoint = None
+            self._clear_recovery_dialog()
             context.relaunches += 1
             self._notifier.notify_game_relaunch(True, minutes)
-            self._game_recovery_pending = (
-                not self._recover_popups() and not self._stop_requested.is_set()
-            )
+            self._recover_popups()
+            # Even a moving mirror can show loading. The monitor samples both feeds again.
         else:
-            # Nothing restarted, so there is nothing to wait for: log (done by the launcher) and
-            # carry on with the main flow as before.
             context.relaunch_failures += 1
             self._notifier.notify_game_relaunch(False, minutes)
         context.idle_scrolls = 0

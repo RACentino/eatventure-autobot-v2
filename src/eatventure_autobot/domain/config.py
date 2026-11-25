@@ -420,14 +420,13 @@ class GameRecoveryConfig:
     device_serial: str | None = None
     scrcpy_path: str = "scrcpy"
     # Strategy liveness: no thumbnail change >= static_recent_delta across FIND passes for this
-    # long queues a relaunch (force-stop + cold start). static_recent_delta (3.0, unchanged) is
+    # long triggers independent phone and mirror verification. static_recent_delta (3.0) is
     # validated only at 5-minute spacing: bot.log frame_delta_5m, n=1,997, healthy p1 4.7. One busy
     # farm crossed 3.0 within 0.35 s (149/149 live references), but a calm fresh restaurant was not
-    # measurable, and a false trip force-stops the game while a late trip costs minutes on a rare
-    # real freeze, so the window stays at the validated 300 s. That is also above the minimum the
+    # measurable, so the window stays at the validated 300 s. That is also above the minimum the
     # flow needs (an ignored red X: suppress 29.5 + one storm 1.53, x 1.5 = 46.5 s).
     stale_after_seconds: float = 300.0
-    # The game's package is found once at start: the single installed package whose id contains
+    # Startup and stalled-session discovery select the single installed package whose id contains
     # this (case-insensitive). Zero or several matches disable relaunch rather than guess.
     # Checked on the real phone (09-30): the game is com.hwqgrhhjfd.idlefastfood. "eatventure"
     # matches nothing there, and "food" also matches com.global.foodpanda.android.
@@ -454,8 +453,8 @@ class GameRecoveryConfig:
     # command_timeout) or for one to exit. Slowest measured adb call: monkey 1,341 ms (n=20,
     # no-op package); screencap 802 ms. scrcpy's cold start could not be timed without stopping
     # the running mirror, and bot.log (2026-11-18 14:55) shows two startups in a row timing out,
-    # each relaunching scrcpy, so a too-short value loops. A timeout on the per-second
-    # `adb devices` check reads as a disconnect and needs a manual restart. Only a failing call
+    # each relaunching scrcpy, so a too-short value loops. An unreadable device list pauses
+    # input until the same device can be verified. Only a failing call
     # waits this long: 10.0 (7.5 x the slowest adb call). UNMEASURED part: scrcpy cold start.
     command_timeout: float = 10.0
 

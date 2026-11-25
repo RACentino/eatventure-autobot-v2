@@ -123,6 +123,9 @@ class GameLauncher:
 
     def select_device(self) -> bool:
         devices = self._devices()
+        if devices is None:
+            logger.warning("Could not read adb device list")
+            return False
         selected = [d for d in devices if self.serial is None or d.serial == self.serial]
         if len(selected) != 1:
             logger.error("Select one connected device explicitly; found %d", len(devices))
@@ -131,23 +134,48 @@ class GameLauncher:
         self.serial = self.identity.serial
         return True
 
-    def _devices(self) -> list[DeviceIdentity]:
+    def _devices(self) -> list[DeviceIdentity] | None:
         code, output = self._run(
             [self._config.adb_path, "devices", "-l"], self._config.command_timeout
         )
-        if code:
-            return []
-        devices = []
+        if code or not output.strip():
+            return None
+        devices: list[DeviceIdentity] = []
+        listed = False
+        serials: set[str] = set()
         for line in output.splitlines():
             parts = line.split()
-            if len(parts) >= 2 and parts[1] == "device":
-                transport = next((p.split(":", 1)[1] for p in parts[2:]
-                                  if p.startswith("transport_id:")), "")
-                devices.append(DeviceIdentity(parts[0], transport))
-        return devices
+            if not parts or line.startswith("* daemon "):
+                continue
+            if line.strip() == "List of devices attached":
+                listed = True
+                continue
+            if (len(parts) < 2 or parts[0] in serials or parts[1] not in
+                    {"device", "offline", "unauthorized", "recovery", "sideload", "bootloader"}):
+                return None
+            serials.add(parts[0])
+            listed = True
+            if parts[1] == "device":
+                ids = [p.removeprefix("transport_id:") for p in parts[2:]
+                       if p.startswith("transport_id:")]
+                if len(ids) > 1 or (ids and not ids[0].isdecimal()):
+                    return None
+                devices.append(DeviceIdentity(parts[0], ids[0] if ids else ""))
+        return devices if listed else None
 
-    def connected(self) -> bool:
-        return self.identity is not None and self.identity in self._devices()
+    def connected(self) -> bool | None:
+        """Distinguish a confirmed loss of our transport from an unreadable adb reply."""
+        if self.identity is None:
+            return False
+        devices = self._devices()
+        if devices is None:
+            return None
+        for device in devices:
+            if device.serial == self.identity.serial:
+                if bool(device.transport_id) != bool(self.identity.transport_id):
+                    return None
+                return device == self.identity
+        return False
 
     def restart_mirror(self, title: str, width: int, height: int,
                        cancelled: threading.Event) -> bool:
@@ -243,36 +271,74 @@ class GameLauncher:
         logger.info("Game relaunch armed for package %s", self.package)
         return True
 
-    def game_foreground(self) -> bool:
+    def game_foreground(self) -> bool | None:
         """Check Android independently of a mirror that can still show an old game frame."""
         if self.package is None or self.serial is None:
-            return False
+            return None
         code, output = self._run(self._adb("shell", "dumpsys", "window", "displays"),
                                  self._config.command_timeout)
-        # Older display dumps omit this field; an explicit null/other focus is authoritative.
+        # Older display dumps omit this field. Multiple displays or a system overlay are ambiguous.
         if code == 0 and "mCurrentFocus=" not in output:
             code, output = self._run(self._adb("shell", "dumpsys", "window"),
                                      self._config.command_timeout)
-        focused = [line for line in output.splitlines() if "mCurrentFocus=Window{" in line]
-        return code == 0 and len(focused) == 1 and f" {self.package}/" in focused[0]
+        focused = [line.strip() for line in output.splitlines()
+                   if line.lstrip().startswith("mCurrentFocus=")]
+        if code or len(focused) != 1:
+            return None
+        component = re.fullmatch(
+            r"mCurrentFocus=Window\{[a-fA-F0-9]+ u\d+ ([\w.]+)/[\w.$]+\}", focused[0],
+        )
+        if component is None or not _PACKAGE_NAME.fullmatch(component[1]):
+            return None
+        return component[1] == self.package
 
-    def relaunch(self, cancelled: threading.Event | None = None) -> bool:
-        """Force-stop then launch. A frozen app needs the stop; a crashed one ignores it."""
+    def game_unresponsive(self) -> bool:
+        """Read the current main process's Android ANR flag; other dump sections include history."""
         if self.package is None or self.serial is None:
             return False
-        timeout = self._config.command_timeout
-        steps = (
-            self._adb("shell", "am", "force-stop", self.package),
-            self._adb("shell", "monkey", "-p", self.package)
-            + ["-c", "android.intent.category.LAUNCHER", "1"],
+        argv = self._adb("shell", "dumpsys", "activity", "processes", self.package)
+        code, output = self._run(argv, self._config.command_timeout)
+        if code:
+            return False
+        _, section, current = output.partition("  All known processes:\n")
+        if not section:
+            return False
+        header = (r"^  \*APP\* UID \d+ ProcessRecord\{[\da-fA-F]+ [1-9]\d*:"
+                  + re.escape(self.package) + r"/[^\s}]+\}\n((?:    [^\n]*(?:\n|$))*)")
+        records = re.findall(header, current.partition("\n\n")[0], re.MULTILINE)
+        return len(records) == 1 and any(
+            re.match(r"\s*(?:mCrashing|crashing)=(?:true|false)\s", line)
+            and re.search(r"\s(?:mNotResponding|notResponding)=true(?:\s|$)", line)
+            for line in records[0].splitlines()
         )
-        for argv in steps:
-            if cancelled is not None and cancelled.is_set():
-                return False
-            code, output = self._run(argv, timeout)
-            if code != 0:
-                logger.error(
-                    "Game relaunch step failed (%s): %s", " ".join(argv[1:]), output.strip()
-                )
-                return False
-        return True
+
+    def game_exited(self) -> bool:
+        """True only if pidof ran on the phone and found no instance of the main process."""
+        if self.package is None or self.serial is None or not _PACKAGE_NAME.fullmatch(self.package):
+            return False
+        # A remote status marker distinguishes a real empty process lookup from a broken ADB pipe.
+        code, output = self._run(self._adb("shell", f"pidof {self.package}; echo pidof-status:$?"),
+                                 self._config.command_timeout)
+        return code == 0 and output.strip() == "pidof-status:1"
+
+    def launch(self, cancelled: threading.Event | None = None) -> bool:
+        """Bring the selected package to the foreground without stopping its process."""
+        if self.package is None or self.serial is None or (cancelled and cancelled.is_set()):
+            return False
+        argv = self._adb("shell", "monkey", "-p", self.package, "-c",
+                         "android.intent.category.LAUNCHER", "1")
+        code, output = self._run(argv, self._config.command_timeout)
+        if code:
+            logger.error("Game launch failed: %s", output.strip())
+        return code == 0
+
+    def relaunch(self, cancelled: threading.Event | None = None) -> bool:
+        """Cold restart a verified freeze, checking cancellation between commands."""
+        if self.package is None or self.serial is None or (cancelled and cancelled.is_set()):
+            return False
+        code, output = self._run(self._adb("shell", "am", "force-stop", self.package),
+                                 self._config.command_timeout)
+        if code:
+            logger.error("Game force-stop failed: %s", output.strip())
+            return False
+        return self.launch(cancelled)

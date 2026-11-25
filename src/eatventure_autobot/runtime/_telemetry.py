@@ -202,7 +202,7 @@ class _TelemetryMixin:
         ponytail: a scroll re-anchor stays deferred until a probe shows it is the problem."""
         idle = self.context.idle_scrolls
         if idle == 1:
-            self._idle_started_at = time.monotonic()
+            self._idle_started_at = self._clock()
             self._streak_anchor_pending = True
             self._recent_thumb = None  # a new streak never compares against an old one's picture
         early = self._config.scroll.stall_probe_scrolls
@@ -218,7 +218,7 @@ class _TelemetryMixin:
             "Stall: %d scrolls over %.0f min with no box opened, upgrade held, stats upgrade or "
             "level completed (levels=%d holds=%d boxes=%d); probing box detection on the next scan",
             idle,
-            (time.monotonic() - self._idle_started_at) / 60,
+            (self._clock() - self._idle_started_at) / 60,
             context.total_levels_completed,
             context.holds_completed,
             context.boxes_opened_total,
@@ -291,7 +291,7 @@ class _TelemetryMixin:
                 "Red icons (need conf>=%.3f and hsv>=%.2f): %s. "
                 "Open button (need conf>=%.3f): %s. Close X (need conf>=%.3f): %s",
                 context.idle_scrolls,
-                (time.monotonic() - self._idle_started_at) / 60,
+                (self._clock() - self._idle_started_at) / 60,
                 detected,
                 context.box_zone_skips,
                 context.box_click_fails,
