@@ -38,7 +38,7 @@ from eatventure_autobot.runtime._telemetry import (  # noqa: F401  (re-exported:
 )
 from eatventure_autobot.runtime.game_recovery import GameLauncher
 from eatventure_autobot.runtime.progress import ProgressLedger
-from eatventure_autobot.runtime.vision import GameVision
+from eatventure_autobot.runtime.vision import GameVision, StationPanelRead
 from eatventure_autobot.state.context import FlowContext
 
 logger = logging.getLogger(__name__)
@@ -105,6 +105,7 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
         self._notifier = notifier
         # (title, body) popup shown when the bot stops itself; None = off (tests, other platforms).
         self._desktop_notifier = desktop_notifier
+        self._level_active_before_stop = 0.0
         self._started_at = 0.0  # monotonic start() time of this run, for the self-stop line
         # Armed (not None) only while the bot is stopped after an environment self-stop and nobody
         # has restarted it since; see poll_resume.
@@ -173,6 +174,7 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
         self._close_level_lock_until = 0.0
         self._close_check_seconds = 0.0
         self._asset_frame: np.ndarray | None = None
+        self._asset_frame_at: float | None = None
         # Clock for the recovery window (a test advances it from a fake sleep); everything else
         # keeps using time.monotonic directly.
         self._clock: Callable[[], float] = time.monotonic
@@ -354,6 +356,8 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
         with self._step_lock:
             was_running = self.running
             self._running.clear()
+            if was_running and not self._config.measurement.detailed:
+                self._level_active_before_stop = self._active_level_elapsed(time.monotonic())
             self._input.release_left_button()
             self.state = State.FIND_RED_ICONS
             self.context.reset_run()
@@ -364,7 +368,8 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
                 self._progress.checkpoint(reason.value)
                 self._progress.cancel_transition()
             self._watchdog.reset()
-            if was_running and self._config.flow_timing.metrics_log_interval > 0:
+            if (was_running and self._config.measurement.detailed
+                    and self._config.flow_timing.metrics_log_interval > 0):
                 self._log_metrics()
         # v1 only sends "Bot Stopped" from the manual Z-toggle stop path; an internal auto-stop
         # (stop-requested race, lost foreground, an unhandled handler exception, or close()'s
@@ -444,14 +449,16 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
 
     def _run_state_handler(self, observed: np.ndarray | None = None) -> bool:
         previous_state = self.state
-        started = time.monotonic()
+        started = time.monotonic() if self._config.measurement.detailed else None
         self._asset_frame = observed if self._config.strategy.enabled else None
         try:
             next_state = self._handlers[previous_state]()
         finally:
             self._asset_frame = None
-        self._state_seconds[previous_state] += time.monotonic() - started
-        self._state_calls[previous_state] += 1
+            self._asset_frame_at = None
+        if started is not None:
+            self._state_seconds[previous_state] += time.monotonic() - started
+            self._state_calls[previous_state] += 1
         self._last_handled_state = previous_state
         if previous_state in X_LOCKED_STATES:
             # Avoid dismissing a restaurant dialog that still owns the next UI action.
@@ -470,9 +477,10 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
         )
         self.state = next_state
         self._apply_watchdog(next_state)
-        self._maybe_log_metrics()
-        if self._progress is not None:
-            self._progress.checkpoint()
+        if self._config.measurement.detailed:
+            self._maybe_log_metrics()
+            if self._progress is not None:
+                self._progress.checkpoint()
         return True
 
     # --- shared helpers -------------------------------------------------------------------
@@ -552,6 +560,7 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
 
     def _click_idle(
         self, exclude: BoundingBox | None = None, *, alternate: bool = False,
+        observed: tuple[np.ndarray, StationPanelRead] | None = None,
     ) -> bool:
         if self._stop_requested.is_set():
             return False
@@ -560,18 +569,21 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
         if self._config.strategy.enabled:
             if not self._input.is_target_foreground():
                 return False
+            if observed is not None:
+                exclude = observed[1].bounds
             if exclude is None:
                 return True
             padding = _IDLE_PANEL_PADDING_PX
             blocked = BoundingBox(exclude.x_min - padding, exclude.y_min - padding,
                                   exclude.x_max + padding, exclude.y_max + padding)
             occupied = tuple(self.context.maxed_positions) + (() if anchor is None else (anchor,))
-            frame = self._vision.capture()
+            frame = self._vision.capture() if observed is None else observed[0]
             point = (None if alternate
                      else self._vision.empty_world_point(frame, blocked, occupied))
             if point is None or not self._is_clickable(point):
-                panel = self._vision.station_panel_bounds(frame)
-                if panel is None or self._vision.station_panel(frame) == StationPanel.UNKNOWN:
+                read = self._vision.read_station_panel(frame) if observed is None else observed[1]
+                panel = read.bounds
+                if panel is None or read.state == StationPanel.UNKNOWN:
                     return False
                 x, y = targets.scroll_start_pos
                 positions: tuple[Point, ...] = (

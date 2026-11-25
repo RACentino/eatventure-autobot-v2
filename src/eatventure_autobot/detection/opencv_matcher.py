@@ -12,6 +12,7 @@ extra ad-hoc pixel-distance pre-filter — a more principled and equally effecti
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import NamedTuple
 
 import cv2
 import numpy as np
@@ -47,12 +48,12 @@ def _as_bgr(image: np.ndarray, label: str) -> np.ndarray:
 
 
 def _search_crop(
-    frame: np.ndarray, template: np.ndarray, region: BoundingBox | None
+    frame: np.ndarray, size: tuple[int, int], region: BoundingBox | None
 ) -> tuple[np.ndarray, int, int]:
     """Bound candidate centers (half-open), retaining the whole template at frame edges."""
     if region is None:
         return frame, 0, 0
-    height, width = template.shape[:2]
+    height, width = size
     left = max(0, region.x_min - width // 2)
     top = max(0, region.y_min - height // 2)
     right = min(frame.shape[1], region.x_max + width - width // 2 - 1)
@@ -62,22 +63,53 @@ def _search_crop(
     return frame[top:bottom, left:right], left, top
 
 
+class _Pattern(NamedTuple):
+    pixels: np.ndarray
+    mask: np.ndarray | None
+    left: int
+    top: int
+    gray: np.ndarray | None
+    header_mean: np.ndarray | None
+
+
+def _prepare_pattern(template: np.ndarray, mask: np.ndarray | None) -> _Pattern:
+    left = top = 0
+    pixels = template
+    header_mean = None
+    if mask is not None and mask.dtype == np.uint8:
+        if mask.ndim == 2:
+            x, y, width, height = cv2.boundingRect(mask)
+            if width and height:
+                left, top = x, y
+                pixels = template[y:y + height, x:x + width]
+                mask = mask[y:y + height, x:x + width]
+                if np.all(mask):
+                    mask = None
+                    if pixels.ndim == 3 and pixels.shape[2] == 3:
+                        header_mean = cv2.transform(pixels, _MEAN_BGR)
+        elif np.all(mask):
+            mask = None
+    gray = None
+    if (pixels.ndim == 3 and pixels.shape[2] == 3 and (mask is None or mask.ndim == 2)
+            and all(np.array_equal(pixels[..., 0], pixels[..., ch]) for ch in (1, 2))):
+        gray = np.ascontiguousarray(pixels[..., 0])
+    return _Pattern(pixels, mask, left, top, gray, header_mean)
+
+
 def _panel_score_crop(
-    frame: np.ndarray, template: np.ndarray, mask: np.ndarray | None, threshold: float,
+    frame: np.ndarray, template: np.ndarray, pattern: _Pattern, threshold: float,
 ) -> tuple[np.ndarray, int, int]:
     """Bound all possible full-colour matches using the panel's opaque rectangular header."""
-    if mask is None or frame.dtype != np.uint8 or threshold <= 0:
+    if pattern.header_mean is None or frame.dtype != np.uint8 or threshold <= 0:
         return frame, 0, 0
-    left, top, width, height = cv2.boundingRect(mask)
-    if not width or not height or not np.all(mask[top:top + height, left:left + width]):
-        return frame, 0, 0
+    left, top = pattern.left, pattern.top
+    height, width = pattern.header_mean.shape[:2]
     h, w = template.shape[:2]
-    header = template[top:top + height, left:left + width]
     pixels = frame[top:frame.shape[0] - h + top + height, left:frame.shape[1] - w + left + width]
     # Averaging BGR can only reduce RMS error (Cauchy–Schwarz). A passing normalized SQDIFF
     # has mean squared channel error <= (1-threshold)*255² on uint8 pixels. Two intensity
     # levels cover uint8 rounding and OpenCV correlation round-off.
-    coarse = cv2.matchTemplate(cv2.transform(pixels, _MEAN_BGR), cv2.transform(header, _MEAN_BGR),
+    coarse = cv2.matchTemplate(cv2.transform(pixels, _MEAN_BGR), pattern.header_mean,
                                cv2.TM_SQDIFF)
     limit = width * height * (255 * np.sqrt(1 - threshold) + 2) ** 2
     x, y, cols, rows = cv2.boundingRect((coarse <= limit).astype(np.uint8))
@@ -87,34 +119,23 @@ def _panel_score_crop(
 
 
 def _match_template(
-    screenshot: np.ndarray, template: np.ndarray, mask: np.ndarray | None, template_name: str
+    screenshot: np.ndarray, template: np.ndarray, mask: np.ndarray | None, template_name: str,
+    pattern: _Pattern | None = None,
 ) -> np.ndarray | None:
-    match_mask = (None if mask is not None and mask.dtype == np.uint8 and np.all(mask)
-                  else mask)
     try:
-        if (match_mask is not None and match_mask.ndim == 2
-                and match_mask.dtype == np.uint8):
-            left, top, width, height = cv2.boundingRect(match_mask)
-            if width and height:
-                frame_height, frame_width = screenshot.shape[:2]
-                template_height, template_width = template.shape[:2]
-                # Keep the original placement grid while removing zero-mask borders.
-                screenshot = screenshot[
-                    top:frame_height - template_height + top + height,
-                    left:frame_width - template_width + left + width,
-                ]
-                template = template[top:top + height, left:left + width]
-                match_mask = match_mask[top:top + height, left:left + width]
-                match_mask = None if np.all(match_mask) else match_mask
-        # Identical channels repeat the same normalized score; preserve genuine colour inputs.
-        if (screenshot.ndim == template.ndim == 3
-                and screenshot.shape[2] == template.shape[2] == 3
-                and (match_mask is None or match_mask.ndim == 2)
-                and all(np.array_equal(image[..., 0], image[..., channel])
-                        for image in (screenshot, template) for channel in (1, 2))):
+        if pattern is None:
+            pattern = _prepare_pattern(template, mask)
+        height, width = pattern.pixels.shape[:2]
+        top, left = pattern.top, pattern.left
+        # Preserve the original placement grid when dropping transparent template borders.
+        screenshot = screenshot[top:screenshot.shape[0] - template.shape[0] + top + height,
+                                left:screenshot.shape[1] - template.shape[1] + left + width]
+        pixels = pattern.pixels
+        if (pattern.gray is not None and screenshot.ndim == 3 and screenshot.shape[2] == 3
+                and all(np.array_equal(screenshot[..., 0], screenshot[..., ch]) for ch in (1, 2))):
             screenshot = np.ascontiguousarray(screenshot[..., 0])
-            template = np.ascontiguousarray(template[..., 0])
-        result = cv2.matchTemplate(screenshot, template, cv2.TM_SQDIFF_NORMED, mask=match_mask)
+            pixels = pattern.gray
+        result = cv2.matchTemplate(screenshot, pixels, cv2.TM_SQDIFF_NORMED, mask=pattern.mask)
     except cv2.error as exc:
         logger.warning("[%s] Template matching failed: %s", template_name, exc)
         return None
@@ -130,14 +151,15 @@ def _local_minima_candidates(
 ) -> list[Point]:
     if result.size == 0 or result.ndim != 2:
         return []
+    candidate_mask = result <= max_score
+    if not np.any(candidate_mask):
+        return []
     window = max(3, min(int(result.shape[0]), int(result.shape[1]), max(3, min_distance)))
     if window % 2 == 0:
         window = max(3, window - 1)
     kernel = np.ones((window, window), dtype=np.float32)
     local_min = cv2.erode(result, kernel)
-    candidate_mask = (result <= max_score) & (result <= local_min + 1e-6)
-    if not np.any(candidate_mask):
-        return []
+    candidate_mask &= result <= local_min + 1e-6
     count, labels, stats, _ = cv2.connectedComponentsWithStats(
         candidate_mask.astype(np.uint8), connectivity=8
     )
@@ -280,7 +302,7 @@ def filter_by_template_consensus(
 
 class OpenCvTemplateMatcher:
     def __init__(self, threads: int = 1) -> None:
-        self._templates: dict[str, tuple[np.ndarray, np.ndarray | None]] = {}
+        self._templates: dict[str, tuple[np.ndarray, np.ndarray | None, _Pattern]] = {}
         # cv2.matchTemplate releases the GIL, so a multi-template scan runs its templates side by
         # side (BoxDetectionConfig.match_threads). 1 = no pool and the old sequential loop. The pool
         # starts its threads on first use and lives as long as the matcher (the whole process).
@@ -299,10 +321,11 @@ class OpenCvTemplateMatcher:
                 raise DetectionError(f"Template has no visible pixels: {template_path}")
             mask = np.zeros_like(alpha)
             mask[alpha > 0] = 255
-        self._templates[template_path.stem] = (_as_bgr(raw, str(template_path)), mask)
+        pixels = _as_bgr(raw, str(template_path))
+        self._templates[template_path.stem] = pixels, mask, _prepare_pattern(pixels, mask)
         return int(raw.shape[1]), int(raw.shape[0])
 
-    def _lookup(self, template_name: str) -> tuple[np.ndarray, np.ndarray | None]:
+    def _lookup(self, template_name: str) -> tuple[np.ndarray, np.ndarray | None, _Pattern]:
         if template_name not in self._templates:
             raise DetectionError(f"Template not loaded: {template_name}")
         return self._templates[template_name]
@@ -344,15 +367,15 @@ class OpenCvTemplateMatcher:
                              centers.x_max + padding, centers.y_max + padding)
         clipped = None
         for name in names:
-            template, mask = self._lookup(name)
+            template, mask, pattern = self._lookup(name)
             h, w = template.shape[:2]
-            image, x, y = _search_crop(extended, template, region)
+            image, x, y = _search_crop(extended, template.shape[:2], region)
             if image.shape[0] < h or image.shape[1] < w:
                 continue
-            image, dx, dy = _panel_score_crop(image, template, mask, threshold)
+            image, dx, dy = _panel_score_crop(image, template, pattern, threshold)
             if not image.size:
                 continue
-            scores = _match_template(image, template, mask, name)
+            scores = _match_template(image, template, mask, name, pattern)
             if scores is None:
                 continue
             # Each score denotes the top-left of the original, untrimmed panel template.
@@ -386,12 +409,12 @@ class OpenCvTemplateMatcher:
         hsv_gate: HsvGate | None = None,
         search_region: BoundingBox | None = None,
     ) -> MatchResult:
-        template, mask = self._lookup(template_name)
+        template, mask, pattern = self._lookup(template_name)
         frame = _as_bgr(frame, "frame")
-        frame, offset_x, offset_y = _search_crop(frame, template, search_region)
+        frame, offset_x, offset_y = _search_crop(frame, template.shape[:2], search_region)
         if template.shape[0] > frame.shape[0] or template.shape[1] > frame.shape[1]:
             return MatchResult(found=False, best=None)
-        result = _match_template(frame, template, mask, template_name)
+        result = _match_template(frame, template, mask, template_name, pattern)
         if result is None:
             return MatchResult(found=False, best=None)
         min_value, _, min_location, _ = cv2.minMaxLoc(result)
@@ -414,11 +437,11 @@ class OpenCvTemplateMatcher:
         """The single best raw match of a template with no threshold or gate applied, plus how
         much of it sits inside `hsv_gate` — what the detector saw when it reported no match.
         Diagnostics only (the stall probe); never used to decide a click."""
-        template, mask = self._lookup(template_name)
+        template, mask, pattern = self._lookup(template_name)
         frame = _as_bgr(frame, "frame")
         if template.shape[0] > frame.shape[0] or template.shape[1] > frame.shape[1]:
             return None
-        result = _match_template(frame, template, mask, template_name)
+        result = _match_template(frame, template, mask, template_name, pattern)
         if result is None:
             return None
         min_value, _, min_location, _ = cv2.minMaxLoc(result)
@@ -445,17 +468,17 @@ class OpenCvTemplateMatcher:
         hsv_gate: HsvGate | None = None,
         hsv_frame: np.ndarray | None = None,
         search_region: BoundingBox | None = None,
+        hsv_origin: Point = (0, 0),
     ) -> list[MatchCandidate]:
-        template, mask = self._lookup(template_name)
+        template, mask, pattern = self._lookup(template_name)
         frame = _as_bgr(frame, "frame")
-        frame, offset_x, offset_y = _search_crop(frame, template, search_region)
+        frame, offset_x, offset_y = _search_crop(frame, template.shape[:2], search_region)
         if hsv_frame is not None:
-            hsv_frame = hsv_frame[
-                offset_y : offset_y + frame.shape[0], offset_x : offset_x + frame.shape[1]
-            ]
+            x, y = offset_x - hsv_origin[0], offset_y - hsv_origin[1]
+            hsv_frame = hsv_frame[y:y + frame.shape[0], x:x + frame.shape[1]]
         if template.shape[0] > frame.shape[0] or template.shape[1] > frame.shape[1]:
             return []
-        result = _match_template(frame, template, mask, template_name)
+        result = _match_template(frame, template, mask, template_name, pattern)
         if result is None:
             return []
         height, width = template.shape[:2]
@@ -487,12 +510,23 @@ class OpenCvTemplateMatcher:
     ) -> list[MatchCandidate]:
         """Convert the frame to HSV once when gating, and reuse it across templates."""
         frame_bgr = _as_bgr(frame, "frame")
-        hsv_frame = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV) if hsv_gate is not None else None
+        hsv_frame = None
+        hsv_origin = (0, 0)
+        if hsv_gate is not None and template_names:
+            pixels = frame_bgr
+            if search_region is not None:
+                sizes = [self._lookup(name)[0].shape for name in template_names]
+                support = (max(s[0] for s in sizes), max(s[1] for s in sizes))
+                pixels, x, y = _search_crop(frame_bgr, support, search_region)
+                if not pixels.size:
+                    return []
+                hsv_origin = (x, y)
+            hsv_frame = cv2.cvtColor(pixels, cv2.COLOR_BGR2HSV)
 
         def one(name: str) -> list[MatchCandidate]:
             return self.find_template_candidates(
                 frame_bgr, name, threshold, min_distance, hsv_gate, hsv_frame=hsv_frame,
-                search_region=search_region,
+                search_region=search_region, hsv_origin=hsv_origin,
             )
 
         # map() yields in template order and re-raises a worker's exception here, so the result and

@@ -247,7 +247,7 @@ class GameVision:
             try:
                 size = self._matcher.load_template(path)
                 self._loaded.add(name)
-                if size is not None and name in panel_templates:
+                if size is not None and name in (*panel_templates, *strategy.max_templates):
                     self._panel_template_sizes[name] = size
             except DetectionError as exc:
                 logger.error("Template '%s' could not be loaded: %s", name, exc)
@@ -428,14 +428,13 @@ class GameVision:
     # --- multi-template reads ------------------------------------------------------------
 
     def _panel_pixels(
-        self, frame: np.ndarray, centers: BoundingBox | None, names: tuple[str, str],
+        self, frame: np.ndarray, centers: BoundingBox | None, names: tuple[str, ...],
     ) -> tuple[np.ndarray, int, int]:
-        first, second = (self._panel_template_sizes.get(name) for name in names)
-        if centers is None or first is None or second is None:
+        if centers is None or not names or any(n not in self._panel_template_sizes for n in names):
             return frame, 0, 0
         # Candidate centers need their whole template and a 1px halo for the 3x3 blur.
-        x_margin = (max(first[0], second[0]) + 1) // 2 + 1
-        y_margin = (max(first[1], second[1]) + 1) // 2 + 1
+        x_margin = (max(self._panel_template_sizes[n][0] for n in names) + 1) // 2 + 1
+        y_margin = (max(self._panel_template_sizes[n][1] for n in names) + 1) // 2 + 1
         left = max(0, centers.x_min - x_margin)
         right = min(frame.shape[1], centers.x_max + x_margin)
         top = max(0, centers.y_min - y_margin)
@@ -525,10 +524,13 @@ class GameVision:
                   else self.station_panel_bounds(frame, near=near))
         if region is None:
             return StationPanelRead(StationPanel.UNKNOWN, None)
-        max_frame = cv2.threshold(frame, config.max_text_min_value, 255, cv2.THRESH_BINARY)[1]
+        pixels, x, y = self._panel_pixels(frame, region, config.max_templates)
+        centers = BoundingBox(region.x_min - x, region.y_min - y,
+                              region.x_max - x, region.y_max - y)
+        max_frame = cv2.threshold(pixels, config.max_text_min_value, 255, cv2.THRESH_BINARY)[1]
         max_frame = cv2.GaussianBlur(max_frame, (3, 3), 0)
         if any(self._find_one(max_frame, name, config.max_threshold,
-                             search_region=region).found for name in config.max_templates):
+                             search_region=centers).found for name in config.max_templates):
             return StationPanelRead(StationPanel.MAX, region)
         if prefer_unlock:
             # Both blue price buttons match Unlock. A Level header can retain its full height
@@ -811,9 +813,11 @@ class GameVision:
         margin = self._config.red_icon.fast_min_distance
         region = BoundingBox(-offset_x - margin, _WORLD_SEARCH_TOP - offset_y - margin,
                              frame.shape[1] - offset_x + margin, bottom - offset_y + margin)
-        icons = self.find_red_icons(
-            frame, force_normal_mode=not self.fast_red_icon_mode, search_region=region,
-        )
+        raw_by_name: dict[str, list[MatchCandidate]] = {}
+        if self.fast_red_icon_mode:
+            icons = self.find_red_icons(frame, search_region=region, raw_by_name=raw_by_name)
+        else:
+            icons = self.find_red_icons(frame, force_normal_mode=True, search_region=region)
         zones = self._config.forbidden_zones
         protected = (*zones.numbered_zones, zones.click_zone, *zones.event_zone_options.values())
         if self.fast_red_icon_mode and not any(
@@ -822,7 +826,8 @@ class GameVision:
             and not any(zone.contains(icon.center[0] + offset_x, icon.center[1] + offset_y)
                         for zone in protected) for icon in icons
         ):
-            icons = self.find_red_icons(frame, force_normal_mode=True, search_region=region)
+            icons = self.find_red_icons(frame, force_normal_mode=True, search_region=region,
+                                        raw_by_name=raw_by_name)
         for icon in icons:
             target = _shifted(icon, *self._config.red_icon.offset)
             if (not _WORLD_SEARCH_TOP <= target.center[1] < bottom
@@ -918,6 +923,7 @@ class GameVision:
     def find_red_icons(
         self, frame: np.ndarray, force_normal_mode: bool = False,
         *, search_region: BoundingBox | None = None,
+        raw_by_name: dict[str, list[MatchCandidate]] | None = None,
     ) -> list[MatchCandidate]:
         use_fast = self.fast_red_icon_mode and not force_normal_mode
         names = (
@@ -939,7 +945,7 @@ class GameVision:
             self._config.red_icon.hsv,
             min_matches,
             iou_threshold=self._config.red_icon.nms_iou_threshold,
-            search_region=search_region,
+            search_region=search_region, raw_by_name=raw_by_name,
         )
 
     def new_level_icon_seen(self, frame: np.ndarray) -> bool:
@@ -1081,10 +1087,20 @@ class GameVision:
         min_matches: int,
         iou_threshold: float,
         *, search_region: BoundingBox | None = None,
+        raw_by_name: dict[str, list[MatchCandidate]] | None = None,
     ) -> list[MatchCandidate]:
+        missing = (template_names if raw_by_name is None else
+                   tuple(dict.fromkeys(n for n in template_names if n not in raw_by_name)))
         raw = self._matcher.find_candidates_across_templates(
-            frame, template_names, threshold, min_distance, hsv_gate, search_region=search_region,
-        )
+            frame, missing, threshold, min_distance, hsv_gate, search_region=search_region,
+        ) if missing else []
+        if raw_by_name is not None:
+            for name in missing:
+                raw_by_name[name] = []
+            for candidate in raw:
+                raw_by_name[candidate.template_name].append(candidate)
+            # Stable equal-confidence ties follow this mode's configured template order.
+            raw = [item for name in template_names for item in raw_by_name[name]]
         if min_matches > 1:
             return filter_by_template_consensus(raw, min_matches, iou_threshold)
         return self._matcher.suppress_overlaps(raw, iou_threshold)

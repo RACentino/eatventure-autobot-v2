@@ -73,7 +73,7 @@ def build_bot(config: BotConfig) -> EatventureBot:
     progress = ProgressLedger(
         config.paths.logs_dir / "progress.json", identity, revision=revision,
         config=fingerprint, loadout=config.measurement.loadout,
-        candidate=config.measurement.candidate,
+        candidate=config.measurement.candidate, detailed=config.measurement.detailed,
     )
     return EatventureBot(
         config,

@@ -603,6 +603,7 @@ class StrategyConfig:
 class MeasurementConfig:
     loadout: str = "unknown"
     candidate: bool = True
+    detailed: bool = False
 
 
 @dataclass(frozen=True, slots=True)

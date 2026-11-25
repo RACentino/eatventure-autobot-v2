@@ -44,8 +44,9 @@ managed-launch path.
 Start the bot with the commands below; it selects the device before adopting or launching scrcpy.
 See [candidate validation](VALIDATION.md) for the calibration and throughput gates. The default strategy
 maxes the first station, then the last, then the intermediate stations in reverse order. Only a
-visible MAX observation advances a phase; missing or unaffordable buttons do not. Candidate runtime
-accounting is enabled by default.
+visible MAX observation advances a phase; missing or unaffordable buttons do not. Normal runs save confirmed progress and recovery events. Set
+`EATVENTURE_DETAILED=1` to enable per-state timings, boost sampling, candidate accounting, and
+diagnostic scans. The progress report labels essential-mode records as having partial timing.
 
 Station searches combine stable detections and rank eligible station centers by screen height.
 FIRST chooses the highest center, with the leftmost winning a tie. LAST chooses the lowest

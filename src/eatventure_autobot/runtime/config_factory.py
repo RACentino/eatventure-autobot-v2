@@ -2,9 +2,10 @@
 BotConfig.default classmethods, which moved out of domain/config.py so that module holds only
 literal field declarations."""
 
+import os
 from pathlib import Path
 
-from eatventure_autobot.domain.config import BotConfig, PathsConfig
+from eatventure_autobot.domain.config import BotConfig, MeasurementConfig, PathsConfig
 from eatventure_autobot.domain.config_validation import validate_bot_config
 from eatventure_autobot.notifier.telegram import load_telegram_config_from_env
 
@@ -20,6 +21,7 @@ def build_paths_config(project_root: Path) -> PathsConfig:
 def build_default_config(project_root: Path) -> BotConfig:
     config = BotConfig(
         paths=build_paths_config(project_root),
+        measurement=MeasurementConfig(detailed=os.getenv("EATVENTURE_DETAILED") == "1"),
         telegram=load_telegram_config_from_env(),
     )
     validate_bot_config(config)

@@ -86,6 +86,8 @@ class _TelemetryMixin:
     # What this mixin reaches on self. EatventureBot.__init__ (bot.py) creates the attributes;
     # the methods live in bot.py or another mixin.
     _clock: Callable[[], float]
+    _started_at: float
+    _level_active_before_stop: float
     _close_check_seconds: float
     _config: BotConfig
     _config_fingerprint: str
@@ -339,8 +341,21 @@ class _TelemetryMixin:
             context.nl_unlock_miss,
         )
 
+    def _active_level_elapsed(self, now: float) -> float:
+        started = self.context.current_level_start_time
+        return self._level_active_before_stop + now - max(self._started_at, started or 0.0)
+
     def _report_level_completion(self) -> None:
         now = time.monotonic()
+        if not self._config.measurement.detailed:
+            elapsed = self._active_level_elapsed(now)
+            self._level_active_before_stop = 0.0
+            self.context.current_level_start_time = now
+            levels = self.context.total_levels_completed
+            logger.info("Restaurant %s completed in %.1f active seconds confirmed=true", levels,
+                        elapsed)
+            self._notifier.notify_new_level(levels, elapsed)
+            return
         elapsed = self._level_mark().run_s - self.context.level_start_mark.run_s
         self.context.current_level_start_time = now
         logger.info(

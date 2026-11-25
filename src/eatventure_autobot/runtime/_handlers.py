@@ -73,6 +73,7 @@ class _HandlersMixin:
     _clock: Callable[[], float]
     _config: BotConfig
     _asset_frame: np.ndarray | None
+    _asset_frame_at: float | None
     _early_probe_pending: bool
     _input: InputController
     _latest_thumb: np.ndarray | None
@@ -114,6 +115,7 @@ class _HandlersMixin:
 
         def _click_idle(
             self, exclude: BoundingBox | None = None, *, alternate: bool = False,
+            observed: tuple[np.ndarray, StationPanelRead] | None = None,
         ) -> bool:
             ...
 
@@ -267,7 +269,7 @@ class _HandlersMixin:
             return State.FIND_RED_ICONS
         regions = self._config.capture_regions
         frame = self._capture_first_asset_frame(regions.extended_search_y)
-        if self._progress is not None:
+        if self._config.measurement.detailed and self._progress is not None:
             self._progress.checkpoint(boost=self._vision.boost_level(frame))
         if monitoring:
             return self._handle_strategy_find(frame)
@@ -448,7 +450,7 @@ class _HandlersMixin:
             station.hold_check_interval_min,
             min(station.hold_check_interval_max, station.verify_search_interval),
         )
-        hold_started = time.monotonic()
+        hold_started = time.monotonic() if self._config.measurement.detailed else None
         held = self._input.hold_at(
             target[0],
             target[1],
@@ -460,10 +462,11 @@ class _HandlersMixin:
                 station.disappear_confirmation_count,
             ),
         )
-        panel_region = None
+        panel_observation = None
         transition = None
         if held:
-            self._record_hold(time.monotonic() - hold_started)
+            if hold_started is not None:
+                self._record_hold(time.monotonic() - hold_started)
             if self._config.strategy.enabled and not self._stop_requested.is_set():
                 frame = self._vision.capture()
                 transition = self._economy_level_transition(
@@ -475,11 +478,12 @@ class _HandlersMixin:
                     self.context.station_progress_at = self._clock()
                 if transition is None or read.state != StationPanel.UNKNOWN:
                     self._observe_strategy_panel(frame, read)
-                panel_region = read.bounds
+                panel_observation = (frame, read)
         post_ok = (
             held
             and (transition is not None or (
-                self._click_idle(panel_region) and self._sleep(self._config.flow_timing.state_delay)
+                self._click_idle(observed=panel_observation)
+                and self._sleep(self._config.flow_timing.state_delay)
             ))
         )
         next_state = flow.decide_hold_upgrade_station(
@@ -524,7 +528,8 @@ class _HandlersMixin:
 
     def _verify_upgrade_station_round(
         self, *, frame: np.ndarray | None = None, near: Point | None = None,
-    ) -> tuple[Point, float, np.ndarray, bool] | None:
+        observed_at: float | None = None,
+    ) -> tuple[Point, float, np.ndarray, bool, float] | None:
         """Look near the previous position first, then widen the search if it is lost.
 
         Each retry uses a fresh capture and the configured relaxed threshold.
@@ -540,6 +545,8 @@ class _HandlersMixin:
                 frame = self._vision.capture(
                     max_y=self._config.capture_regions.upgrade_station_search_y
                 )
+            if observed_at is None:
+                observed_at = self._clock()
             result = self._vision.find_upgrade_station(frame, threshold, search_region=region)
             if region is not None and (
                 result.best is None or not self._is_clickable(result.best.center)
@@ -548,8 +555,9 @@ class _HandlersMixin:
                 result = self._vision.find_upgrade_station(frame, threshold)
             if result.best is not None and self._is_clickable(result.best.center):
                 uninterrupted = attempt == 0 and (near is None or region is not None)
-                return result.best.center, relaxed, frame, uninterrupted
+                return result.best.center, relaxed, frame, uninterrupted, observed_at
             frame = None  # Every retry must observe the screen again.
+            observed_at = None
             # v1 doesn't sleep before giving up on the last attempt.
             if attempt < attempts - 1 and not self._sleep(station.verify_search_interval):
                 return None
@@ -591,18 +599,22 @@ class _HandlersMixin:
 
         candidate = self._config.strategy.enabled
         frame = None
+        observed_at = None
         if candidate and station.verify_settle_delay == 0:
+            if self._asset_frame is not None:
+                observed_at = self._asset_frame_at
             frame = self._capture_first_asset_frame(
                 self._config.capture_regions.upgrade_station_search_y
             )
         first = self._verify_upgrade_station_round(
             frame=frame, near=self.context.upgrade_station_pos if candidate else None,
+            observed_at=observed_at,
         )
         if first is None:
             logger.info("Upgrade station was not visible during verification")
             return None
 
-        target, _, first_frame, uninterrupted = first
+        target, _, first_frame, uninterrupted, first_at = first
         context = self.context
         station_identity = (context.viewport, context.strategy_anchor, context.upgrade_station_pos)
         can_settle = (candidate and uninterrupted and context.strategy_anchor is not None
@@ -618,14 +630,15 @@ class _HandlersMixin:
             return None
         interval = (self._config.strategy.target_observation_interval if candidate
                     else station.verify_settle_delay)
-        if not self._sleep(interval):
+        delay = max(0.0, first_at + interval - self._clock()) if candidate else interval
+        if not self._sleep(delay):
             return None
 
         second = self._verify_upgrade_station_round(near=target if candidate else None)
         if second is None:
             logger.info("Upgrade station was not visible during verification")
             return None
-        point, threshold, current_frame, uninterrupted = second
+        point, threshold, current_frame, uninterrupted, second_at = second
         if not candidate or math.dist(target, point) <= _POPUP_STILL_PX:
             return point, threshold
         if (cursor is None or not uninterrupted
@@ -648,7 +661,7 @@ class _HandlersMixin:
             return None
         # Only one additional fresh capture. No input, fallback search, or retry loop.
         current_frame = current_frame.copy()
-        if not self._sleep(interval) or not same_station():
+        if not self._sleep(max(0.0, second_at + interval - self._clock())) or not same_station():
             return None
         fresh = self._vision.capture(max_y=self._config.capture_regions.upgrade_station_search_y)
         if self._vision.viewport_still(current_frame, fresh) is not True:
@@ -840,9 +853,13 @@ class _HandlersMixin:
         self.context.scan_boxes_after_scroll = False
         box_search_y = self._config.capture_regions.box_search_y
         frame = self._capture_first_asset_frame(box_search_y)
-        self._record_box_scan()
-        self._update_box_scan_thumbnail(frame)
         config = self._config
+        if config.measurement.detailed:
+            self._record_box_scan()
+            self._update_box_scan_thumbnail(frame)
+        elif self._streak_anchor_pending:
+            self._streak_anchor_pending = False
+            self._streak_thumb = _frame_thumbnail(frame)
         fast_mode = self._vision.fast_red_icon_mode if config.strategy.enabled else None
         if (transition := self._economy_level_transition(frame)) is not None:
             return transition
@@ -898,7 +915,8 @@ class _HandlersMixin:
     def _box_scan_needs_recovery(self, frame: np.ndarray, detected: int) -> bool:
         if self._early_probe_pending:
             self._early_probe_pending = False
-            self._log_early_probe(frame, detected)
+            if self._config.measurement.detailed:
+                self._log_early_probe(frame, detected)
             # Keep an earlier comparison frame if this scan also triggers the stall probe.
             if self.context.idle_scrolls > 0 and not self._stall_probe_pending:
                 self._recent_thumb = _frame_thumbnail(frame)
@@ -906,7 +924,8 @@ class _HandlersMixin:
         if not self._stall_probe_pending:
             return False
         self._stall_probe_pending = False
-        self._log_box_near_misses(frame, detected)
+        if self._config.measurement.detailed:
+            self._log_box_near_misses(frame, detected)
         alert_thumb = _frame_thumbnail(frame)
         if self._game_looks_dead(alert_thumb):
             return True
@@ -1004,7 +1023,7 @@ class _HandlersMixin:
     def _handle_check_new_level(self) -> State:
         # Verified v1 behavior: no attempt caps and no scrcpy-recovery here — a verify miss resets
         # immediately (single-shot), and the click-retry tail is an unbounded, watchdog-only loop.
-        if self.context.nl_first_mark is None:  # every sighting routes here; first one per level
+        if self._config.measurement.detailed and self.context.nl_first_mark is None:
             self.context.nl_first_mark = self._level_mark()
         if not self._click_idle():
             return State.CHECK_NEW_LEVEL
@@ -1111,7 +1130,7 @@ class _HandlersMixin:
         # Only the first try of a sequence is timed: the dialog is already up on the retries.
         settle = (
             self._settle_and_time_unlock
-            if self.context.wait_for_unlock_attempts == 0
+            if self._config.measurement.detailed and self.context.wait_for_unlock_attempts == 0
             else self._sleep
         )
         if not settle(self._config.flow_timing.focus_settle_delay):
@@ -1190,7 +1209,7 @@ class _HandlersMixin:
     def _handle_confirm_restaurant(self) -> State:
         probe_started = self._clock()
         frame = self._vision.capture()
-        if self._progress is not None:
+        if self._config.measurement.detailed and self._progress is not None:
             self._progress.checkpoint(boost=self._vision.boost_level(frame))
         city = self._handle_city_arrival(frame)
         if flow.confirm_restaurant(self.context, not city and self._vision.restaurant_start(frame)):
@@ -1256,6 +1275,7 @@ class _HandlersMixin:
         if not self._sleep(scroll.interval_pause):
             return None
         previous = self._vision.capture()
+        observed_at = self._clock()
         still_samples = int(settled is not None and
                             self._vision.viewport_still(settled, previous) is True)
         samples = max(
@@ -1264,9 +1284,10 @@ class _HandlersMixin:
             math.ceil(_VIEWPORT_MAX_SETTLE_SAMPLES * scroll.post_scroll_settle / interval),
         )
         for _ in range(samples):
-            if not self._sleep(interval):
+            if not self._sleep(max(0.0, observed_at + interval - self._clock())):
                 return None
             current = self._vision.capture()
+            observed_at = self._clock()
             still_samples = (still_samples + 1
                              if self._vision.viewport_still(previous, current) is True else 0)
             if still_samples >= _VIEWPORT_REQUIRED_STILL_SAMPLES:
@@ -1468,6 +1489,10 @@ class _HandlersMixin:
         return targets
 
     def _localization_panel_bounds(self, frame: np.ndarray) -> BoundingBox | None:
+        # The native classifier derives every panel state from these same bounds. An
+        # independent observer can recognize a panel even when it cannot locate it.
+        if type(self._vision) is GameVision:
+            return self._vision.station_panel_bounds(frame)
         read = self._vision.read_station_panel(frame)
         if read.bounds is None and read.state != StationPanel.UNKNOWN:
             raise ObservationError("Station panel bounds unavailable before localization")
@@ -1781,7 +1806,7 @@ class _HandlersMixin:
         # best_conf = the raw best `unlock` match, threshold not applied: low = nothing like the
         # button on screen, 0.85-0.90 = the button there but greyed out (cash or a requirement is
         # short). via = the way in (footer badge or Open button). Diagnostics only.
-        if best is None:
+        if best is None and self._config.measurement.detailed:
             best = self._vision.unlock_near_miss(frame)
         logger.info(
             "New level: unlock button not found (miss %d, levels=%d, best_conf=%s) via=%s",

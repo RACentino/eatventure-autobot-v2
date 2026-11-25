@@ -138,7 +138,7 @@ class _ResumeMixin:
         whether it WOULD start the bot. Connected failures retry indefinitely with capped backoff.
         Unexpected exceptions latch ERROR and cancel retries."""
         watch = self._resume
-        if self._progress is not None:
+        if self._config.measurement.detailed and self._progress is not None:
             self._progress.checkpoint()
         if watch is None or self.running:
             return

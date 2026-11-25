@@ -37,6 +37,7 @@ class _RecoveryMixin:
     # What this mixin reaches on self. EatventureBot.__init__ (bot.py) creates the attributes;
     # the methods live in bot.py or another mixin.
     _clock: Callable[[], float]
+    _asset_frame_at: float | None
     _close_check_seconds: float
     _close_last_pos: Point | None
     _close_level_lock_until: float
@@ -105,8 +106,10 @@ class _RecoveryMixin:
         if now < self._close_level_lock_until or now < self._close_suppressed_until:
             return False, None
         frame = self._vision.capture()
+        self._asset_frame_at = self._clock() if self.state == State.HOLD_UPGRADE_STATION else None
         found = self._vision.find_close_buttons(frame)
-        self._close_check_seconds += time.monotonic() - now
+        if self._config.measurement.detailed:
+            self._close_check_seconds += time.monotonic() - now
         if not found:
             self._close_last_pos, self._close_streak = None, 0
             return False, frame
@@ -176,7 +179,7 @@ class _RecoveryMixin:
         taps = capture_errors = 0
         prepared = False
         while self._clock() < deadline and not self._stop_requested.is_set():
-            if self._progress is not None:
+            if self._config.measurement.detailed and self._progress is not None:
                 self._progress.checkpoint()
             available = self._device_available()
             if self._stop_requested.is_set() or self.pause_reason == PauseReason.DISCONNECTED:

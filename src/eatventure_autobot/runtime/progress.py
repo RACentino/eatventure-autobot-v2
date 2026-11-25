@@ -52,9 +52,10 @@ class ProgressLedger:
     def __init__(
         self, path: Path, identity: str, *, revision: str, config: str,
         loadout: str, candidate: bool, clock: Callable[[], float] = time.monotonic,
-        wall_clock: Callable[[], float] = time.time,
+        wall_clock: Callable[[], float] = time.time, detailed: bool = True,
     ) -> None:
         self.path, self.identity = path, identity
+        self.detailed = detailed
         self._clock, self._wall_clock = clock, wall_clock
         self._at, self._wall = clock(), wall_clock()
         self._saved_at = self._at
@@ -90,6 +91,8 @@ class ProgressLedger:
             "boosts": {}, "city_boundaries": 0, "last_city_active_s": None,
             "complete_city_active_s": [],
         })
+        if not detailed:
+            self.record["detailed"] = False
         self.record["last_city_active_s"] = None
         self.record["last_city_boost_active_s"] = None
         self.record["pending_transition"] = False  # never infer an unseen process-gap transition
@@ -113,10 +116,10 @@ class ProgressLedger:
         now, wall = self._clock(), self._wall_clock()
         seconds = max(0.0, now - self._at)
         self.record["seconds"][self.category] += seconds
-        bucket = self.record["boosts"].setdefault(self.boost.value, {
-            "active": 0.0, "recovery": 0.0, "completions": 0,
-        })
-        if self.category in ("active", "recovery"):
+        if self.detailed and self.category in ("active", "recovery"):
+            bucket = self.record["boosts"].setdefault(self.boost.value, {
+                "active": 0.0, "recovery": 0.0, "completions": 0,
+            })
             bucket[self.category] += seconds
         self._at, self._wall = now, wall
         if category is not None:
@@ -129,7 +132,7 @@ class ProgressLedger:
                 self.record["last_city_boost_active_s"] = None
             logger.info("Runtime category=%s candidate=%s boost=%s loadout=%s",
                         self.category, self.identity, self.boost.value, self.record["loadout"])
-        if changed or now - self._saved_at >= 5:
+        if changed or (self.detailed and now - self._saved_at >= 5):
             self.save()
 
     def transition_attempt(self) -> None:
@@ -148,15 +151,20 @@ class ProgressLedger:
         self.record["completions"] += 1
         day = datetime.fromtimestamp(self._wall_clock()).date().isoformat()
         self.record["days"][day] = self.record["days"].get(day, 0) + 1
-        bucket = self.record["boosts"].setdefault(self.boost.value, {
-            "active": 0.0, "recovery": 0.0, "completions": 0,
-        })
-        bucket["completions"] += 1
+        if self.detailed:
+            bucket = self.record["boosts"].setdefault(self.boost.value, {
+                "active": 0.0, "recovery": 0.0, "completions": 0,
+            })
+            bucket["completions"] += 1
         self.save()
         return True
 
     def city_boundary(self) -> None:
         self.checkpoint()
+        self.record["city_boundaries"] += 1
+        if not self.detailed:
+            self.save()
+            return
         active = self.record["seconds"]["active"]
         previous = self.record["last_city_active_s"]
         boosts = {name: bucket["active"] for name, bucket in self.record["boosts"].items()}
@@ -172,7 +180,6 @@ class ProgressLedger:
             self.record["complete_city_samples"] = samples[-100:]
         self.record["last_city_active_s"] = active
         self.record["last_city_boost_active_s"] = boosts
-        self.record["city_boundaries"] += 1
         self.save()
 
     def save(self) -> None:
