@@ -140,8 +140,13 @@ class ProgressLedger:
         self.save()
 
     def cancel_transition(self) -> None:
-        self.record["pending_transition"] = False
-        self.save()
+        if self.record["pending_transition"]:
+            self.record["pending_transition"] = False
+            try:
+                self.save()
+            except Exception:
+                self.record["pending_transition"] = True
+                raise
 
     def confirm_transition(self) -> bool:
         if not self.record["pending_transition"]:

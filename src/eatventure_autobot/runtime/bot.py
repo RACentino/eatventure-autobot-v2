@@ -391,20 +391,11 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
 
             return self._run_state_handler(observed)
         except ObservationError as exc:
-            if not self.context.strategy_pan_after_miss:
-                logger.warning("Retrying station localization in gameplay: %s", exc)
-            self._input.release_left_button()
-            self.context.invalidate_viewport()
-            self.context.strategy_unknown_panels = 0
-            self.context.strategy_seek = True
-            self.context.strategy_stationary_count = 0
-            self.context.strategy_pan_after_miss = True
-            self._strategy_target_frame = None
-            self._station_landing = None
-            self.state = State.FIND_RED_ICONS
-            self.context.state_attempt = 1
-            self._sleep(self._config.strategy.target_observation_interval)
-            return self.running and not self._stop_requested.is_set()
+            if not self._stop_requested.is_set() and self._retry_station_localization(exc):
+                return True
+            if self.running:
+                self.stop()
+            return False
         except CaptureError as exc:
             logger.error("Stopping bot: %s", exc)
             self._report_self_stop(str(exc))
@@ -422,6 +413,22 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
             return False
         finally:
             self._step_lock.release()
+
+    def _retry_station_localization(self, error: ObservationError) -> bool:
+        if not self.context.strategy_pan_after_miss:
+            logger.warning("Retrying station localization in gameplay: %s", error)
+        self._input.release_left_button()
+        self.context.invalidate_viewport()
+        self.context.strategy_unknown_panels = 0
+        self.context.strategy_seek = True
+        self.context.strategy_stationary_count = 0
+        self.context.strategy_pan_after_miss = True
+        self._strategy_target_frame = None
+        self._station_landing = None
+        self.state = State.FIND_RED_ICONS
+        self.context.state_attempt = 1
+        return (self._sleep(self._config.strategy.target_observation_interval)
+                and self.running and not self._stop_requested.is_set())
 
     def _run_state_handler(self, observed: np.ndarray | None = None) -> bool:
         previous_state = self.state
@@ -470,10 +477,13 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
     def _device_available(self, *, force: bool = False) -> bool:
         if self._launcher is None:
             return True
+        require_foreground = (
+            self._launcher.package is not None or self._config.game_recovery.enabled
+        )
         now = self._clock()
         if not force and now < self._device_check_at:
             return self.pause_reason != PauseReason.DISCONNECTED and (
-                not self._config.game_recovery.enabled or self._phone_game_foreground is True
+                not require_foreground or self._phone_game_foreground is True
             )
         self._device_check_at = now + 1.0
         connected = self._launcher.connected()
@@ -487,8 +497,7 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
         if self.running and self._manual_stop_requested.is_set():
             self.stop(manual=True)
             return False
-        if connected and (not self._config.game_recovery.enabled
-                          or self._phone_game_foreground is True):
+        if connected and (not require_foreground or self._phone_game_foreground is True):
             return True
         if self.running:
             reason = ("selected game left Android foreground"
@@ -502,8 +511,8 @@ class EatventureBot(_TelemetryMixin, _RecoveryMixin, _ResumeMixin, _HandlersMixi
                 self.pause_reason = PauseReason.ERROR
                 self.stop()
             return False
-        # The stopped monitor can inspect a confirmed background game for process exit.
-        return connected is True and not self.running
+        # Only crash recovery needs to inspect a background game for process exit.
+        return connected is True and self._config.game_recovery.enabled
 
     def _sleep(self, duration: float) -> bool:
         if duration <= 0:

@@ -151,8 +151,10 @@ and makes a fresh drag before trying the station again. Searches repeat across e
 With automatic recovery enabled, the bot watches the selected Android device while gameplay
 is paused. If Eatventure is in the background, it waits for you to return. When Android
 confirms the game process has exited and the selected mirror is ready, the bot launches it
-and resumes on the first recognizable game screen. A desktop focus change still requires
-60 seconds of inactivity. Manual stop and device disconnection require manual resume.
+and resumes on the first recognizable game screen. If you bring a healthy mirror back to the
+foreground, the bot can resume immediately. Before raising or repairing the mirror itself, it
+waits for 60 seconds of desktop inactivity. Manual stop and device disconnection require
+manual resume.
 A frozen game with a running process requires operator intervention.
 
 ## Development

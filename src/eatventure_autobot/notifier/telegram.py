@@ -1,7 +1,7 @@
 import logging
 import os
-import queue
 import threading
+from collections import deque
 from typing import Protocol, cast
 
 from eatventure_autobot.domain.config import TelegramConfig
@@ -57,7 +57,9 @@ class TelegramNotifier:
         self._chat_id = config.chat_id
         self._close_timeout = config.close_timeout
         self._url = f"https://api.telegram.org/bot{config.bot_token}/sendMessage"
-        self._queue: queue.Queue[str | None] = queue.Queue(maxsize=config.queue_maxsize)
+        self._pending: deque[str] = deque()
+        self._capacity = config.queue_maxsize
+        self._available = threading.Condition()
         self._session: _HttpSession | None = None
         self._thread: threading.Thread | None = None
         if self.enabled:
@@ -73,14 +75,20 @@ class TelegramNotifier:
         logger.info("Telegram notifier %s", "enabled" if self.enabled else "disabled")
 
     def _worker(self) -> None:
-        while (message := self._queue.get()) is not None:
-            try:
-                self._send(message)
-            except Exception:
-                logger.exception("Unexpected Telegram worker error")
-            finally:
-                self._queue.task_done()
-        self._queue.task_done()
+        try:
+            while True:
+                with self._available:
+                    self._available.wait_for(lambda: bool(self._pending) or not self.enabled)
+                    if not self._pending:
+                        return
+                    message = self._pending.popleft()
+                try:
+                    self._send(message)
+                except Exception:
+                    logger.exception("Unexpected Telegram worker error")
+        finally:
+            if self._session is not None:
+                self._session.close()
 
     def _send(self, message: str) -> None:
         if self._session is None:
@@ -101,14 +109,15 @@ class TelegramNotifier:
         if not self.enabled:
             return False
         text = str(message).strip()
-        if not text:
-            return False
-        try:
-            self._queue.put_nowait(text[:_MAX_MESSAGE_LENGTH])
+        with self._available:
+            if not self.enabled or not text:
+                return False
+            if self._capacity > 0 and len(self._pending) >= self._capacity:
+                logger.warning("Telegram queue is full; dropping notification")
+                return False
+            self._pending.append(text[:_MAX_MESSAGE_LENGTH])
+            self._available.notify()
             return True
-        except queue.Full:
-            logger.warning("Telegram queue is full; dropping notification")
-            return False
 
     def notify_bot_started(self) -> None:
         self.send_message("Bot Started")
@@ -130,22 +139,11 @@ class TelegramNotifier:
         self.send_message(f"Bot stopped itself (ran {minutes:.0f} min): {reason}")
 
     def close(self) -> None:
-        """Stops accepting new messages and lets the worker drain what's already queued
-        (including a message sent moments before close(), e.g. notify_bot_stopped()) before
-        exiting, bounded by close_timeout — it does not discard pending messages outright."""
-        if not self.enabled:
-            return
-        self.enabled = False
-        try:
-            self._queue.put(None, timeout=self._close_timeout)
-        except queue.Full:
-            logger.warning("Telegram queue never drained enough to accept the stop sentinel")
-            return
+        """Stop admission and give the worker up to close_timeout to finish its queue."""
+        with self._available:
+            self.enabled = False
+            self._available.notify()
         if self._thread is not None:
             self._thread.join(timeout=self._close_timeout)
             if self._thread.is_alive():
                 logger.warning("Telegram notifier did not stop before timeout")
-                return
-        if self._session is not None:
-            self._session.close()
-            self._session = None

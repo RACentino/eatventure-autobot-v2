@@ -41,6 +41,7 @@ class _ResumeWatch:
     logged: tuple[bool, bool, bool | None] | None = None
     logged_at: float = 0.0
     repair_at: float = 0.0
+    start_at: float = 0.0
     launch_at: float = 0.0  # A mirror repair must not postpone the first crash launch.
 
 
@@ -151,8 +152,7 @@ class _ResumeMixin:
                 return
             if (launcher is not None
                     and not (launcher.mirror_bound() or self._bind_existing_mirror())):
-                self._back_off_repair(watch)
-                self._restart_mirror(self._manual_stop_requested)
+                self._restart_idle_mirror(watch)
                 return
             if not self._vision.environment_ready():
                 if not self._desktop_idle(watch):
@@ -161,13 +161,11 @@ class _ResumeMixin:
                     try:
                         self._vision.ensure_target_ready()
                     except WindowNotAvailableError:
-                        self._back_off_repair(watch)
-                        self._restart_mirror(self._manual_stop_requested)
+                        self._restart_idle_mirror(watch)
                     return
                 if not self._desktop_idle(watch):
                     return
                 self._vision.ensure_target_ready(force=True)
-        resume_state = State.FIND_RED_ICONS
         if launcher is not None and self._config.game_recovery.enabled:
             if launcher.package is None:
                 if now < watch.repair_at:
@@ -185,6 +183,19 @@ class _ResumeMixin:
                 return
             if self._phone_game_foreground is not True:
                 return
+        if self._clock() >= watch.start_at:
+            known_game = launcher is not None and launcher.package is not None
+            self._resume_gameplay(watch, observe_game=known_game)
+
+    def _restart_idle_mirror(self, watch: _ResumeWatch) -> None:
+        # Window discovery can block while the user returns to the desktop.
+        if self._desktop_idle(watch):
+            self._back_off_repair(watch)
+            self._restart_mirror(self._manual_stop_requested)
+
+    def _resume_gameplay(self, watch: _ResumeWatch, *, observe_game: bool) -> None:
+        resume_state = State.FIND_RED_ICONS
+        if observe_game:
             # A foreground package can still be on the loading screen.
             frame = self._vision.capture()
             if self._vision.restaurant_start(frame):
@@ -193,11 +204,15 @@ class _ResumeMixin:
                       or self._vision.station_panel_bounds(frame)
                       or self._vision.restaurant_world_visible(frame)):
                 return
-        if (self._resume is watch and self._vision.environment_ready()
-                and self.start(report=False)):
+        if self._resume is not watch or not self._vision.environment_ready():
+            return
+        if self.start(report=False):
             self.state = resume_state
             logger.info("Gameplay resumed after %.1f s: %s", self._clock() - watch.since,
                         watch.reason)
+        elif self._resume is watch:
+            self._back_off_repair(watch)
+            watch.start_at = watch.repair_at
 
     def _launch_exited_game(self, watch: _ResumeWatch, launcher: GameLauncher) -> None:
         # Recheck after the first pidof: ADB may have blocked while the user returned or stopped.

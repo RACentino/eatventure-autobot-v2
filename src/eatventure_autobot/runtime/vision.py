@@ -60,6 +60,7 @@ _POSITIONAL_FOOTPRINT_BORDER_EXPANSION = 4
 _POSITIONAL_FOOTPRINT_MIN_DASHED_SIDES = 3
 _POSITIONAL_ARROW_SIZE = (18, 30)
 _POSITIONAL_ARROW_MIN_ROUNDNESS = 0.8
+_ARROW_GLYPH_WHITE_HSV = ((0, 0, 230), (179, 45, 255))
 _POSITIONAL_GLYPH_WIDTH = (6, 12)
 _POSITIONAL_GLYPH_HEIGHT = (8, 14)
 _POSITIONAL_GLYPH_MIN_AREA = 18
@@ -130,8 +131,7 @@ def _localized_arrow_contours(red: np.ndarray, hsv: np.ndarray) -> list[np.ndarr
             continue
         if width < _POSITIONAL_GLYPH_WIDTH[0] or height < _POSITIONAL_GLYPH_HEIGHT[0]:
             continue
-        white = cv2.inRange(hsv[top:top + height, left:left + width],
-                           np.array((0, 0, 230)), np.array((179, 45, 255)))
+        white = cv2.inRange(hsv[top:top + height, left:left + width], *_ARROW_GLYPH_WHITE_HSV)
         _count, _labels, components, _centers = cv2.connectedComponentsWithStats(white)
         for glyph_left, glyph_top, glyph_width, glyph_height, area in components[1:]:
             if not (_POSITIONAL_GLYPH_WIDTH[0] <= glyph_width <= _POSITIONAL_GLYPH_WIDTH[1]
@@ -749,8 +749,7 @@ class GameVision:
             if (perimeter == 0 or 4 * math.pi * cv2.contourArea(contour) / perimeter ** 2
                     < _POSITIONAL_ARROW_MIN_ROUNDNESS):
                 continue
-            white = cv2.inRange(hsv[top:top + height, left:left + width],
-                               np.array((0, 0, 230)), np.array((179, 45, 255)))
+            white = cv2.inRange(hsv[top:top + height, left:left + width], *_ARROW_GLYPH_WHITE_HSV)
             if not _up_arrow_glyph(white):
                 continue
             arrow = _shifted(MatchCandidate(
@@ -920,7 +919,21 @@ class GameVision:
         # false matches the ordinary crate handler rejects.
         boxes = self.find_boxes(frame)
         cap = self._config.box.max_clicks_per_pass
-        return bool(boxes) and (not cap or len(boxes) <= cap)
+        if boxes:
+            return not cap or len(boxes) <= cap
+        # A station behind the protected footer can be the only evidence left
+        # before a drag. Confirm the glyph within the original icon match.
+        dx, dy = self._config.red_icon.offset
+        for target in targets:
+            if (not self._config.forbidden_zones.click_zone.contains(*target.center)
+                    or target.template_name in self._config.strategy.marker_templates):
+                continue
+            box = target.bounding_box
+            patch = frame[box.y_min - dy:box.y_max - dy, box.x_min - dx:box.x_max - dx]
+            white = cv2.inRange(cv2.cvtColor(patch, cv2.COLOR_BGR2HSV), *_ARROW_GLYPH_WHITE_HSV)
+            if _up_arrow_glyph(white):
+                return True
+        return False
 
     def restaurant_start(self, frame: np.ndarray) -> bool:
         config = self._config.strategy
