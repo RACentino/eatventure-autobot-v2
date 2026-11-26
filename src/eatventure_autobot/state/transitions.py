@@ -256,7 +256,7 @@ def decide_upgrade_stats(context: FlowContext, obs: StatsIconObservation) -> Sta
     context.cycle_counter = 0
     # A hit after a hold is progress. A hit found by the idle loop is NOT: a badge that stays up
     # would zero the stall counter every cycle, so the early probe and the stall alert would never
-    # fire, and a frozen frame that shows the badge would never be relaunched.
+    # describe the idle streak.
     if not obs.from_find:
         context.idle_scrolls = 0
     return State.OPEN_BOXES
@@ -457,7 +457,7 @@ def confirm_restaurant(context: FlowContext, start_visible: bool) -> bool:
     context.strategy_seek = True
     context.strategy_scrolls = context.strategy_stationary_count = 0
     context.strategy_reanchored = False
-    context.strategy_reacquiring = context.strategy_pass_moved = False
+    context.strategy_reacquiring = context.strategy_pan_after_miss = False
     return True
 
 

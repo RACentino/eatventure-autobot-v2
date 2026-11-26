@@ -52,16 +52,6 @@ def _nl_routes(attempts: dict[str, int], done: dict[str, int]) -> str:
     return ",".join(f"{route}:{count}/{done.get(route, 0)}" for route, count in ways) or "-"
 
 
-def _frame_thumbnail(frame: np.ndarray) -> np.ndarray:
-    """64x36 grayscale subsample, enough to tell a frozen or dimmed view from a live one.
-    ponytail: nearest-pixel sampling, not an area average; it only has to distinguish an identical
-    frame (delta 0) from an animated one, so no cv2 call and any frame size works."""
-    rows = np.linspace(0, frame.shape[0] - 1, 36).astype(int)
-    cols = np.linspace(0, frame.shape[1] - 1, 64).astype(int)
-    pixels = frame[rows[:, None], cols]
-    return np.asarray(pixels.mean(axis=2)) if frame.ndim == 3 else pixels.astype(np.float64)
-
-
 def _format_near_misses(
     seen: list[TemplateExplanation], clickable: Callable[[Point], bool] | None = None
 ) -> str:
@@ -95,17 +85,10 @@ class _TelemetryMixin:
     _idle_started_at: float
     _last_box_scan_at: float | None
     _last_metrics_at: float
-    _last_probe_thumb: np.ndarray | None
-    _latest_thumb: np.ndarray | None
-    _metrics_thumb: np.ndarray | None
     _notifier: Notifier
-    _recent_thumb: np.ndarray | None
-    _scan_delta: float | None
     _stall_probe_pending: bool
     _state_calls: dict[State, int]
     _state_seconds: dict[State, float]
-    _streak_anchor_pending: bool
-    _streak_thumb: np.ndarray | None
     _vision: GameVision
     context: FlowContext
 
@@ -135,8 +118,8 @@ class _TelemetryMixin:
         logger.info(
             "metrics cfg=%s run_s=%.0f levels=%d holds=%d boxes=%d guard_trips=%d "
             "idle_scrolls=%d stall_alerts=%d hold_capped=%d hold_avg_s=%.1f nl_unlock_miss=%d "
-            "relaunches=%d relaunch_failures=%d frame_delta_5m=%s close_clicks=%d "
-            "close_suppressed=%d close_check_s=%.1f recovery_taps=%d close_top=%s "
+            "relaunches=%d relaunch_failures=%d close_clicks=%d "
+            "close_suppressed=%d close_check_s=%.1f close_top=%s "
             "box_zone_skips=%d box_click_fails=%d box_floods=%d stats_checks=%d stats_hits=%d "
             "post_scroll_boxes=%d popup_ms=%s popup_seen=%d popup_never=%d popup_early=%d "
             "check_unlock_clicks=%d popup_stale=%d popup_moving=%d popup_moving_px=%s "
@@ -155,11 +138,9 @@ class _TelemetryMixin:
             context.nl_unlock_miss,
             context.relaunches,
             context.relaunch_failures,
-            self._frame_delta_since_last_metrics(),
             context.close_clicks,
             context.close_suppressed,
             self._close_check_seconds,
-            context.recovery_taps,
             _top_close_position(context.close_positions),
             context.box_zone_skips,
             context.box_click_fails,
@@ -185,15 +166,6 @@ class _TelemetryMixin:
             shares or "-",
         )
 
-    def _frame_delta_since_last_metrics(self) -> str:
-        """Mean-abs-diff between the latest scan and the one at the previous metrics line: the
-        healthy-farm baseline that static_frame_delta is judged against (a dead game reads ~0)."""
-        latest, before = self._latest_thumb, self._metrics_thumb
-        self._metrics_thumb = latest
-        if latest is None or before is None:
-            return "n/a"
-        return f"{np.abs(latest - before).mean():.1f}"
-
     def _maybe_alert_stall(self) -> None:
         """After every landed scroll: the pure counter (context.idle_scrolls) says how long the
         search has produced nothing. Every `stall_scrolls_before_alert` scrolls, log a WARNING and
@@ -205,17 +177,15 @@ class _TelemetryMixin:
         idle = self.context.idle_scrolls
         if idle == 1:
             self._idle_started_at = self._clock()
-            self._streak_anchor_pending = True
-            self._recent_thumb = None  # a new streak never compares against an old one's picture
         early = self._config.scroll.stall_probe_scrolls
         if early > 0 and idle == early:
-            self._early_probe_pending = True
+            self._early_probe_pending = self._config.measurement.detailed
         every = self._config.scroll.stall_scrolls_before_alert
         if every <= 0 or idle % every != 0:
             return
         context = self.context
         context.stall_alerts += 1
-        self._stall_probe_pending = True
+        self._stall_probe_pending = self._config.measurement.detailed
         logger.warning(
             "Stall: %d scrolls over %.0f min with no box opened, upgrade held, stats upgrade or "
             "level completed (levels=%d holds=%d boxes=%d); probing box detection on the next scan",
@@ -238,44 +208,21 @@ class _TelemetryMixin:
                 f"{seen.template_name} conf={seen.confidence:.3f} at {seen.center} "
                 f"hsv={ratio}{zone}"
             )
-        thumb = _frame_thumbnail(frame)
-        previous, self._last_probe_thumb = self._last_probe_thumb, thumb
-        # delta ~0 between alerts (minutes apart) = frozen stream or static overlay; the quadrant
-        # means (TL TR BL BR) show a dimmed screen. Text only: no pixels leave the process.
-        delta = "n/a" if previous is None else f"{np.abs(thumb - previous).mean():.2f}"
-        quads = " ".join(
-            f"{thumb[r:r + 18, c:c + 32].mean():.0f}" for r in (0, 18) for c in (0, 32)
-        )
         logger.warning(
-            "Stall probe: %d box(es) passed detection on this scan. Frame delta vs last probe="
-            "%s, quadrant brightness=[%s]. Best raw match per template "
+            "Stall probe: %d box(es) passed detection on this scan. Best match per template "
             "(a box needs conf>=%.3f and hsv>=%.2f, outside forbidden zones): %s",
             detected,
-            delta,
-            quads,
             self._config.thresholds.box,
             self._config.box.hsv.min_match_ratio,
             "; ".join(parts) or "none",
         )
 
     def _log_early_probe(self, frame: np.ndarray, detected: int) -> None:
-        """One INFO line at `stall_probe_scrolls` idle scrolls: what box AND red-icon detection saw
-        on this scan (best raw match per template, gates and zones not applied) and whether the last
-        drag changed the picture. Box vs red-icon conf tells a crate-only miss from a miss of
-        everything; a flat picture change says the drag moved nothing. Log-only: no alert, never
-        reaches the dead-game check, leaves the alert probe's thumbnail alone, and a failure here
-        is logged, not raised (an unexpected handler error would stop the whole bot)."""
+        """Log detector evidence on a prolonged idle streak in detailed mode."""
         if self.context.idle_scrolls <= 0:  # progress ended the streak before this scan ran
             return
         try:
             context = self.context
-            thumb = _frame_thumbnail(frame)
-            start = self._streak_thumb
-            streak = "n/a" if start is None else f"{np.abs(thumb - start).mean():.2f}"
-            drag = "n/a" if self._scan_delta is None else f"{self._scan_delta:.2f}"
-            quads = " ".join(
-                f"{thumb[r:r + 18, c:c + 32].mean():.0f}" for r in (0, 18) for c in (0, 32)
-            )
             boxes = _format_near_misses(self._vision.box_near_misses(frame), self._is_clickable)
             icons = _format_near_misses(self._vision.red_icon_near_misses(frame))
             open_seen = self._vision.new_level_near_miss(frame)
@@ -287,8 +234,7 @@ class _TelemetryMixin:
             thresholds = self._config.thresholds
             logger.info(
                 "Early probe: %d idle scrolls (%.1f min), %d box(es) passed detection, "
-                "box_zone_skips=%d box_click_fails=%d. Picture change across the last drag=%s, "
-                "vs streak start=%s, quadrant brightness=[%s]. "
+                "box_zone_skips=%d box_click_fails=%d. "
                 "Boxes (need conf>=%.3f and hsv>=%.2f): %s. "
                 "Red icons (need conf>=%.3f and hsv>=%.2f): %s. "
                 "Open button (need conf>=%.3f): %s. Close X (need conf>=%.3f): %s",
@@ -297,9 +243,6 @@ class _TelemetryMixin:
                 detected,
                 context.box_zone_skips,
                 context.box_click_fails,
-                drag,
-                streak,
-                quads,
                 thresholds.box,
                 self._config.box.hsv.min_match_ratio,
                 boxes,

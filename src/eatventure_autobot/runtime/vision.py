@@ -7,6 +7,7 @@ import logging
 import math
 import time
 from dataclasses import dataclass
+from functools import lru_cache
 from itertools import groupby
 
 import cv2
@@ -68,6 +69,13 @@ _POSITIONAL_GLYPH_MAX_WING_FRACTION = 0.2
 _POSITIONAL_PARTIAL_ROW_TOLERANCE = 4
 _POSITIONAL_PARTIAL_RED_FRACTION = (0.1, 0.65)
 _POSITIONAL_PARTIAL_INTERIOR_SCALE = 0.8
+
+
+@lru_cache(maxsize=4)
+def _camera_window(width: int, height: int, pad_vertical: bool) -> np.ndarray:
+    window = cv2.createHanningWindow((width, height), cv2.CV_32F)
+    # Padding prevents wraparound when a drag exceeds half the view.
+    return np.pad(window, ((0, height), (0, 0))) if pad_vertical else window
 
 
 def _station_outline(frame: np.ndarray) -> np.ndarray:
@@ -602,10 +610,7 @@ class GameVision:
         if any(float(image.std()) < 1.0 for image in gray):
             return None
         height, width = gray[0].shape
-        window = cv2.createHanningWindow((width, height), cv2.CV_32F)
-        if pad_vertical:
-            # A long vertical drag can exceed half the view. Padding prevents wraparound.
-            window = np.pad(window, ((0, height), (0, 0)))
+        window = _camera_window(width, height, pad_vertical)
         # Crowd effects obscure fine detail; retry weak matches with calibrated low-pass filtering.
         for sigma in (0, 5):
             images = [cv2.GaussianBlur(image, (0, 0), sigma) if sigma else image.copy()
@@ -902,6 +907,20 @@ class GameVision:
                  (BoostLevel.X48, BoostLevel.X480), strict=True)
                  if self._find_one(frame, name, config.threshold, search_region=region).found]
         return found[0] if len(found) == 1 else BoostLevel.UNKNOWN
+
+    def restaurant_world_visible(self, frame: np.ndarray) -> bool:
+        """Recognize the restaurant on a single capture, including quiet worlds without a badge."""
+        if (self.boost_level(frame) != BoostLevel.UNKNOWN or self.stats_icon_seen(frame)
+                or self.new_level_icon_seen(frame)):
+            return True
+        targets = self.station_targets(frame)
+        if any(t.template_name.startswith(("stationMarker", "stationBuilt")) for t in targets):
+            return True
+        # A fresh restaurant can show only starter crates. Reject the same flood of
+        # false matches the ordinary crate handler rejects.
+        boxes = self.find_boxes(frame)
+        cap = self._config.box.max_clicks_per_pass
+        return bool(boxes) and (not cap or len(boxes) <= cap)
 
     def restaurant_start(self, frame: np.ndarray) -> bool:
         config = self._config.strategy

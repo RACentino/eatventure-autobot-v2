@@ -44,9 +44,8 @@ class FlowContext:
     strategy_scrolls: int = 0
     strategy_stationary_count: int = 0  # negative while confirming the opposite edge on a sweep
     strategy_reanchored: bool = False
-    strategy_waiting_liveness: bool = False
     strategy_reacquiring: bool = False  # establish the phase edge again after an empty pass
-    strategy_pass_moved: bool = False  # verified world displacement during this pass
+    strategy_pan_after_miss: bool = False
     station_progress_at: float = 0.0
     strategy_unknown_panels: int = 0
     strategy_anchor: Point | None = None
@@ -147,14 +146,13 @@ class FlowContext:
     # by stop(): running seconds do not grow while stopped, which current_level_start_time's do.
     level_start_mark: LevelMark = field(default_factory=LevelMark)
     nl_first_mark: LevelMark | None = None
-    # Dead-game recovery (see EatventureBot._relaunch_game): adb relaunches sent / that failed.
+    # Launch attempts after a confirmed Android process exit.
     relaunches: int = 0
     relaunch_failures: int = 0
     # Red-X popup rule (see EatventureBot._dismiss_popup): X's tapped, and times the rule stood
     # down after repeated taps on one spot.
     close_clicks: int = 0
     close_suppressed: int = 0
-    recovery_taps: int = 0  # X's tapped inside the recovery window (also counted in close_clicks)
     close_positions: dict[Point, int] = field(default_factory=dict)  # taps per X position
 
     oscillation_cycle_index: int = 1
@@ -224,6 +222,7 @@ class FlowContext:
         self.upgrade_found_in_cycle = False
         self.work_done = False
         self.consecutive_failed_upgrade_searches = 0
+        self.strategy_pan_after_miss = False
         self.strategy_unknown_panels = 0
         self.strategy_reanchored = False
         self.strategy_fresh_entry = 0

@@ -144,12 +144,16 @@ Built bottom-up, each layer depending only on the one beneath it:
 `runtime/_handlers.py` perform capture and input work. The decision functions in
 `state/transitions.py` accept observations and update flow state without hardware.
 
-Ordinary state stalls reset the search flow; restaurant-arrival confirmation has its own loading
-deadline. Known screen-observation failures (including persistent UNKNOWN station panels)
-release input and retry localization through the same recovery path as connected-device
-game/window failures, after the desktop has been idle for
-60 seconds, retrying with delays capped at 15 minutes. Manual pause and phone disconnection latch
-a manual-resume requirement. Programming errors stay visible and never enter automatic retries.
+An unreadable station panel releases the mouse and returns the bot to station search in the
+same phase. It waits for a recognizable restaurant, safely dismisses a visible station panel,
+and makes a fresh drag before trying the station again. Searches repeat across empty edges.
+
+With automatic recovery enabled, the bot watches the selected Android device while gameplay
+is paused. If Eatventure is in the background, it waits for you to return. When Android
+confirms the game process has exited and the selected mirror is ready, the bot launches it
+and resumes on the first recognizable game screen. A desktop focus change still requires
+60 seconds of inactivity. Manual stop and device disconnection require manual resume.
+A frozen game with a running process requires operator intervention.
 
 ## Development
 

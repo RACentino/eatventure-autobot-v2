@@ -1,8 +1,5 @@
-"""Revive a dead game over adb. The runner is injectable so tests never touch a phone; the real
-one runs adb without a shell, with a timeout, and never raises."""
+"""Manage the selected Android device, scrcpy mirror, and launch of a closed game."""
 
-import base64
-import binascii
 import logging
 import re
 import subprocess
@@ -247,21 +244,6 @@ class GameLauncher:
             raise RuntimeError("No device selected")
         return [self._config.adb_path, "-s", self.serial, *args]
 
-    def capture_device_png(self) -> bytes | None:
-        """Read the selected phone independently of scrcpy; no input or shared-server changes."""
-        if self.serial is None:
-            return None
-        code, output = self._run(
-            self._adb("shell", "screencap -p | base64"), self._config.command_timeout,
-        )
-        if code:
-            return None
-        try:
-            image = base64.b64decode("".join(output.split()), validate=True)
-        except (ValueError, binascii.Error):
-            return None
-        return image if image.startswith(b"\x89PNG\r\n\x1a\n") else None
-
     def detect_package(self) -> bool:
         """Pick the one installed package matching package_hint. Ambiguity disables relaunch."""
         if self.serial is None and not self.select_device():
@@ -319,26 +301,6 @@ class GameLauncher:
             return None
         return component[1] == self.package
 
-    def game_unresponsive(self) -> bool:
-        """Read the current main process's Android ANR flag; other dump sections include history."""
-        if self.package is None or self.serial is None:
-            return False
-        argv = self._adb("shell", "dumpsys", "activity", "processes", self.package)
-        code, output = self._run(argv, self._config.command_timeout)
-        if code:
-            return False
-        _, section, current = output.partition("  All known processes:\n")
-        if not section:
-            return False
-        header = (r"^  \*APP\* UID \d+ ProcessRecord\{[\da-fA-F]+ [1-9]\d*:"
-                  + re.escape(self.package) + r"/[^\s}]+\}\n((?:    [^\n]*(?:\n|$))*)")
-        records = re.findall(header, current.partition("\n\n")[0], re.MULTILINE)
-        return len(records) == 1 and any(
-            re.match(r"\s*(?:mCrashing|crashing)=(?:true|false)\s", line)
-            and re.search(r"\s(?:mNotResponding|notResponding)=true(?:\s|$)", line)
-            for line in records[0].splitlines()
-        )
-
     def game_exited(self) -> bool:
         """True only if pidof ran on the phone and found no instance of the main process."""
         if self.package is None or self.serial is None or not _PACKAGE_NAME.fullmatch(self.package):
@@ -358,14 +320,3 @@ class GameLauncher:
         if code:
             logger.error("Game launch failed: %s", output.strip())
         return code == 0
-
-    def relaunch(self, cancelled: threading.Event | None = None) -> bool:
-        """Cold restart a verified freeze, checking cancellation between commands."""
-        if self.package is None or self.serial is None or (cancelled and cancelled.is_set()):
-            return False
-        code, output = self._run(self._adb("shell", "am", "force-stop", self.package),
-                                 self._config.command_timeout)
-        if code:
-            logger.error("Game force-stop failed: %s", output.strip())
-            return False
-        return self.launch(cancelled)

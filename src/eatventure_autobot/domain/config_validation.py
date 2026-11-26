@@ -213,16 +213,6 @@ def validate_close_button(config: CloseButtonConfig, threshold: float) -> None:
 
 
 def validate_game_recovery(config: GameRecoveryConfig) -> None:
-    if config.stale_after_seconds <= 0:
-        raise ConfigError("game_recovery.stale_after_seconds must be positive")
-    if config.static_frame_delta <= 0:
-        raise ConfigError(f"static_frame_delta must be > 0, got {config.static_frame_delta}")
-    if config.static_recent_delta <= 0:
-        raise ConfigError(f"static_recent_delta must be > 0, got {config.static_recent_delta}")
-    if config.relaunch_settle_seconds < 0:
-        raise ConfigError(
-            f"relaunch_settle_seconds must be >= 0, got {config.relaunch_settle_seconds}"
-        )
     if config.command_timeout <= 0:
         raise ConfigError(f"command_timeout must be > 0, got {config.command_timeout}")
     if config.recovery_poll_seconds <= 0:

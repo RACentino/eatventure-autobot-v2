@@ -19,7 +19,7 @@ Measured inputs (live scrcpy unless noted; no purchases were made while measurin
         sampler step 16 ms
   Logs  restaurant load, attempt -> confirmed: max 12.14 s (n=213, 0 unconfirmed); cold start
         after an adb relaunch: last popup X <= 21.6 s (n=17 relaunches)
-  adb   devices <= 10, dumpsys <= 92, force-stop <= 160, screencap <= 802, monkey <= 1,341 ms
+  adb   devices <= 10, dumpsys <= 92, monkey <= 1,341 ms
 The previous calibration allowed a worst-case frame gap between retries. The current defaults
 retry immediately where a subsequent state can observe the result. Failure deadlines still give
 slow operations time to finish and return early on success.
@@ -159,8 +159,8 @@ class BoxDetectionConfig:
     # with the same results.
     match_threads: int = 4
     # Most boxes one scan may click; 0 = no cap. A scan with MORE clickable matches than this is not
-    # a crate scene: nothing is clicked, the pass counts as idle (so the scroll, the stall probes
-    # and the dead-game check see it) and a "Box flood" line is logged. Evidence, 2026-11-09: in
+    # a crate scene: nothing is clicked, the pass counts as idle (so the scroll and diagnostic
+    # counters see it) and a "Box flood" line is logged. Evidence, 2026-11-09: in
     # 32,138 normal passes over 13 days none clicked more than 10 boxes, while a "box storm"
     # (01:34-06:20, 0 restaurants, 35,821 clicks) had passes of 13-90 matches scoring 0.93-0.94,
     # the same as real crates, so no confidence threshold can tell them apart. Ceiling: a real
@@ -402,8 +402,7 @@ class ScrollConfig:
     # Repeats every multiple. 0 disables.
     stall_scrolls_before_alert: int = 150
     # Early, log-only probe: once per idle streak, at this many completed scrolls (~1.5 min), one
-    # INFO line says what box AND red-icon detection saw on the next scan. It never alerts and never
-    # triggers the dead-game relaunch (that stays at stall_scrolls_before_alert). The 150-scroll
+    # INFO line says what box AND red-icon detection saw on the next scan. The 150-scroll
     # alert can't name a stall that is stopped by hand sooner (Oct 9: stopped at ~110 scrolls, so no
     # probe data existed); healthy streaks of this length are ~3 a day. 0 disables.
     stall_probe_scrolls: int = 30
@@ -411,43 +410,18 @@ class ScrollConfig:
 
 @dataclass(frozen=True, slots=True)
 class GameRecoveryConfig:
-    """Revive a dead game over adb. The 09-30 logs held two stalls (39 and 21 min) where the stall
-    probe saw a static frame (dark, or bright and frozen; mean-abs-diff 0.06-0.86 over minutes) and
-    the bot scrolled for nothing until a human stopped it."""
+    """Launch a closed game on the selected Android device."""
 
     enabled: bool = True
     adb_path: str = "adb"
     device_serial: str | None = None
     scrcpy_path: str = "scrcpy"
-    # Strategy liveness: no thumbnail change >= static_recent_delta across FIND passes for this
-    # long triggers independent phone and mirror verification. static_recent_delta (3.0) is
-    # validated only at 5-minute spacing: bot.log frame_delta_5m, n=1,997, healthy p1 4.7. One busy
-    # farm crossed 3.0 within 0.35 s (149/149 live references), but a calm fresh restaurant was not
-    # measurable, so the window stays at the validated 300 s. That is also above the minimum the
-    # flow needs (an ignored red X: suppress 29.5 + one storm 1.53, x 1.5 = 46.5 s).
-    stale_after_seconds: float = 300.0
     # Startup and stalled-session discovery select the single installed package whose id contains
     # this (case-insensitive). Zero or several matches disable relaunch rather than guess.
     # Checked on the real phone (09-30): the game is com.hwqgrhhjfd.idlefastfood. "eatventure"
     # matches nothing there, and "food" also matches com.global.foodpanda.android.
     package_hint: str = "idlefastfood"
-    # Mean-abs-diff on a 64x36 gray thumbnail between the first scan of an idle streak and the
-    # scan at the stall alert (~7.5 min later). A live farm animates; measured static frames 0.86.
-    static_frame_delta: float = 1.5
-    # The same measure against a RECENT scan of the streak (the early-probe scan, then the previous
-    # alert's scan) instead of its first one. The first scan can predate the freeze: on 2026-10-16
-    # a New Level panel dimmed and stopped the screen after it (delta vs streak start 78-82, "alive"
-    # on all 48 alerts, 8.7 h lost) while consecutive scans differed by 0.4-1.5. Healthy farms
-    # measured >= 5.4 (n=1,663 five-minute samples, median ~37), so 3.0 keeps ~2x margin each side.
-    static_recent_delta: float = 3.0
-    # Length of the recovery window after the launch command: the main flow stays suspended for
-    # all of it, and only the red-X rule runs (cold start + any popups); see _recover_popups.
-    # From the 17 logged relaunches: the last cold-start popup X came <= 21.6 s after the relaunch
-    # line (every window ended "screen changing"). 1.5 x 21.6 + close settle 0.18 + the 5 s
-    # _RECOVERY_TAIL_SECONDS verdict = 37.6 -> 38.0. Runs only after a dead-game relaunch.
-    relaunch_settle_seconds: float = 38.0
-    # Pause between X scans when no X is on screen (recovery window), also the scrcpy-window poll
-    # at startup: F max 123 - minimum X check 15 = 108 -> 0.108, so each scan reads a new frame.
+    # Polling interval while waiting for a newly started scrcpy window.
     recovery_poll_seconds: float = 0.108
     # Per adb call, and the wait for a launched scrcpy window (_prepare_mirror polls for
     # command_timeout) or for one to exit. Slowest measured adb call: monkey 1,341 ms (n=20,
@@ -473,10 +447,8 @@ class ResumeConfig:
     # failure up to 900 s). Checks only run on a cursor sample, every 1 s (_RESUME_SAMPLE_SECONDS),
     # so 1.0 is the fastest that does anything; a check's window query costs ~3 ms (0.3% duty).
     check_seconds: float = 1.0
-    # No key press and no cursor movement for this long before the bot may start itself: it never
-    # takes the mouse from someone who is at the PC. Not measurable: a human-factors choice. It
-    # costs nothing unattended (the last input is long past, so the first check resumes); it only
-    # delays a resume while someone recently used the PC. 60 s counts reading as present.
+    # Desktop inactivity required before repairing or raising the mirror. A ready, foreground
+    # mirror can resume immediately when the selected game is recognizable.
     idle_seconds: float = 60.0
     # Deprecated compatibility field; recoverable failures now retry indefinitely.
     max_attempts: int = 0

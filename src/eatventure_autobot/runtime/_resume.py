@@ -1,7 +1,4 @@
-"""Auto-resume after an environment self-stop.
-
-Moved out of bot.py unchanged; EatventureBot inherits it. What it reaches on self is declared
-at the top of the class."""
+"""Watch the selected device and resume when the game and desktop are ready."""
 
 import dataclasses
 import logging
@@ -10,23 +7,15 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-import numpy as np
-
 from eatventure_autobot.domain.config import BotConfig
-from eatventure_autobot.domain.errors import CaptureError
+from eatventure_autobot.domain.errors import CaptureError, WindowNotAvailableError
 from eatventure_autobot.domain.protocols import InputController, Notifier
-from eatventure_autobot.domain.state import PauseReason, State
+from eatventure_autobot.domain.state import GameplayPhase, PauseReason, State
 from eatventure_autobot.domain.types import Point
-from eatventure_autobot.runtime._recovery import RECOVERY_PROBE_SECONDS, STATION_SEARCH_ANR
-from eatventure_autobot.runtime._recovery_probe import (
-    ScreenProbe,
-    same_game_area,
-    scroll_response,
-    scroll_surface_current,
-)
 from eatventure_autobot.runtime.game_recovery import GameLauncher
 from eatventure_autobot.runtime.progress import ProgressLedger
 from eatventure_autobot.runtime.vision import GameVision
+from eatventure_autobot.state.context import FlowContext
 
 logger = logging.getLogger("eatventure_autobot.runtime.bot")
 
@@ -35,7 +24,6 @@ logger = logging.getLogger("eatventure_autobot.runtime.bot")
 _RESUME_SAMPLE_SECONDS = 1.0
 _RESUME_HEARTBEAT_SECONDS = 600.0
 _RESUME_MAX_BACKOFF_SECONDS = 900.0
-_RECOVERY_SCROLL_SETTLE = .65  # Recorded camera drift lasted up to 602 ms after drag release.
 
 
 @dataclasses.dataclass
@@ -50,14 +38,10 @@ class _ResumeWatch:
     cursor: Point | None = None
     key_activity: Callable[[], float] | None = None
     attempts: int = 0
-    logged: tuple[bool, bool] | None = None  # (ready, quiet) of the last logged check
+    logged: tuple[bool, bool, bool | None] | None = None
     logged_at: float = 0.0
     repair_at: float = 0.0
-    evidence: str | None = None
-    action_screen: str | None = None
-    action_at: float = 0.0
-    action_signature: np.ndarray | None = None
-    checked_world: np.ndarray | None = None
+    launch_at: float = 0.0  # A mirror repair must not postpone the first crash launch.
 
 
 class _ResumeMixin:
@@ -75,13 +59,10 @@ class _ResumeMixin:
     _progress: ProgressLedger | None
     _stop_requested: threading.Event
     _manual_stop_requested: threading.Event
-    pause_reason: PauseReason | None
-    _game_recovery_pending: bool
-    _verify_recovered_unlock: bool
-    _recovery_restart_used: bool
-    _phone_game_foreground: bool | None
-    _idle_started_at: float
+    context: FlowContext
     state: State
+    pause_reason: PauseReason | None
+    _phone_game_foreground: bool | None
 
     if TYPE_CHECKING:  # annotation only: nothing here exists at runtime
 
@@ -89,35 +70,23 @@ class _ResumeMixin:
         def running(self) -> bool:
             ...
 
-        def start(self, *, report: bool=True) -> bool:
+        def start(self, *, report: bool = True) -> bool:
             ...
 
         def _device_available(self, *, force: bool = False) -> bool: ...
-        def _relaunch_game(self, *, cold: bool = True) -> State: ...
-        def _probe_recovery_screen(self, *, after_scroll: bool = False) -> ScreenProbe: ...
-        def _sleep(self, duration: float) -> bool: ...
-        def _continue_city(self, frame: np.ndarray, *, recovering: bool = False) -> bool: ...
-        def _handle_transition_level(self, *, require_open: bool = False) -> State: ...
-
         def _restart_mirror(self, cancelled: threading.Event) -> bool: ...
 
         def _bind_existing_mirror(self) -> bool: ...
 
     def _arm_resume(self, reason: str) -> None:
-        """Retry known environment or screen-observation failures. Manual/disconnected stops
-        remain latched; unexpected handler failures never call this path."""
-        if self._manual_stop_requested.is_set():
-            return
-        self._device_available(force=True)
+        """Arm only after losing the environment or the selected Android game."""
         if self._manual_stop_requested.is_set() or self.pause_reason == PauseReason.DISCONNECTED:
             return
         self.pause_reason = PauseReason.RECOVERY
         if self._progress is not None:
             self._progress.checkpoint("recovery")
         now = self._clock()
-        self._resume = _ResumeWatch(
-            reason, now, now, now, now + self._config.resume.check_seconds
-        )
+        self._resume = _ResumeWatch(reason, now, now, now, now)
 
     @property
     def resume_poll_delay(self) -> float:
@@ -127,16 +96,7 @@ class _ResumeMixin:
         return max(0.0, self._resume.sample_at - self._clock())
 
     def poll_resume(self, last_key_at: float | Callable[[], float]) -> None:
-        """Called on every pass of the main loop while the bot is stopped; a no-op unless armed.
-        last_key_at is the latest key press on this PC, on the same clock as self._clock.
-
-        Live mode (resume.enabled, the default since 2026-10-27): once nobody has pressed a key or
-        moved the mouse for resume.idle_seconds it calls start(). A window start() would touch
-        (GameVision.environment_ready False: another app has the focus) is first brought up with
-        raise_window, the one focus change the bot makes on its own; with that off, only a window
-        that is already in front is started. Shadow mode (enabled False): each check only logs
-        whether it WOULD start the bot. Connected failures retry indefinitely with capped backoff.
-        Unexpected exceptions latch ERROR and cancel retries."""
+        """Sample the desktop and phone while an automatic resume is armed."""
         watch = self._resume
         if self._config.measurement.detailed and self._progress is not None:
             self._progress.checkpoint()
@@ -154,20 +114,13 @@ class _ResumeMixin:
             if watch.cursor is not None and cursor != watch.cursor:
                 watch.activity_at = now
             watch.cursor = cursor
-            if (not self._game_recovery_pending and self._config.game_recovery.enabled
-                    and self._launcher is not None and self._launcher.package is not None
-                    and self._phone_game_foreground is not True):
-                self._game_recovery_pending = True
-                watch.check_at = min(watch.check_at, now)
             watch.key_activity = last_key_at if callable(last_key_at) else None
             key_at = last_key_at() if callable(last_key_at) else last_key_at
             watch.activity_at = max(watch.activity_at, key_at)
             if now >= watch.check_at:
                 self._check_resume(watch, now, key_at)
         except CaptureError:
-            delay = (RECOVERY_PROBE_SECONDS if self._game_recovery_pending
-                     else self._config.resume.check_seconds)
-            watch.check_at = self._clock() + delay
+            watch.check_at = self._clock() + self._config.resume.check_seconds
         except Exception:
             logger.exception("Resume check failed")
             self._stop_requested.set()
@@ -184,256 +137,99 @@ class _ResumeMixin:
         quiet = idle >= config.idle_seconds
         watch.check_at = now + config.check_seconds
         # One line per change plus a heartbeat, not one per minute of a 20 h stop.
-        if (ready, quiet) != watch.logged or now - watch.logged_at >= _RESUME_HEARTBEAT_SECONDS:
-            watch.logged, watch.logged_at = (ready, quiet), now
-            go = "resuming" if config.enabled else "would resume"
-            logger.info(
-                "Resume check (%s): ready=%s idle_s=%.0f/%.0f down_min=%.0f -> %s | %s",
-                "live" if config.enabled else "shadow",
-                ready,
-                idle,
-                config.idle_seconds,
-                (now - watch.since) / 60,
-                go if quiet and (ready or config.raise_window) else "waiting",
-                self._vision.describe_environment(),
-            )
-        if self._game_recovery_pending and config.enabled:
-            self._check_game_recovery(watch, now, ready, quiet, last_key_at)
+        status = (ready, quiet, self._phone_game_foreground)
+        if status != watch.logged or now - watch.logged_at >= _RESUME_HEARTBEAT_SECONDS:
+            watch.logged, watch.logged_at = status, now
+            logger.info("Resume observation: mirror_ready=%s phone_foreground=%s "
+                        "desktop_idle_s=%.0f elapsed_s=%.0f", ready, self._phone_game_foreground,
+                        idle, now - watch.since)
+        if not config.enabled or self._manual_stop_requested.is_set() or self._resume is not watch:
             return
-        if not (config.enabled and quiet):
-            return
-        if self._manual_stop_requested.is_set() or self._resume is not watch:
-            return
-        if not ready and self._launcher is not None and not self._launcher.mirror_bound():
-            self._bind_existing_mirror()
-            ready = self._vision.environment_ready()
-        watch.attempts += 1
-        backoff = min(_RESUME_MAX_BACKOFF_SECONDS,
-                      config.check_seconds * 2 ** min(watch.attempts, 20))
-        watch.check_at = now + backoff
-        if not ready:
-            # Not ready means start() would touch the window (usually: another app has the focus).
-            # Nobody has used the PC for idle_seconds, so this is the one place the bot brings the
-            # window up itself; a failed raise (locked session, window gone) just waits a check.
-            if not (config.raise_window and self._vision.raise_target()):
-                try:
-                    self._vision.ensure_target_ready()
-                except CaptureError:
-                    self._restart_mirror(self._manual_stop_requested)
-                return
-            logger.info("Resume: raised the game window after %.0f s of nobody at the PC", idle)
-        if self.start(report=False):
-            logger.info(
-                "Auto-resumed after %.0f min (attempt %d): %s",
-                (now - watch.since) / 60,
-                watch.attempts,
-                watch.reason,
-            )
-            return
-
-    def _check_game_recovery(
-        self, watch: _ResumeWatch, now: float, ready: bool, quiet: bool, last_key_at: float,
-    ) -> None:
-        """Observe on a fixed cadence; only repairs incur exponential backoff."""
         launcher = self._launcher
-        if launcher is None or self._resume is not watch or self._manual_stop_requested.is_set():
-            return
-        watch.check_at = now + RECOVERY_PROBE_SECONDS
-        if not quiet:
-            watch.check_at = min(watch.check_at, max(watch.activity_at, last_key_at)
-                                 + self._config.resume.idle_seconds)
-            if watch.reason == STATION_SEARCH_ANR:
-                return  # Both feeds were sampled immediately before this confirmed ANR.
-        can_repair = quiet and now >= watch.repair_at
-        if not ready:
-            if not can_repair:
+        if not ready or (launcher is not None and not launcher.mirror_bound()):
+            if not quiet or now < watch.repair_at or not self._desktop_idle(watch):
                 return
-            if not launcher.mirror_bound():
-                self._bind_existing_mirror()
-            if not self._recovery_idle():
+            if (launcher is not None
+                    and not (launcher.mirror_bound() or self._bind_existing_mirror())):
+                self._back_off_repair(watch)
+                self._restart_mirror(self._manual_stop_requested)
                 return
-            if not self._vision.environment_ready() and not (
-                self._config.resume.raise_window and self._vision.raise_target()
-            ):
-                try:
-                    self._vision.ensure_target_ready()
-                except CaptureError:
-                    self._back_off_repair(watch)
-                    self._restart_mirror(self._manual_stop_requested)
-                return
-        if launcher.package is None and now >= watch.repair_at:
-            self._back_off_repair(watch)
-            if launcher.detect_package():
-                self._device_available(force=True)
-        foreground = self._phone_game_foreground
-        if foreground is None or launcher.package is None:
-            return
-        view = self._probe_recovery_screen() if foreground else ScreenProbe("unknown")
-        evidence = f"{view.status}/{view.screen}" if foreground else "outside game"
-        if evidence != watch.evidence:
-            logger.info("Recovery observation trigger=%s evidence=%s elapsed_s=%.0f",
-                        watch.reason, evidence, now - watch.since)
-            watch.evidence = evidence
-        if foreground and (view.status == "unknown" or (view.status == "still"
-                and self._recovery_restart_used and view.world_views is None)):
-            return
-        if (not quiet or self._manual_stop_requested.is_set() or self._resume is not watch
-                or not self._device_available(force=True)
-                or self._phone_game_foreground is not foreground
-                or not self._recovery_input_allowed()):
-            return
-        # The normal stop event also interrupts handlers and ADB between commands.
-        self._stop_requested.clear()
-        try:
-            if self._manual_stop_requested.is_set() or self._resume is not watch:
-                return
-            if not foreground:
-                if can_repair and launcher.game_exited():
-                    self._back_off_repair(watch)
-                    self._relaunch_game(cold=False)
-                return
-            recovery = self._config.game_recovery
-            if (view.status == "still" and view.world_views is not None and can_repair
-                    and watch.action_screen is None and view.signature is not None
-                    and not same_game_area(watch.checked_world, view.signature,
-                                           3 * recovery.static_recent_delta)
-                    and (watch.reason == STATION_SEARCH_ANR
-                         or now - self._idle_started_at >= recovery.stale_after_seconds)):
-                view = self._verify_recovery_scroll(watch, view)
-                if view.status == "unknown":
+            if not self._vision.environment_ready():
+                if not self._desktop_idle(watch):
+                    return
+                if not config.raise_window or not self._vision.raise_target():
+                    try:
+                        self._vision.ensure_target_ready()
+                    except WindowNotAvailableError:
+                        self._back_off_repair(watch)
+                        self._restart_mirror(self._manual_stop_requested)
+                    return
+                if not self._desktop_idle(watch):
+                    return
+                self._vision.ensure_target_ready(force=True)
+        resume_state = State.FIND_RED_ICONS
+        if launcher is not None and self._config.game_recovery.enabled:
+            if launcher.package is None:
+                if now < watch.repair_at:
+                    return
+                if not launcher.detect_package():
                     self._back_off_repair(watch)
                     return
-            if view.status == "mirror-stale":
-                if can_repair:
-                    self._back_off_repair(watch)
-                    logger.warning("Recovery action=repair-mirror elapsed_s=%.0f",
-                                   now - watch.since)
-                    if self._restart_mirror(self._stop_requested):
-                        watch.checked_world = None
+                if not self._device_available(force=True):
+                    return
+            if self._resume is not watch or self._manual_stop_requested.is_set():
                 return
-            if view.status == "playable":
-                frozen = self._check_playable_screen(watch, view, now)
-            elif view.status == "still":
-                frozen = not self._recovery_restart_used and launcher.game_unresponsive()
-            else:
+            if self._phone_game_foreground is False:
+                if now >= watch.launch_at and launcher.game_exited():
+                    self._launch_exited_game(watch, launcher)
                 return
-            if (frozen and can_repair and not self._recovery_restart_used
-                    and now - self._idle_started_at >=
-                    self._config.game_recovery.stale_after_seconds
-                    and not self._manual_stop_requested.is_set()):
-                proof = ("Android reports game unresponsive" if view.status == "still"
-                         else f"{view.screen} unchanged after accepted tap")
-                logger.info("Recovery freeze verified evidence=%s elapsed_s=%.0f",
-                            proof, now - watch.since)
-                self._back_off_repair(watch)
-                self._relaunch_game()
-        finally:
-            if not self.running:
-                self._stop_requested.set()
-            # A 38-second cold start or slow ADB command must not cause catch-up polls.
-            if self._clock() > now + RECOVERY_PROBE_SECONDS:
-                watch.check_at = self._clock() + RECOVERY_PROBE_SECONDS
-
-    def _verify_recovery_scroll(self, watch: _ResumeWatch, before: ScreenProbe) -> ScreenProbe:
-        scroll = self._config.scroll
-        x, y = self._config.click_targets.scroll_start_pos
-        distance = max(1, round(scroll.pixel_step * scroll.distance_ratio) // 2)
-        window = self._config.window
-        bottom = min(window.height, self._config.capture_regions.max_search_y)
-        for direction in (-1, 1):
-            end_y = y + direction * distance
-            low, high = sorted((y, end_y))
-            if (not 0 <= x < window.width or not 0 <= low < high < bottom
-                    or any(self._input.is_in_forbidden_zone(x, row) for row in range(low, high + 1))
-                    or not scroll_surface_current(self._vision, self._config, before)
-                    or not self._scroll_input_ready(watch)):
-                return ScreenProbe("unknown")
-            if watch.reason == STATION_SEARCH_ANR:
-                watch.checked_world = before.signature
-            if not self._input.drag(x, y, x, end_y, duration=scroll.duration):
-                return ScreenProbe("unknown")
-            self._note_recovery_click((x, end_y))
-            if not self._sleep(max(_RECOVERY_SCROLL_SETTLE,
-                                   scroll.post_scroll_settle + scroll.interval_pause)):
-                return ScreenProbe("unknown")
-            after = self._probe_recovery_screen(after_scroll=True)
-            if not self._scroll_input_ready(watch):
-                return ScreenProbe("unknown")
-            result = scroll_response(self._vision, before, after, direction)
-            logger.info("Recovery scroll drag_dy=%d evidence=%s", end_y - y, result.status)
-            if result.status != "still":
-                return result
-            before = after  # One direction can be blocked at a healthy camera edge.
-        watch.checked_world = before.signature
-        return before
-
-    def _scroll_input_ready(self, watch: _ResumeWatch) -> bool:
-        return (self._resume is watch and not self._stop_requested.is_set()
-                and self._launcher is not None and self._launcher.mirror_bound()
-                and self._device_available(force=True) and self._phone_game_foreground is True
-                and not self._stop_requested.is_set() and self._recovery_input_allowed())
-
-    def _check_playable_screen(self, watch: _ResumeWatch, view: ScreenProbe, now: float) -> bool:
-        """Return freeze evidence only for a stationary control whose accepted tap had no effect."""
-        if watch.action_screen is not None and watch.action_screen != view.screen:
-            self._recovery_restart_used = False
-        if view.screen in (None, "unlock"):
-            if self.start(report=False):
-                self._game_recovery_pending = False
-                self._verify_recovered_unlock = view.screen == "unlock"
-                if self._verify_recovered_unlock:
-                    self.state = State.WAIT_FOR_UNLOCK
-                logger.info("Recovered gameplay after %.0f s", self._clock() - watch.since)
-            return False
-        if watch.action_screen != view.screen:
-            self._try_dialog_once(watch, view)
-            return False
-        if not view.static or not same_game_area(
-            watch.action_signature, view.signature, self._config.game_recovery.static_frame_delta,
-        ):
-            watch.action_signature = None
-            return False
-        return now - watch.action_at >= self._config.game_recovery.stale_after_seconds
-
-    def _try_dialog_once(self, watch: _ResumeWatch, view: ScreenProbe) -> None:
-        if view.screen == "welcome":
+            if self._phone_game_foreground is not True:
+                return
+            # A foreground package can still be on the loading screen.
             frame = self._vision.capture()
-            if (not self._vision.city_arrival(frame)
-                    or not self._continue_city(frame, recovering=True)):
+            if self._vision.restaurant_start(frame):
+                resume_state = State.TRANSITION_LEVEL  # The Open dialog owns its close button.
+            elif not (self._vision.city_arrival(frame) or self._vision.find_close_buttons(frame)
+                      or self._vision.station_panel_bounds(frame)
+                      or self._vision.restaurant_world_visible(frame)):
                 return
-        elif view.screen == "open":
-            if self._handle_transition_level(require_open=True) != State.WAIT_FOR_UNLOCK:
-                return
-        else:
+        if (self._resume is watch and self._vision.environment_ready()
+                and self.start(report=False)):
+            self.state = resume_state
+            logger.info("Gameplay resumed after %.1f s: %s", self._clock() - watch.since,
+                        watch.reason)
+
+    def _launch_exited_game(self, watch: _ResumeWatch, launcher: GameLauncher) -> None:
+        # Recheck after the first pidof: ADB may have blocked while the user returned or stopped.
+        if (not self._device_available(force=True) or self._phone_game_foreground is not False
+                or not launcher.mirror_bound() or not self._vision.environment_ready()
+                or self._resume is not watch or not launcher.game_exited()
+                or not self._input.is_target_foreground() or self._manual_stop_requested.is_set()):
             return
-        watch.action_screen = view.screen
-        watch.action_signature = view.signature
-        watch.action_at = self._clock()
-        logger.info("Recovery action=guarded-dialog screen=%s", view.screen)
+        if self._clock() < watch.launch_at:
+            return
+        watch.launch_at = float("inf")  # Reserve this attempt while the ADB command is in flight.
+        ok = launcher.launch(self._manual_stop_requested)
+        self._back_off_repair(watch)
+        watch.launch_at = watch.repair_at
+        if ok:
+            self.context.gameplay_phase = GameplayPhase.FIRST
+            self.context.strategy_endpoint = None
+            self.context.relaunches += 1
+            # Watch for readiness on every poll; give the new process time to appear before
+            # another confirmed absence can authorize a retry.
+            watch.launch_at = max(watch.launch_at,
+                                  self._clock() + self._config.game_recovery.command_timeout)
+        else:
+            self.context.relaunch_failures += 1
+        logger.log(logging.INFO if ok else logging.WARNING,
+                   "Launch after confirmed process exit: package=%s accepted=%s",
+                   launcher.package, ok)
+        self._notifier.notify_game_relaunch(ok, max(0.0, self._clock() - watch.since) / 60)
 
-    def _note_recovery_click(self, point: Point) -> None:
-        # The controller moves the desktop cursor to click. Only exempt that exact position.
-        watch = self._resume
-        if watch is not None:
-            position = self._input.get_cursor_position()
-            if self._vision.cursor_position_in_window(self._input) == point:
-                watch.cursor = position
-
-    def _clear_recovery_dialog(self) -> None:
-        if self._resume is not None:
-            self._resume.action_screen = None
-            self._resume.action_signature = None
-            self._resume.checked_world = None  # The launcher confirmed a new app instance.
-
-    def _recovery_input_allowed(self) -> bool:
-        return self._input.is_target_foreground() and self._recovery_idle()
-
-    def _recovery_idle(self) -> bool:
-        if self._manual_stop_requested.is_set():
+    def _desktop_idle(self, watch: _ResumeWatch) -> bool:
+        if self._manual_stop_requested.is_set() or self._resume is not watch:
             return False
-        watch = self._resume
-        if watch is None:
-            return True
         now = self._clock()
         cursor = self._input.get_cursor_position()
         if watch.cursor is not None and watch.cursor != cursor:
@@ -446,7 +242,7 @@ class _ResumeMixin:
     def _back_off_repair(self, watch: _ResumeWatch) -> None:
         watch.attempts = min(watch.attempts + 1, 20)
         watch.repair_at = self._clock() + min(
-            _RESUME_MAX_BACKOFF_SECONDS, RECOVERY_PROBE_SECONDS * 2 ** (watch.attempts - 1)
+            _RESUME_MAX_BACKOFF_SECONDS, 15.0 * 2 ** (watch.attempts - 1)
         )
 
     def _report_self_stop(self, reason: str) -> None:
